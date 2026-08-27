@@ -10,6 +10,15 @@ export function isDesktopRuntime(): boolean {
   return isTauri;
 }
 
+export type DesktopPlatform = "browser" | "macos" | "windows" | "linux";
+
+/** 返回当前界面需要使用的平台布局；浏览器预览不会预留系统标题栏空间。 */
+export async function desktopPlatform(): Promise<DesktopPlatform> {
+  if (!isTauri) return "browser";
+  const current = await platform();
+  return current === "macos" || current === "windows" || current === "linux" ? current : "linux";
+}
+
 /** 是否运行在 Windows 桌面客户端；仅 Windows 使用自绘窗口控制按钮。 */
 export async function isWindowsRuntime(): Promise<boolean> {
   if (!isTauri) return false;

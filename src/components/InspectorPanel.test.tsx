@@ -51,10 +51,12 @@ describe("InspectorPanel AI scenes", () => {
     render(<InspectorPanel />);
     expect(screen.getByText("AI 复合片段")).toBeInTheDocument();
     expect(screen.getByLabelText("本地视频素材")).toHaveValue("video");
-    expect(screen.getByLabelText("动效类型")).toHaveValue("number-pop");
-    for (const name of ["字号", "速度", "水平位置", "垂直位置", "大小", "旋转", "透明度", "素材音量"]) {
+    expect(screen.getByLabelText("主动效类型")).toHaveValue("number-pop");
+    for (const name of ["字号", "速度", "大小", "旋转", "透明度", "素材音量"]) {
       expect(screen.getByRole("slider", { name: new RegExp(name) })).toBeInTheDocument();
     }
+    expect(screen.queryByRole("slider", { name: /水平位置/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: /垂直位置/ })).not.toBeInTheDocument();
     expect(screen.getByLabelText("文字颜色")).toHaveValue("#ffffff");
     expect(screen.getByLabelText("强调色")).toHaveValue("#47d7ac");
     expect(screen.getByLabelText("运镜预设")).toHaveValue("push-in");
@@ -63,13 +65,28 @@ describe("InspectorPanel AI scenes", () => {
   it("persists manual scene adjustments through the editor store", () => {
     render(<InspectorPanel />);
     fireEvent.change(screen.getByRole("slider", { name: /速度/ }), { target: { value: "1.8" } });
-    fireEvent.change(screen.getByRole("slider", { name: /水平位置/ }), { target: { value: "72" } });
-    fireEvent.change(screen.getByLabelText("动效类型"), { target: { value: "quote-card" } });
+    fireEvent.change(screen.getByLabelText("主动效类型"), { target: { value: "quote-card" } });
     fireEvent.change(screen.getByLabelText("运镜预设"), { target: { value: "pan-left" } });
     const clip = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((item) => item.id === "generated");
     expect(clip?.kind).toBe("generated");
     if (clip?.kind !== "generated") return;
-    expect(clip.scenes[0]).toMatchObject({ effectId: "quote-card", speed: 1.8, transform: { x: 72 }, recipe: { layout: "frame" }, camera: { preset: "pan-left", startScale: 1.16, endScale: 1.16 } });
+    expect(clip.scenes[0]).toMatchObject({ effectId: "quote-card", speed: 1.8, transform: { x: 50 }, recipe: { layout: "frame" }, camera: { preset: "pan-left", startScale: 1.16, endScale: 1.16 } });
+  });
+
+  it("applies a scene template and edits its overlapping effect layers", () => {
+    render(<InspectorPanel />);
+    fireEvent.change(screen.getByLabelText("应用场景模板"), { target: { value: "scene-focus-stack" } });
+
+    let clip = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((item) => item.id === "generated");
+    expect(clip?.kind).toBe("generated");
+    if (clip?.kind !== "generated") return;
+    expect(clip.scenes[0].effectId).toBe("title-highlight");
+    expect(clip.scenes[0].additionalEffects).toHaveLength(2);
+
+    fireEvent.change(screen.getByLabelText("叠加文字 2"), { target: { value: "自动匹配的数据" } });
+    fireEvent.click(screen.getByRole("button", { name: "删除叠加动效 3" }));
+    clip = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((item) => item.id === "generated");
+    expect(clip?.kind === "generated" ? clip.scenes[0].additionalEffects : []).toMatchObject([{ text: "自动匹配的数据", source: "scene-template" }]);
   });
 
   it("allows choosing any source in-point when a short matched video loops", () => {

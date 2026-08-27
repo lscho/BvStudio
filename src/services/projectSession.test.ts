@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEmptyProject } from "@/domain/project";
 import {
   clearRecoverySnapshot,
+  hydrateProjectAssets,
   projectHasRecoverableContent,
   readRecentProjects,
   readRecoverySnapshot,
   rememberRecentProject,
+  restoreRecoverySnapshot,
   writeRecoverySnapshot
 } from "@/services/projectSession";
 
@@ -53,5 +55,42 @@ describe("project session persistence", () => {
     expect(recent).toHaveLength(10);
     expect(recent[0]).toMatchObject({ path: "/project-5.bvideo.json", name: "Most recent" });
     expect(new Set(recent.map((entry) => entry.path)).size).toBe(10);
+  });
+
+  it("restores the project when one media path check fails", async () => {
+    const project = createEmptyProject();
+    project.assets.push(
+      { id: "broken", name: "broken.mp4", kind: "video", durationUs: 1_000_000, sourcePath: "/broken.mp4", height: 1080 },
+      { id: "ready", name: "ready.mp4", kind: "video", durationUs: 1_000_000, sourcePath: "/ready.mp4", height: 720 }
+    );
+    const hydrated = await hydrateProjectAssets(project, {
+      desktop: true,
+      proxyEnabled: false,
+      proxyHeight: 720,
+      pathExists: async (path) => {
+        if (path === "/broken.mp4") throw new Error("filesystem unavailable");
+        return true;
+      },
+      mediaUrl: (path) => `asset://${path}`
+    });
+
+    expect(hydrated.assets[0]).toMatchObject({ missing: true, objectUrl: undefined });
+    expect(hydrated.assets[1]).toMatchObject({ missing: false, objectUrl: "asset:///ready.mp4" });
+  });
+
+  it("parses and hydrates a complete recovery snapshot", async () => {
+    const project = createEmptyProject();
+    project.name = "Recovered";
+    project.assets.push({ id: "asset", name: "source.mp4", kind: "video", durationUs: 1_000_000, sourcePath: "/source.mp4" });
+    const restored = await restoreRecoverySnapshot({ projectJson: JSON.stringify(project), projectPath: "/recovered.bvideo.json", savedAt: new Date().toISOString() }, {
+      desktop: true,
+      proxyEnabled: false,
+      proxyHeight: 720,
+      pathExists: async () => true,
+      mediaUrl: (path) => `asset://${path}`
+    });
+
+    expect(restored.name).toBe("Recovered");
+    expect(restored.assets[0]).toMatchObject({ missing: false, objectUrl: "asset:///source.mp4" });
   });
 });

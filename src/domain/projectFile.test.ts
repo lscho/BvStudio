@@ -9,7 +9,7 @@ describe("project files", () => {
     const serialized = serializeProject(project);
     expect(serialized).not.toContain("blob:temporary");
     expect(serialized).not.toContain("missing");
-    expect(parseProject(serialized)).toMatchObject({ schemaVersion: 9, id: project.id, assets: [{ sourcePath: "/source.mp4" }] });
+    expect(parseProject(serialized)).toMatchObject({ schemaVersion: 11, id: project.id, assets: [{ sourcePath: "/source.mp4" }] });
   });
 
   it("rejects unsupported schemas", () => {
@@ -24,7 +24,7 @@ describe("project files", () => {
     raw.tracks.push({ id: "audio-main", kind: "audio", name: "音频", locked: false, muted: false, hidden: false, clips: [] });
 
     const migrated = parseProject(JSON.stringify(raw));
-    expect(migrated.schemaVersion).toBe(9);
+    expect(migrated.schemaVersion).toBe(11);
     expect(migrated.tracks.some((track) => track.kind === "image" && track.name === "贴图")).toBe(true);
     expect(migrated.tracks.filter((track) => track.kind === "audio").map((track) => [track.name, track.audioRole])).toEqual([
       ["配音", "voice"], ["背景音乐", "music"], ["音效", "sound"]
@@ -65,5 +65,21 @@ describe("project files", () => {
 
     const migrated = parseProject(JSON.stringify(raw));
     expect(migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "video")).toMatchObject({ camera: { preset: "none", startScale: 1, endScale: 1, startX: 0, endX: 0 } });
+  });
+
+  it("migrates schema 9 generated scenes to the multi-effect schema", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    raw.schemaVersion = 9;
+    const generatedTrack = raw.tracks.find((track: { kind: string }) => track.kind === "generated");
+    generatedTrack.clips.push({
+      id: "generated-9", trackId: generatedTrack.id, kind: "generated", label: "旧 AI 分镜", startUs: 0,
+      durationUs: 1_000_000, locked: false, article: "", narration: "", prompt: "", insertMode: "overlay",
+      scenes: [{ id: "scene-9", title: "旧字幕", narration: "", durationUs: 1_000_000, effectId: "title-highlight", textColor: "#ffffff", accentColor: "#ffb84d", fontSize: 58, speed: 1, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, mediaSourceInUs: 0, mediaFit: "cover", mediaVolume: 0, camera: { preset: "none", startScale: 1, endScale: 1, startX: 0, endX: 0, startY: 0, endY: 0, easing: "linear" } }]
+    });
+
+    const migrated = parseProject(JSON.stringify(raw));
+    const clip = migrated.tracks.flatMap((track) => track.clips).find((item) => item.id === "generated-9");
+    expect(migrated.schemaVersion).toBe(11);
+    expect(clip?.kind === "generated" ? clip.scenes[0].additionalEffects : undefined).toEqual([]);
   });
 });

@@ -1,6 +1,6 @@
 import { Store } from "@tauri-apps/plugin-store";
 import type { EditorProject } from "@/domain/project";
-import { serializeProject } from "@/domain/projectFile";
+import { parseProject, serializeProject } from "@/domain/projectFile";
 import { isDesktopRuntime } from "@/services/runtime";
 
 export interface RecoverySnapshot {
@@ -13,6 +13,15 @@ export interface RecentProject {
   path: string;
   name: string;
   lastOpenedAt: string;
+}
+
+export interface ProjectHydrationOptions {
+  desktop: boolean;
+  proxyEnabled: boolean;
+  proxyHeight: number;
+  pathExists: (path: string) => Promise<boolean>;
+  mediaUrl: (path: string) => string;
+  createProxy?: (path: string, assetId: string, durationUs: number) => Promise<{ proxyPath: string; height: number }>;
 }
 
 const sessionFile = "workspace.json";
@@ -68,6 +77,50 @@ function normalizeRecent(value: unknown): RecentProject[] {
 
 export function projectHasRecoverableContent(project: EditorProject): boolean {
   return project.assets.length > 0 || project.tracks.some((track) => track.clips.length > 0);
+}
+
+/** 恢复持久化工程，并让单个素材或代理缓存的异常降级为“素材丢失”。 */
+export async function hydrateProjectAssets(project: EditorProject, options: ProjectHydrationOptions): Promise<EditorProject> {
+  for (const asset of project.assets) {
+    asset.objectUrl = undefined;
+    asset.proxyObjectUrl = undefined;
+    if (!asset.sourcePath || !options.desktop) {
+      asset.missing = true;
+      continue;
+    }
+
+    let sourceExists = false;
+    try {
+      sourceExists = await options.pathExists(asset.sourcePath);
+    } catch {
+      sourceExists = false;
+    }
+    asset.missing = !sourceExists;
+    if (!sourceExists) continue;
+    asset.objectUrl = options.mediaUrl(asset.sourcePath);
+
+    if (asset.proxyPath) {
+      try {
+        if (await options.pathExists(asset.proxyPath)) asset.proxyObjectUrl = options.mediaUrl(asset.proxyPath);
+      } catch {
+        asset.proxyObjectUrl = undefined;
+      }
+    }
+    if (asset.proxyObjectUrl || asset.kind !== "video" || !options.proxyEnabled || !asset.height || asset.height <= options.proxyHeight || !options.createProxy) continue;
+    try {
+      const proxy = await options.createProxy(asset.sourcePath, asset.id, asset.durationUs);
+      asset.proxyPath = proxy.proxyPath;
+      asset.proxyObjectUrl = options.mediaUrl(proxy.proxyPath);
+      asset.proxyHeight = proxy.height;
+    } catch {
+      // 代理属于可重建缓存，失败时继续使用源文件。
+    }
+  }
+  return project;
+}
+
+export async function restoreRecoverySnapshot(snapshot: RecoverySnapshot, options: ProjectHydrationOptions): Promise<EditorProject> {
+  return hydrateProjectAssets(parseProject(snapshot.projectJson), options);
 }
 
 export async function readRecoverySnapshot(): Promise<RecoverySnapshot | null> {

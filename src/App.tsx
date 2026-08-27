@@ -36,13 +36,15 @@ import {
   type ExportJobEvent,
   type ProxyJobEvent
 } from "@/services/media";
-import { isDesktopRuntime, toggleDevTools } from "@/services/runtime";
+import { desktopPlatform, isDesktopRuntime, toggleDevTools, type DesktopPlatform } from "@/services/runtime";
 import {
   clearRecoverySnapshot,
+  hydrateProjectAssets,
   projectHasRecoverableContent,
   readRecentProjects,
   readRecoverySnapshot,
   rememberRecentProject,
+  restoreRecoverySnapshot,
   writeRecoverySnapshot,
   type RecentProject,
   type RecoverySnapshot
@@ -107,7 +109,10 @@ export default function App() {
   const [currentProjectPath, setCurrentProjectPath] = useState<string | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [recoverySnapshot, setRecoverySnapshot] = useState<RecoverySnapshot | null>(null);
+  const [recoveryError, setRecoveryError] = useState("");
+  const [restoringRecovery, setRestoringRecovery] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
+  const [platformLayout, setPlatformLayout] = useState<DesktopPlatform>("browser");
   const fileInput = useRef<HTMLInputElement>(null);
   const savedProjectRef = useRef(serializeProject(useEditorStore.getState().project));
   const project = useEditorStore((state) => state.project);
@@ -132,6 +137,10 @@ export default function App() {
   const generatedClips = project.tracks.flatMap((track) => track.clips).filter((clip): clip is GeneratedBlock => clip.kind === "generated");
   const defaultNarration = generatedClips.find((clip) => clip.id === selectedClipId)?.narration ?? generatedClips[0]?.narration ?? "";
   const loadEffectLibrary = useEffectLibraryStore((state) => state.load);
+
+  useEffect(() => {
+    void desktopPlatform().then(setPlatformLayout).catch(() => setPlatformLayout("browser"));
+  }, []);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -218,29 +227,6 @@ export default function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [copySelected, currentProjectPath, pasteAtPlayhead, project, redo, removeSelected, setRangeEnd, setRangeStart, splitSelected, undo]);
-
-  async function hydrateProjectAssets(next: ReturnType<typeof parseProject>) {
-    for (const asset of next.assets) {
-      if (!asset.sourcePath) {
-        asset.missing = true;
-        continue;
-      }
-      const exists = !isDesktopRuntime() || await mediaPathExists(asset.sourcePath);
-      asset.missing = !exists;
-      asset.objectUrl = exists && isDesktopRuntime() ? localMediaUrl(asset.sourcePath) : undefined;
-      if (isDesktopRuntime() && exists && asset.kind === "video" && asset.height && asset.height > settings.media.proxyHeight && settings.media.proxyEnabled) {
-        try {
-          const proxy = await createProxy(asset.sourcePath, asset.id, asset.durationUs);
-          asset.proxyPath = proxy.proxyPath;
-          asset.proxyObjectUrl = localMediaUrl(proxy.proxyPath);
-          asset.proxyHeight = proxy.height;
-        } catch {
-          // 代理失败时继续使用源文件。
-        }
-      }
-    }
-    return next;
-  }
 
   async function importBrowserMedia(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -363,7 +349,10 @@ export default function App() {
   async function openProjectPath(path: string) {
     if (!path) return;
     try {
-      const next = await hydrateProjectAssets(parseProject(await readProjectFile(path)));
+      const next = await hydrateProjectAssets(parseProject(await readProjectFile(path)), {
+        desktop: isDesktopRuntime(), proxyEnabled: settings.media.proxyEnabled, proxyHeight: settings.media.proxyHeight,
+        pathExists: mediaPathExists, mediaUrl: localMediaUrl, createProxy
+      });
       replaceProject(next);
       savedProjectRef.current = serializeProject(next);
       setCurrentProjectPath(path);
@@ -384,21 +373,29 @@ export default function App() {
   }
 
   async function restoreProject() {
-    if (!recoverySnapshot) return;
+    if (!recoverySnapshot || restoringRecovery) return;
+    setRestoringRecovery(true);
+    setRecoveryError("");
     try {
-      const next = await hydrateProjectAssets(parseProject(recoverySnapshot.projectJson));
+      const next = await restoreRecoverySnapshot(recoverySnapshot, {
+        desktop: isDesktopRuntime(), proxyEnabled: settings.media.proxyEnabled, proxyHeight: settings.media.proxyHeight,
+        pathExists: mediaPathExists, mediaUrl: localMediaUrl, createProxy
+      });
       replaceProject(next);
       setCurrentProjectPath(recoverySnapshot.projectPath);
       setRecoverySnapshot(null);
       const missingCount = next.assets.filter((asset) => asset.missing).length;
       setNotice(missingCount ? `已恢复工程，有 ${missingCount} 个素材需要重新定位` : "已恢复未保存的工程");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "工程恢复失败");
+      setRecoveryError(error instanceof Error ? error.message : "工程恢复失败");
+    } finally {
+      setRestoringRecovery(false);
     }
   }
 
   async function discardRecovery() {
     await clearRecoverySnapshot();
+    setRecoveryError("");
     setRecoverySnapshot(null);
   }
 
@@ -594,7 +591,7 @@ export default function App() {
 
   return (
     <Tooltip.Provider delayDuration={350}>
-      <div className="app-shell">
+      <div className="app-shell" data-desktop-platform={platformLayout}>
         <header className="app-header" data-tauri-drag-region>
           <div className="brand"><span className="brand-mark">B</span><strong>BVideo Studio</strong><span className="project-name">{project.name}</span></div>
           <div className="header-tools">
@@ -620,7 +617,7 @@ export default function App() {
       <AiGenerateDialog open={generateOpen} settings={settings} onOpenChange={setGenerateOpen} onNeedSettings={() => { setGenerateOpen(false); setSettingsOpen(true); }} onCreateNarration={createGeneratedNarration} />
       <AudioCreateDialog open={audioOpen} defaultText={defaultNarration} onOpenChange={setAudioOpen} onCreated={addCreatedAudio} />
       <EffectLibraryDialog open={effectLibraryOpen} onOpenChange={setEffectLibraryOpen} />
-      <ProjectRecoveryDialog snapshot={recoverySnapshot} onDiscard={() => void discardRecovery()} onRestore={() => void restoreProject()} />
+      <ProjectRecoveryDialog snapshot={recoverySnapshot} restoring={restoringRecovery} error={recoveryError} onDiscard={() => void discardRecovery()} onRestore={() => void restoreProject()} />
       <RecentProjectsDialog open={recentOpen} projects={recentProjects} onOpenChange={setRecentOpen} onOpenProject={(path) => void openProjectPath(path)} onBrowse={() => { setRecentOpen(false); void openProject(); }} />
       {updater.visible && updater.info && <UpdateModal info={updater.info} status={updater.status} canDismiss={updater.canDismiss} downloadedBytes={updater.downloadedBytes} totalBytes={updater.totalBytes} progressPercent={updater.progressPercent} errorMessage={updater.errorMessage} installed={updater.installed} onDismiss={() => updater.setVisible(false)} onInstall={() => void updater.installAndRestart()} onRestart={() => void updater.retryRestart()} />}
     </Tooltip.Provider>

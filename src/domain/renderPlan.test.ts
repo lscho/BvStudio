@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createEmptyProject, type AudioClip, type GeneratedBlock, type GeneratedScene, type VideoClip } from "@/domain/project";
 import { buildRenderPlan } from "@/domain/renderPlan";
 import { cameraMotionForPreset } from "@/domain/camera";
+import { createGeneratedEffectLayers } from "@/domain/sceneEffects";
 
 function scene(overrides: Partial<GeneratedScene> = {}): GeneratedScene {
   return {
@@ -56,6 +57,27 @@ describe("buildRenderPlan", () => {
     expect(plan.overlays).toContainEqual(expect.objectContaining({ text: "补充", startUs: 1_000_000, durationUs: 2_000_000 }));
   });
 
+  it("exports every overlapping effect selected for a generated scene", () => {
+    const project = createEmptyProject();
+    const layers = createGeneratedEffectLayers(["scene-focus-stack"], "增长 42%", "#47d7ac", 4_000_000, "ai", "增长 42% 核心结论");
+    project.tracks.find((track) => track.kind === "generated")!.clips.push({
+      id: "generated-multi", trackId: "generated-main", kind: "generated", label: "AI 组合", startUs: 1_000_000,
+      durationUs: 4_000_000, locked: false, article: "", narration: "", prompt: "增长", insertMode: "overlay",
+      scenes: [scene({
+        id: "multi-scene", title: layers[0].text, durationUs: 4_000_000, effectId: layers[0].effectId,
+        textColor: layers[0].textColor, accentColor: layers[0].accentColor, fontSize: layers[0].fontSize,
+        speed: layers[0].speed, transform: layers[0].transform, recipe: layers[0].recipe,
+        additionalEffects: layers.slice(1)
+      })]
+    });
+
+    const overlays = buildRenderPlan(project, "/output.mp4").overlays;
+    expect(overlays).toHaveLength(3);
+    expect(overlays.map((overlay) => ["text" in overlay ? overlay.text : "", overlay.startUs])).toEqual([
+      ["关键结论", 2_120_000], ["增长 42%", 1_000_000], ["42%", 1_480_000]
+    ]);
+  });
+
   it("uses AI-matched local video as a generated scene base", () => {
     const project = createEmptyProject();
     project.assets.push({ id: "broll", name: "growth.mp4", kind: "video", durationUs: 8_000_000, sourcePath: "/media/growth.mp4", hasAudio: true });
@@ -107,5 +129,32 @@ describe("buildRenderPlan", () => {
       targetWidthPx: Math.round(1920 * 0.3 * 1.4), x: 70, y: 35, rotation: -12, opacity: 0.75,
       speed: 1.8, recipe: expect.objectContaining({ entrance: "fade-up" })
     }));
+  });
+
+  it("exports overlapping videos as ordered animated video layers below effects", () => {
+    const project = createEmptyProject();
+    project.assets.push(
+      { id: "background", name: "background.mp4", kind: "video", durationUs: 5_000_000, sourcePath: "/media/background.mp4", hasAudio: true },
+      { id: "foreground", name: "foreground.mp4", kind: "video", durationUs: 5_000_000, sourcePath: "/media/foreground.mp4", hasAudio: true }
+    );
+    project.tracks.find((track) => track.id === "video-main")!.clips.push({ id: "background-clip", trackId: "video-main", kind: "video", label: "background", startUs: 0, durationUs: 5_000_000, locked: false, assetId: "background", sourceInUs: 0, playbackRate: 1, volume: 0, fit: "cover", zIndex: 0, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, camera: cameraMotionForPreset("none") });
+    project.tracks.find((track) => track.id === "video-overlay")!.clips.push({ id: "foreground-clip", trackId: "video-overlay", kind: "video", label: "foreground", startUs: 0, durationUs: 5_000_000, locked: false, assetId: "foreground", sourceInUs: 0, playbackRate: 1, volume: 0.5, fit: "cover", zIndex: 10, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, transformKeyframes: [{ offsetUs: 0, x: 50, y: 50, scale: 1, easing: "ease-in-out" }, { offsetUs: 1_000_000, x: 82, y: 20, scale: 0.3, easing: "ease-in-out" }], camera: cameraMotionForPreset("push-in") });
+    project.tracks.find((track) => track.kind === "effect")!.clips.push({ id: "effect", trackId: "effect-main", kind: "effect", label: "text", startUs: 0, durationUs: 2_000_000, locked: false, effectId: "title-highlight", text: "上层文字", color: "#ffffff", accentColor: "#ffb84d", fontSize: 48, speed: 1, zIndex: 20, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 } });
+
+    const plan = buildRenderPlan(project, "/output.mp4");
+    expect(plan.segments).toEqual([expect.objectContaining({ kind: "video", path: "/media/background.mp4" })]);
+    expect(plan.overlays.map((overlay) => overlay.kind)).toEqual(["video", "text"]);
+    expect(plan.overlays[0]).toMatchObject({ path: "/media/foreground.mp4", zIndex: 10, transformKeyframes: [expect.objectContaining({ x: 50 }), expect.objectContaining({ x: 82 })] });
+    expect(plan.audios).toContainEqual(expect.objectContaining({ path: "/media/foreground.mp4", volume: 0.5, role: "sound" }));
+  });
+
+  it("exports an AI-selected secondary material with its multi-video layout", () => {
+    const project = createEmptyProject();
+    project.assets.push({ id: "secondary", name: "detail.mp4", kind: "video", durationUs: 3_000_000, sourcePath: "/media/detail.mp4" });
+    project.tracks.find((track) => track.kind === "generated")!.clips.push({ id: "generated", trackId: "generated-main", kind: "generated", label: "AI", startUs: 0, durationUs: 2_000_000, locked: false, article: "", narration: "", prompt: "", insertMode: "insert", scenes: [scene({ durationUs: 2_000_000, secondaryMediaAssetId: "secondary", secondaryMediaSourceInUs: 250_000, mediaLayoutPreset: "shrink-bottom-left" })] });
+
+    const overlay = buildRenderPlan(project, "/output.mp4").overlays.find((candidate) => candidate.kind === "video");
+    expect(overlay).toMatchObject({ kind: "video", path: "/media/detail.mp4", sourceInUs: 250_000, zIndex: 30 });
+    expect(overlay?.transformKeyframes).toHaveLength(2);
   });
 });

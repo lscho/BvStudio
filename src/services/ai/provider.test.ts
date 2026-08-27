@@ -84,7 +84,7 @@ describe("provider requests", () => {
       title: "开篇",
       article: "文章",
       narration: "口播",
-      scenes: [{ title: "开篇", narration: "口播", durationSeconds: 3, effectId: allowedEffectId, color: "#ffb84d", cameraPreset: "push-in", mediaAssetId: "local-video", mediaSourceInSeconds: 2 }]
+      scenes: [{ title: "开篇", narration: "口播", durationSeconds: 3, effectIds: [allowedEffectId], color: "#ffb84d", cameraPreset: "push-in", mediaAssetId: "local-video", mediaSourceInSeconds: 2, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" }]
     };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify(responsePlan) } }],
@@ -97,7 +97,7 @@ describe("provider requests", () => {
       durationSeconds: 3,
       style: "简洁",
       materials: [{ id: "local-video", name: "office.mp4", durationSeconds: 12, width: 1920, height: 1080 }]
-    }, "secret")).resolves.toMatchObject({ plan: { title: "开篇", article: "文章", narration: "口播", scenes: [expect.objectContaining({ effectId: retrieveEffects("开篇 口播", 1)[0].id, mediaAssetId: "local-video", mediaSourceInSeconds: 2, cameraPreset: "push-in" })] } });
+    }, "secret")).resolves.toMatchObject({ plan: { title: "开篇", article: "文章", narration: "口播", scenes: [expect.objectContaining({ effectIds: expect.arrayContaining([allowedEffectId]), mediaAssetId: "local-video", mediaSourceInSeconds: 2, cameraPreset: "push-in" })] } });
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(JSON.stringify(payload)).toContain("office.mp4");
     expect(JSON.stringify(payload)).toContain("local-video");

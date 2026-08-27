@@ -1,12 +1,12 @@
 # BVideo `.bveffect` format
 
-`.bveffect` is a UTF-8 JSON file containing declarative effect recipes. It cannot execute JavaScript, load remote assets, or invoke native commands. The current `schemaVersion` is `2` (version `1` remains supported), and files are limited to 2 MB and 100 effects.
+`.bveffect` is a UTF-8 JSON file containing declarative effect recipes. It cannot execute JavaScript, load remote assets, or invoke native commands. The current `schemaVersion` is `3` (versions `1` and `2` remain supported), and files are limited to 2 MB and 100 effects.
 
 ## Top-level fields
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "manifest": {
     "id": "publisher-pack",
     "name": "Publisher Pack",
@@ -27,7 +27,7 @@
 
 ## Effect fields
 
-Each effect has `id`, `name`, `category`, `description`, `tags`, `defaultDurationUs`, `defaultText`, `defaultColor`, `defaultAccentColor`, and `recipe`. Colors use six-digit hex notation. Supported categories are `标题`, `强调`, `卡片`, `标注`, and `布局`.
+Each effect has `id`, `name`, `category`, `description`, `tags`, `defaultDurationUs`, `defaultText`, `defaultColor`, `defaultAccentColor`, and `recipe`. Colors use six-digit hex notation. Supported categories are `标题`, `强调`, `卡片`, `标注`, `布局`, and `场景`.
 
 Recipe fields and allowed values:
 
@@ -55,6 +55,32 @@ Schema v2 recipes can also contain an optional `animation` object:
 
 `durationSeconds` is `0.05..10`; easing supports `linear`, `ease-in`, `ease-out`, and `ease-in-out`. Recipes contain 2 to 16 keyframes with strictly increasing `offset` values from exactly `0` to `1`. Translation is relative to the overlay size (`-400..400` percent), scale is `0.05..5`, and rotation is `-720..720` degrees. The same keyframes are evaluated by the editor preview and FFmpeg export.
 
+## Scene templates
+
+Schema v3 packages can define reusable multi-effect scenes. A scene uses `category: "场景"`, `kind: "scene"`, and a `sceneLayers` array containing 2 to 8 atomic effects from the same package. Nested scenes are rejected. Layer references are automatically namespaced when the package is installed.
+
+```json
+{
+  "id": "intro-scene",
+  "name": "Intro scene",
+  "category": "场景",
+  "kind": "scene",
+  "description": "A title and subtitle combination",
+  "tags": ["intro", "subtitle"],
+  "defaultDurationUs": 4000000,
+  "defaultText": "Main title",
+  "defaultColor": "#ffffff",
+  "defaultAccentColor": "#47d7ac",
+  "recipe": { "layout": "frame", "entrance": "none", "paddingX": 10, "paddingY": 10, "borderWidth": 1, "borderRadius": 2, "backgroundOpacity": 0.2 },
+  "sceneLayers": [
+    { "effectId": "title", "x": 50, "y": 35, "fontSize": 60, "zIndex": 30 },
+    { "effectId": "subtitle", "x": 50, "y": 65, "scale": 0.7, "zIndex": 20, "startRatio": 0.2 }
+  ]
+}
+```
+
+Required layer fields are `effectId`, `x`, `y`, and `zIndex`. Optional fields are `text`, `scale`, `rotation`, `opacity`, `fontSize`, `startRatio`, and `durationRatio`. Installed scene templates participate in the same local subtitle retrieval and cloud AI candidate selection as built-in scenes.
+
 See [`examples/effects/starter-pack.bveffect`](../examples/effects/starter-pack.bveffect) for an installable unsigned example.
 
 ## Signature
@@ -65,4 +91,4 @@ The signature proves package integrity and identifies the signing key fingerprin
 
 ## Project compatibility
 
-When an effect is placed on the timeline or selected by an AI-generated scene, BVideo stores a complete recipe snapshot in project schema v8. Updating or uninstalling its source package therefore does not change existing projects; the snapshot remains available for preview and export.
+When an effect is placed on the timeline or selected by an AI-generated scene, BVideo stores a complete recipe snapshot in project schema v10. Updating or uninstalling its source package therefore does not change existing projects; the snapshot remains available for preview and export.

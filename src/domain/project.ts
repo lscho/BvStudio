@@ -12,6 +12,14 @@ export interface TransformProps {
   opacity: number;
 }
 
+export interface VisualTransformKeyframe {
+  offsetUs: number;
+  x: number;
+  y: number;
+  scale: number;
+  easing: "linear" | "ease-in" | "ease-out" | "ease-in-out";
+}
+
 export interface MediaAsset {
   id: string;
   name: string;
@@ -53,6 +61,10 @@ export interface VideoClip extends BaseClip {
   volume: number;
   fit: "cover" | "contain";
   camera: CameraMotion;
+  zIndex?: number;
+  transform?: TransformProps;
+  transformKeyframes?: VisualTransformKeyframe[];
+  layoutPreset?: "full" | "picture-in-picture-top-left" | "picture-in-picture-top-right" | "picture-in-picture-bottom-left" | "picture-in-picture-bottom-right" | "shrink-top-left" | "shrink-top-right" | "shrink-bottom-left" | "shrink-bottom-right" | "reveal-center" | "custom";
 }
 
 export interface ImageClip extends BaseClip {
@@ -86,6 +98,29 @@ export interface EffectClip extends BaseClip {
   speed: number;
   transform: TransformProps;
   recipe?: EffectRecipe;
+  zIndex?: number;
+  sceneGroupId?: string;
+  sceneTemplateId?: string;
+  matchQuery?: string;
+  transformKeyframes?: VisualTransformKeyframe[];
+}
+
+export interface GeneratedEffectLayer {
+  id: string;
+  effectId: string;
+  text: string;
+  textColor: string;
+  accentColor: string;
+  fontSize: number;
+  speed: number;
+  transform: TransformProps;
+  startOffsetUs: number;
+  durationUs: number;
+  zIndex: number;
+  source: "ai" | "manual" | "scene-template" | "subtitle-match";
+  matchQuery?: string;
+  recipe?: EffectRecipe;
+  transformKeyframes?: VisualTransformKeyframe[];
 }
 
 export interface GeneratedScene {
@@ -105,6 +140,12 @@ export interface GeneratedScene {
   mediaVolume: number;
   camera: CameraMotion;
   recipe?: EffectRecipe;
+  additionalEffects?: GeneratedEffectLayer[];
+  secondaryMediaAssetId?: string;
+  secondaryMediaSourceInUs?: number;
+  secondaryMediaFit?: "cover" | "contain";
+  secondaryMediaVolume?: number;
+  mediaLayoutPreset?: VideoClip["layoutPreset"];
 }
 
 export interface GeneratedBlock extends BaseClip {
@@ -140,7 +181,7 @@ export interface TimelineTrack {
 }
 
 export interface EditorProject {
-  schemaVersion: 9;
+  schemaVersion: 11;
   id: string;
   name: string;
   createdAt: string;
@@ -154,7 +195,7 @@ export interface EditorProject {
 export function createEmptyProject(): EditorProject {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 9,
+    schemaVersion: 11,
     id: crypto.randomUUID(),
     name: "未命名项目",
     createdAt: now,
@@ -163,7 +204,8 @@ export function createEmptyProject(): EditorProject {
     durationUs: 30_000_000,
     assets: [],
     tracks: [
-      { id: "video-main", kind: "video", name: "视频", locked: false, muted: false, hidden: false, clips: [] },
+      { id: "video-main", kind: "video", name: "主视频", locked: false, muted: false, hidden: false, clips: [] },
+      { id: "video-overlay", kind: "video", name: "叠加视频", locked: false, muted: false, hidden: false, clips: [] },
       { id: "image-main", kind: "image", name: "贴图", locked: false, muted: false, hidden: false, clips: [] },
       { id: "generated-main", kind: "generated", name: "AI 内容", locked: false, muted: false, hidden: false, clips: [] },
       { id: "effect-main", kind: "effect", name: "动效", locked: false, muted: false, hidden: false, clips: [] },

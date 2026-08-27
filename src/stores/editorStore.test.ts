@@ -8,8 +8,8 @@ const plan: AiVideoPlan = {
   article: "一段完整文章。",
   narration: "一段口播。",
   scenes: [
-    { title: "开场", narration: "第一段", durationSeconds: 2, effectId: "title-highlight", color: "#ffb84d", cameraPreset: "push-in", mediaAssetId: null, mediaSourceInSeconds: 0 },
-    { title: "重点", narration: "第二段", durationSeconds: 4, effectId: "number-pop", color: "#47d7ac", cameraPreset: "pan-right", mediaAssetId: null, mediaSourceInSeconds: 0 }
+    { title: "开场", narration: "第一段", durationSeconds: 2, effectIds: ["title-highlight"], color: "#ffb84d", cameraPreset: "push-in", mediaAssetId: null, mediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" },
+    { title: "重点", narration: "第二段", durationSeconds: 4, effectIds: ["number-pop"], color: "#47d7ac", cameraPreset: "pan-right", mediaAssetId: null, mediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" }
   ]
 };
 
@@ -29,6 +29,32 @@ beforeEach(() => {
 });
 
 describe("editorStore", () => {
+  it("places overlapping imported videos on separate main and overlay tracks", () => {
+    useEditorStore.getState().addVideo({ id: "main-asset", name: "main.mp4", kind: "video", durationUs: 5_000_000 });
+    useEditorStore.getState().addVideo({ id: "overlay-asset", name: "overlay.mp4", kind: "video", durationUs: 5_000_000 });
+
+    const videos = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).filter((clip): clip is VideoClip => clip.kind === "video");
+    expect(videos).toEqual(expect.arrayContaining([
+      expect.objectContaining({ trackId: "video-main", assetId: "main-asset", zIndex: 0, layoutPreset: "full" }),
+      expect.objectContaining({ trackId: "video-overlay", assetId: "overlay-asset", zIndex: 10, layoutPreset: "picture-in-picture-top-right" })
+    ]));
+  });
+
+  it("preserves visual keyframe continuity when an insertion splits a video", () => {
+    useEditorStore.getState().addVideo({ id: "animated-asset", name: "animated.mp4", kind: "video", durationUs: 20_000_000 });
+    const clipId = useEditorStore.getState().selectedClipId!;
+    useEditorStore.getState().updateVideo(clipId, { transformKeyframes: [
+      { offsetUs: 0, x: 50, y: 50, scale: 1, easing: "linear" },
+      { offsetUs: 10_000_000, x: 82, y: 20, scale: 0.3, easing: "linear" }
+    ] });
+    useEditorStore.getState().addGeneratedPlan(plan, "插入", "insert", { startUs: 5_000_000 });
+
+    const videos = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).filter((clip): clip is VideoClip => clip.kind === "video").sort((left, right) => left.startUs - right.startUs);
+    expect(videos[0].transformKeyframes?.at(-1)).toMatchObject({ offsetUs: 5_000_000, x: 66, y: 35, scale: 0.65 });
+    expect(videos[1].transformKeyframes?.[0]).toMatchObject({ offsetUs: 0, x: 66, y: 35, scale: 0.65 });
+    expect(videos[1].transformKeyframes?.[1]).toMatchObject({ offsetUs: 5_000_000, x: 82, y: 20, scale: 0.3 });
+  });
+
   it("splits a video and shifts its continuation when an AI block is inserted", () => {
     const store = useEditorStore.getState();
     store.addVideo({ id: "asset-1", name: "source.mp4", kind: "video", durationUs: 20_000_000 });
@@ -153,9 +179,39 @@ describe("editorStore", () => {
     const generated = useEditorStore.getState().project.tracks.find((track) => track.kind === "generated")!.clips[0];
     expect(generated.kind).toBe("generated");
     if (generated.kind !== "generated") return;
-    expect(generated.scenes[0]).toMatchObject({ mediaAssetId: "broll", mediaSourceInUs: 4_000_000, textColor: "#ffffff", accentColor: "#ffb84d", fontSize: 58, speed: 1, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, camera: { preset: "push-in", startScale: 1, endScale: 1.22 } });
+    expect(generated.scenes[0]).toMatchObject({ mediaAssetId: "broll", mediaSourceInUs: 4_000_000, textColor: "#f7f8fa", accentColor: "#ffb84d", fontSize: 58, speed: 1, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, camera: { preset: "push-in", startScale: 1, endScale: 1.22 } });
     useEditorStore.getState().updateGeneratedScene(generated.id, generated.scenes[0].id, { fontSize: 72, speed: 1.6, transform: { ...generated.scenes[0].transform, x: 68 } });
     expect((useEditorStore.getState().project.tracks.find((track) => track.kind === "generated")!.clips[0] as typeof generated).scenes[0]).toMatchObject({ fontSize: 72, speed: 1.6, transform: { x: 68 } });
+  });
+
+  it("expands a scene template into overlapping timeline effects with shared AI metadata", () => {
+    useEditorStore.getState().setPlayhead(2_000_000);
+    useEditorStore.getState().addEffect("scene-focus-stack");
+    const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips;
+
+    expect(effects).toHaveLength(3);
+    expect(new Set(effects.map((effect) => effect.kind === "effect" ? effect.sceneGroupId : undefined))).toHaveLength(1);
+    expect(effects.every((effect) => effect.kind === "effect" && effect.sceneTemplateId === "scene-focus-stack")).toBe(true);
+    expect(effects.map((effect) => effect.startUs)).toEqual([2_000_000, 2_480_000, 3_120_000]);
+    expect(effects.every((effect) => effect.startUs < 6_000_000 && effect.startUs + effect.durationUs <= 6_000_000)).toBe(true);
+  });
+
+  it("stores multiple AI-selected effects and clamps them when the scene gets shorter", () => {
+    const multiEffectPlan: AiVideoPlan = {
+      ...plan,
+      scenes: [{ ...plan.scenes[0], effectIds: ["scene-focus-stack", "quote-card"] }]
+    };
+    useEditorStore.getState().addGeneratedPlan(multiEffectPlan, "增长 42% 的核心结论", "overlay");
+    const generated = useEditorStore.getState().project.tracks.find((track) => track.kind === "generated")!.clips[0];
+    expect(generated.kind).toBe("generated");
+    if (generated.kind !== "generated") return;
+    expect(generated.scenes[0].additionalEffects?.length).toBeGreaterThanOrEqual(3);
+    expect(generated.scenes[0].additionalEffects?.every((layer) => layer.matchQuery?.includes("开场"))).toBe(true);
+
+    useEditorStore.getState().updateGeneratedScene(generated.id, generated.scenes[0].id, { durationUs: 500_000 });
+    const updated = useEditorStore.getState().project.tracks.find((track) => track.kind === "generated")!.clips[0];
+    if (updated.kind !== "generated") return;
+    expect(updated.scenes[0].additionalEffects?.every((layer) => layer.startOffsetUs + layer.durationUs <= 500_000)).toBe(true);
   });
 
   it("creates exact timed subtitles for cloud narration and regenerates them after edits", () => {

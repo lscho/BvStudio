@@ -50,6 +50,22 @@ pub struct EffectKeyframeData {
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SceneEffectTemplateLayerData {
+    effect_id: String,
+    text: Option<String>,
+    x: f64,
+    y: f64,
+    scale: Option<f64>,
+    rotation: Option<f64>,
+    opacity: Option<f64>,
+    font_size: Option<f64>,
+    z_index: i32,
+    start_ratio: Option<f64>,
+    duration_ratio: Option<f64>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EffectDefinitionData {
     id: String,
     name: String,
@@ -61,6 +77,10 @@ pub struct EffectDefinitionData {
     default_color: String,
     default_accent_color: String,
     recipe: EffectRecipeData,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scene_layers: Option<Vec<SceneEffectTemplateLayerData>>,
 }
 
 #[derive(Deserialize)]
@@ -133,7 +153,30 @@ fn verify_signature(value: &Value, signature: Option<&PackageSignature>) -> Resu
 fn validate_effect(effect: &EffectDefinitionData) -> Result<(), String> {
     if !safe_id(&effect.id) { return Err("动效 ID 只能包含小写字母、数字、横线和下划线".into()); }
     if effect.name.trim().is_empty() || effect.name.chars().count() > 60 { return Err("动效名称无效".into()); }
-    if !["标题", "强调", "卡片", "标注", "布局"].contains(&effect.category.as_str()) { return Err("动效分类无效".into()); }
+    if !["标题", "强调", "卡片", "标注", "布局", "场景"].contains(&effect.category.as_str()) { return Err("动效分类无效".into()); }
+    let is_scene = effect.kind.as_deref() == Some("scene");
+    if !matches!(effect.kind.as_deref(), None | Some("effect") | Some("scene")) { return Err("动效 kind 无效".into()); }
+    if is_scene != (effect.category == "场景") { return Err("场景分类必须声明 kind=scene".into()); }
+    if is_scene {
+        let layers = effect.scene_layers.as_ref().ok_or("场景模板缺少 sceneLayers")?;
+        if !(2..=8).contains(&layers.len()) { return Err("场景模板必须包含 2 到 8 个动效层".into()); }
+        for layer in layers {
+            if !safe_id(&layer.effect_id) { return Err("场景图层引用的动效 ID 无效".into()); }
+            if !(0.0..=100.0).contains(&layer.x) || !(0.0..=100.0).contains(&layer.y)
+                || !layer.scale.is_none_or(|value| (0.3..=3.0).contains(&value))
+                || !layer.rotation.is_none_or(|value| (-180.0..=180.0).contains(&value))
+                || !layer.opacity.is_none_or(|value| (0.0..=1.0).contains(&value))
+                || !layer.font_size.is_none_or(|value| (8.0..=240.0).contains(&value))
+                || !(0..=200).contains(&layer.z_index)
+                || !layer.start_ratio.is_none_or(|value| (0.0..=0.95).contains(&value))
+                || !layer.duration_ratio.is_none_or(|value| (0.01..=1.0).contains(&value)) {
+                return Err("场景图层参数超出范围".into());
+            }
+            if layer.text.as_ref().is_some_and(|text| text.chars().count() > 500) { return Err("场景图层文字过长".into()); }
+        }
+    } else if effect.scene_layers.is_some() {
+        return Err("普通动效不能声明 sceneLayers".into());
+    }
     if !(100_000..=120_000_000).contains(&effect.default_duration_us) { return Err("动效默认时长无效".into()); }
     if !valid_color(&effect.default_color) || !valid_color(&effect.default_accent_color) { return Err("动效颜色无效".into()); }
     if !["highlight", "number", "panel", "underline", "frame"].contains(&effect.recipe.layout.as_str()) { return Err("动效布局类型无效".into()); }
@@ -161,7 +204,7 @@ fn validate_effect(effect: &EffectDefinitionData) -> Result<(), String> {
 fn inspect_contents(contents: &str, path: &Path) -> Result<EffectPackageInfo, String> {
     let value: Value = serde_json::from_str(contents).map_err(|error| format!("动效包 JSON 无效: {error}"))?;
     let package: EffectPackageFile = serde_json::from_value(value.clone()).map_err(|error| format!("动效包结构无效: {error}"))?;
-    if !matches!(package.schema_version, 1 | 2) { return Err("不支持此动效包版本".into()); }
+    if !matches!(package.schema_version, 1 | 2 | 3) { return Err("不支持此动效包版本".into()); }
     if !safe_id(&package.manifest.id) { return Err("动效包 ID 无效".into()); }
     package_version(&package.manifest.version)?;
     if package.manifest.name.trim().is_empty() || package.manifest.name.chars().count() > 80 { return Err("动效包名称无效".into()); }
@@ -171,12 +214,26 @@ fn inspect_contents(contents: &str, path: &Path) -> Result<EffectPackageInfo, St
     let mut effect_ids = HashSet::new();
     for effect in &package.effects {
         if package.schema_version == 1 && effect.recipe.animation.is_some() { return Err("关键帧动画需要使用动效包 schemaVersion 2".into()); }
+        if package.schema_version < 3 && (effect.kind.is_some() || effect.scene_layers.is_some() || effect.category == "场景") { return Err("场景模板需要使用动效包 schemaVersion 3".into()); }
         validate_effect(effect)?;
         if !effect_ids.insert(effect.id.as_str()) { return Err(format!("动效 ID 重复: {}", effect.id)); }
     }
+    for effect in &package.effects {
+        let Some(layers) = &effect.scene_layers else { continue; };
+        for layer in layers {
+            let referenced = package.effects.iter().find(|candidate| candidate.id == layer.effect_id)
+                .ok_or_else(|| format!("场景图层引用了包内不存在的动效: {}", layer.effect_id))?;
+            if referenced.kind.as_deref() == Some("scene") { return Err("场景模板不能嵌套其他场景模板".into()); }
+        }
+    }
     let (verified, signer_fingerprint) = verify_signature(&value, package.signature.as_ref())?;
     let mut effects = package.effects;
-    for effect in &mut effects { effect.id = format!("{}:{}", package.manifest.id, effect.id); }
+    for effect in &mut effects {
+        if let Some(layers) = &mut effect.scene_layers {
+            for layer in layers.iter_mut() { layer.effect_id = format!("{}:{}", package.manifest.id, layer.effect_id); }
+        }
+        effect.id = format!("{}:{}", package.manifest.id, effect.id);
+    }
     Ok(EffectPackageInfo { schema_version: package.schema_version, manifest: package.manifest, effects, verified, signer_fingerprint, path: path.to_string_lossy().into_owned() })
 }
 
@@ -271,6 +328,18 @@ mod tests {
         assert_eq!(animation.keyframes.len(), 3);
         let invalid = contents.replacen("\"schemaVersion\": 2", "\"schemaVersion\": 1", 1);
         assert!(inspect_contents(&invalid, Path::new("invalid.bveffect")).err().unwrap().contains("schemaVersion 2"));
+    }
+
+    #[test]
+    fn validates_v3_scene_templates_and_namespaces_layer_references() {
+        let contents = r##"{"schemaVersion":3,"manifest":{"id":"scene-pack","name":"Scenes","version":"1.0.0","author":"BVideo","description":"Scene templates"},"effects":[{"id":"title","name":"Title","category":"标题","description":"","tags":["title"],"defaultDurationUs":2000000,"defaultText":"Title","defaultColor":"#ffffff","defaultAccentColor":"#47d7ac","recipe":{"layout":"highlight","entrance":"fade-up","paddingX":10,"paddingY":10,"borderWidth":0,"borderRadius":0,"backgroundOpacity":0}},{"id":"intro","name":"Intro scene","category":"场景","kind":"scene","description":"","tags":["scene"],"defaultDurationUs":4000000,"defaultText":"Intro","defaultColor":"#ffffff","defaultAccentColor":"#47d7ac","recipe":{"layout":"frame","entrance":"none","paddingX":10,"paddingY":10,"borderWidth":1,"borderRadius":2,"backgroundOpacity":0.2},"sceneLayers":[{"effectId":"title","text":"Main","x":50,"y":35,"fontSize":60,"zIndex":30},{"effectId":"title","text":"Sub","x":50,"y":65,"scale":0.7,"zIndex":20,"startRatio":0.2}]}]}"##;
+        let info = inspect_contents(contents, Path::new("scenes.bveffect")).unwrap();
+        assert_eq!(info.schema_version, 3);
+        assert_eq!(info.effects[1].id, "scene-pack:intro");
+        assert_eq!(info.effects[1].scene_layers.as_ref().unwrap()[0].effect_id, "scene-pack:title");
+
+        let invalid = contents.replace("\"effectId\":\"title\"", "\"effectId\":\"missing\"");
+        assert!(inspect_contents(&invalid, Path::new("invalid.bveffect")).err().unwrap().contains("不存在"));
     }
 
     #[test]

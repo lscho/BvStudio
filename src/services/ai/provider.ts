@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isDesktopRuntime } from "@/services/runtime";
-import { retrieveEffects } from "@/domain/effects";
+import { effectSelectionsForText } from "@/domain/effects";
+import { effectIdsForSubtitle } from "@/domain/sceneEffects";
 import { createAiVideoPlanSchema, createVideoPlanJsonSchema, type AiVideoPlan } from "@/services/ai/schema";
 import type { EffectDefinition } from "@/domain/effects";
 import { CAMERA_PRESETS } from "@/domain/camera";
@@ -102,10 +103,10 @@ function modelsEndpoint(config: AiProviderConfig) {
 }
 
 function systemPrompt(candidates: EffectDefinition[], materials: AiMaterialCandidate[]) {
-  const effects = candidates.map(({ id, name, description, tags }) => ({ id, name, description, tags }));
+  const effects = candidates.map(({ id, name, description, tags, kind, sceneLayers }) => ({ id, name, description, tags, kind: kind ?? "effect", layerCount: sceneLayers?.length ?? 1 }));
   const media = materials.map(({ id, name, durationSeconds, width, height }) => ({ id, name, durationSeconds, width, height }));
   const cameras = CAMERA_PRESETS.map(({ id, name, description }) => ({ id, name, description }));
-  return `你是视频分镜、动效与素材规划器。根据主题生成中文文章、口播和分镜。只能从以下动效中选择，不得创造其他 effectId：${JSON.stringify(effects)}。每个分镜选择一个 cameraPreset：${JSON.stringify(cameras)}。可用本地视频素材：${JSON.stringify(media)}。仅在素材名称和分镜内容确实相关时填写对应 mediaAssetId，否则填写 null；mediaSourceInSeconds 必须位于素材时长内。口播应自然、简洁，每个分镜时长与内容匹配。客户端会根据每段口播生成带时间字幕，并再次本地匹配动效。`;
+  return `你是视频分镜、动效与多视频素材规划器。根据主题生成中文文章、口播和分镜。每个分镜通过 effectIds 选择 1 到 4 个可叠加动效；kind=scene 的条目会展开为多个图层，通常只需选择一个。只能从以下动效中选择，不得创造其他 ID：${JSON.stringify(effects)}。每个分镜选择一个 cameraPreset：${JSON.stringify(cameras)}。可用本地视频素材：${JSON.stringify(media)}。mediaAssetId 是背景或主画面素材；secondaryMediaAssetId 是前景视频图层，仅在对比、演示、反应或画面交接确有帮助时选择，否则为 null。两个素材入点必须在各自时长内。mediaLayoutPreset 可选择 full、四角画中画、缩小到四角或中心放大；需要“当前视频缩小移到角落并露出另一个视频”时，为前景素材选择 shrink-*。口播应自然、简洁，每个分镜时长与内容匹配。客户端会根据带时间字幕再次检索场景、多层动效和多视频布局。`;
 }
 
 function userPrompt(input: GeneratePlanInput) {
@@ -314,7 +315,7 @@ export async function generateVideoPlan(
   signal?: AbortSignal
 ): Promise<GeneratedVideoPlan> {
   validateProviderConfig(config);
-  const candidates = retrieveEffects(input.topic);
+  const candidates = effectSelectionsForText(input.topic, 8);
   const response = await withRetry(() => callProvider(config, requestPayload(config, input, candidates), browserApiKey, signal), signal);
   if (response.status < 200 || response.status >= 300) throw new Error(providerError(response.body, response.status));
   const usage = extractTokenUsage(config.protocol, response.body, config);
@@ -324,7 +325,10 @@ export async function generateVideoPlan(
     ...parsed,
     scenes: parsed.scenes.map((scene) => ({
       ...scene,
-      effectId: retrieveEffects(`${scene.title} ${scene.narration}`, 1)[0]?.id ?? scene.effectId
+      effectIds: [...new Set([
+        ...effectIdsForSubtitle(`${scene.title} ${scene.narration}`, 3),
+        ...scene.effectIds
+      ])].slice(0, 4)
     }))
   };
   return {

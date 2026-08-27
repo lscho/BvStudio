@@ -179,6 +179,27 @@ pub struct RenderOverlay {
     image_data_base64: Option<String>,
     image_path: Option<String>,
     target_width_px: Option<u32>,
+    scale: Option<f64>,
+    z_index: Option<i32>,
+    transform_keyframes: Option<Vec<RenderTransformKeyframe>>,
+    path: Option<String>,
+    source_in_us: Option<u64>,
+    playback_rate: Option<f64>,
+    fit: Option<String>,
+    #[serde(rename = "loop")]
+    loop_media: Option<bool>,
+    camera: Option<RenderCameraMotion>,
+    camera_duration_us: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderTransformKeyframe {
+    offset_us: u64,
+    x: f64,
+    y: f64,
+    scale: f64,
+    easing: String,
 }
 
 #[derive(Deserialize)]
@@ -698,8 +719,36 @@ fn keyframe_expression(animation: &RenderEffectAnimation, field: &str, local_tim
     Some(expression)
 }
 
-fn camera_filter(segment: &RenderSegment, width: u32, height: u32, fps: f64) -> Option<String> {
-    let camera = segment.camera.as_ref()?;
+fn transform_keyframe_value(keyframe: &RenderTransformKeyframe, field: &str) -> f64 {
+    match field {
+        "x" => keyframe.x.clamp(-200.0, 300.0),
+        "y" => keyframe.y.clamp(-200.0, 300.0),
+        "scale" => keyframe.scale.clamp(0.05, 5.0),
+        _ => 0.0,
+    }
+}
+
+fn transform_keyframe_expression(keyframes: &[RenderTransformKeyframe], field: &str, local_time: &str) -> Option<String> {
+    if keyframes.is_empty() { return None; }
+    let mut frames = keyframes.iter().collect::<Vec<_>>();
+    frames.sort_by_key(|frame| frame.offset_us);
+    let mut expression = format!("{:.9}", transform_keyframe_value(frames.last()?, field));
+    for pair in frames.windows(2).rev() {
+        let left = pair[0];
+        let right = pair[1];
+        let left_time = left.offset_us as f64 / 1_000_000.0;
+        let right_time = right.offset_us as f64 / 1_000_000.0;
+        let span = (right_time - left_time).max(0.000_001);
+        let progress = format!("min(max((({local_time})-{left_time:.9})/{span:.9},0),1)");
+        let eased = easing_expression(&progress, &right.easing);
+        let from = transform_keyframe_value(left, field);
+        let delta = transform_keyframe_value(right, field) - from;
+        expression = format!("if(lte(({local_time}),{right_time:.9}),{from:.9}+({delta:.9})*({eased}),{expression})");
+    }
+    Some(expression)
+}
+
+fn camera_filter_for(camera: &RenderCameraMotion, duration_us: u64, offset_us: u64, width: u32, height: u32, fps: f64) -> Option<String> {
     let start_scale = camera.start_scale.clamp(1.0, 3.0);
     let end_scale = camera.end_scale.clamp(1.0, 3.0);
     let start_x = camera.start_x.clamp(-100.0, 100.0);
@@ -710,8 +759,8 @@ fn camera_filter(segment: &RenderSegment, width: u32, height: u32, fps: f64) -> 
         && start_x.abs() < 0.000_001 && end_x.abs() < 0.000_001 && start_y.abs() < 0.000_001 && end_y.abs() < 0.000_001 {
         return None;
     }
-    let duration = segment.camera_duration_us.unwrap_or(segment.duration_us).max(1) as f64 / 1_000_000.0;
-    let offset = segment.camera_offset_us.unwrap_or(0) as f64 / 1_000_000.0;
+    let duration = duration_us.max(1) as f64 / 1_000_000.0;
+    let offset = offset_us as f64 / 1_000_000.0;
     let progress = format!("min(max((on/{fps:.9}+{offset:.9})/{duration:.9},0),1)");
     let eased = easing_expression(&progress, &camera.easing);
     let interpolate = |start: f64, end: f64| format!("{start:.9}+({:.9})*({eased})", end - start);
@@ -721,6 +770,11 @@ fn camera_filter(segment: &RenderSegment, width: u32, height: u32, fps: f64) -> 
     Some(format!(
         "zoompan=z='{zoom}':x='(iw-iw/zoom)/2*(1+({x})/100)':y='(ih-ih/zoom)/2*(1+({y})/100)':d=1:s={width}x{height}:fps={fps:.9}"
     ))
+}
+
+fn camera_filter(segment: &RenderSegment, width: u32, height: u32, fps: f64) -> Option<String> {
+    let camera = segment.camera.as_ref()?;
+    camera_filter_for(camera, segment.camera_duration_us.unwrap_or(segment.duration_us), segment.camera_offset_us.unwrap_or(0), width, height, fps)
 }
 
 fn render_segment(ffmpeg: &Path, plan: &RenderPlan, segment: &RenderSegment, output: &Path, index: usize, encoder: &str, reporter: &ExportReporter, progress_start: f64, progress_span: f64, log_path: &Path) -> Result<(), String> {
@@ -775,19 +829,28 @@ fn render_overlays(ffmpeg: &Path, plan: &RenderPlan, input: &Path, output: &Path
     let mut command = Command::new(ffmpeg);
     command.arg("-y").arg("-i").arg(input);
     let mut chain = String::new();
-    for (index, overlay) in plan.overlays.iter().enumerate() {
+    let mut overlays = plan.overlays.iter().collect::<Vec<_>>();
+    overlays.sort_by_key(|overlay| overlay.z_index.unwrap_or(200));
+    for (index, overlay) in overlays.iter().enumerate() {
         let is_image = overlay.kind.as_deref() == Some("image");
-        let image_path = if is_image {
-            ensure_source(overlay.image_path.as_deref().ok_or("贴图图层缺少源路径")?)?
+        let is_video = overlay.kind.as_deref() == Some("video");
+        let overlay_duration = seconds(overlay.duration_us.max(1));
+        if is_video {
+            if overlay.loop_media.unwrap_or(false) { command.args(["-stream_loop", "-1"]); }
+            command.args(["-ss", &seconds(overlay.source_in_us.unwrap_or(0)), "-t", &overlay_duration, "-i"])
+                .arg(ensure_source(overlay.path.as_deref().ok_or("视频图层缺少源路径")?)?);
         } else {
+            let image_path = if is_image {
+                ensure_source(overlay.image_path.as_deref().ok_or("贴图图层缺少源路径")?)?
+            } else {
             let path = job_dir.join(format!("overlay-{index}.png"));
             let data = overlay.image_data_base64.as_deref().ok_or("文字动效缺少栅格图层")?;
             let image = BASE64.decode(data).map_err(|error| format!("动效图层数据无效: {error}"))?;
             fs::write(&path, image).map_err(|error| format!("无法写入动效图层: {error}"))?;
             path
-        };
-        let overlay_duration = seconds(overlay.duration_us.max(1));
-        command.args(["-loop", "1", "-framerate", &format!("{:.6}", plan.fps.clamp(1.0, 120.0)), "-t", &overlay_duration, "-i"]).arg(&image_path);
+            };
+            command.args(["-loop", "1", "-framerate", &format!("{:.6}", plan.fps.clamp(1.0, 120.0)), "-t", &overlay_duration, "-i"]).arg(&image_path);
+        }
         let input_label = if index == 0 { "0:v".into() } else { format!("v{}", index - 1) };
         let start = overlay.start_us as f64 / 1_000_000.0;
         let end = (overlay.start_us + overlay.duration_us) as f64 / 1_000_000.0;
@@ -797,13 +860,41 @@ fn render_overlays(ffmpeg: &Path, plan: &RenderPlan, input: &Path, output: &Path
         let keyframes = overlay.recipe.as_ref().and_then(|recipe| recipe.animation.as_ref());
         let source_label = format!("ovsrc{index}");
         let mut source_filters = Vec::new();
-        if is_image {
+        if is_video {
+            let rate = overlay.playback_rate.unwrap_or(1.0).clamp(0.25, 4.0);
+            source_filters.push(format!("setpts=(PTS-STARTPTS)/{rate:.6}"));
+            let fit = if overlay.fit.as_deref() == Some("contain") {
+                format!("scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:black", plan.width, plan.height, plan.width, plan.height)
+            } else {
+                format!("scale={}:{}:force_original_aspect_ratio=increase,crop={}:{}", plan.width, plan.height, plan.width, plan.height)
+            };
+            source_filters.push(fit);
+            if let Some(camera) = overlay.camera.as_ref().and_then(|camera| camera_filter_for(camera, overlay.camera_duration_us.unwrap_or(overlay.duration_us), 0, plan.width, plan.height, plan.fps.clamp(1.0, 120.0))) {
+                source_filters.push(camera);
+            } else {
+                source_filters.push(format!("fps={:.6}", plan.fps.clamp(1.0, 120.0)));
+            }
+            source_filters.push("format=rgba".into());
+            source_filters.push(format!("colorchannelmixer=aa={:.6}", overlay.opacity.unwrap_or(1.0).clamp(0.0, 1.0)));
+        } else if is_image {
             let width = overlay.target_width_px.unwrap_or(plan.width / 3).clamp(8, plan.width.saturating_mul(4).max(8));
             source_filters.push(format!("scale=w={width}:h=-1"));
             source_filters.push("format=rgba".into());
             source_filters.push(format!("colorchannelmixer=aa={:.6}", overlay.opacity.unwrap_or(1.0).clamp(0.0, 1.0)));
         } else {
             source_filters.push("format=rgba".into());
+        }
+        let local_time = format!("t-{start:.6}");
+        if let Some(keyframes) = overlay.transform_keyframes.as_deref().filter(|frames| !frames.is_empty()) {
+            if let Some(mut factor) = transform_keyframe_expression(keyframes, "scale", &local_time) {
+                if !is_video {
+                    factor = format!("({factor})/{:.9}", overlay.scale.unwrap_or(1.0).clamp(0.05, 5.0));
+                }
+                source_filters.push(format!("scale=w='max(2,trunc(iw*({factor})/2)*2)':h='max(2,trunc(ih*({factor})/2)*2)':eval=frame"));
+            }
+        } else if is_video {
+            let factor = overlay.scale.unwrap_or(1.0).clamp(0.05, 5.0);
+            source_filters.push(format!("scale=w='max(2,trunc(iw*{factor:.9}/2)*2)':h='max(2,trunc(ih*{factor:.9}/2)*2)'"));
         }
         if let Some(animation) = keyframes {
             if let Some(factor) = keyframe_expression(animation, "scale", "t", speed) {
@@ -814,7 +905,7 @@ fn render_overlays(ffmpeg: &Path, plan: &RenderPlan, input: &Path, output: &Path
                 let angle = format!("({base_rotation:.9}+({rotation}))*PI/180");
                 source_filters.push(format!("rotate=a='{angle}':ow='sqrt(iw*iw+ih*ih)':oh='sqrt(iw*iw+ih*ih)':c=none"));
             }
-        } else if is_image {
+        } else if is_image || is_video {
             let radians = overlay.rotation.unwrap_or(0.0).clamp(-360.0, 360.0).to_radians();
             if radians.abs() > 0.000_001 {
                 source_filters.push(format!("rotate=a={radians:.9}:ow=rotw({radians:.9}):oh=roth({radians:.9}):c=none"));
@@ -834,10 +925,13 @@ fn render_overlays(ffmpeg: &Path, plan: &RenderPlan, input: &Path, output: &Path
         source_filters.push(format!("setpts=PTS+{start:.6}/TB"));
         chain.push_str(&format!("[{}:v]{}[{source_label}];", index + 1, source_filters.join(",")));
         let progress = format!("min(max((t-{start:.6})/{animation_duration:.6},0),1)");
-        let target_x = format!("main_w*{:.6}-overlay_w/2", (overlay.x / 100.0).clamp(0.0, 1.0));
-        let target_y = format!("main_h*{:.6}-overlay_h/2", (overlay.y / 100.0).clamp(0.0, 1.0));
-        let (x, y) = if let Some(animation) = keyframes {
-            let local_time = format!("t-{start:.6}");
+        let target_x = format!("main_w*{:.6}-overlay_w/2", (overlay.x / 100.0).clamp(-2.0, 3.0));
+        let target_y = format!("main_h*{:.6}-overlay_h/2", (overlay.y / 100.0).clamp(-2.0, 3.0));
+        let (x, y) = if let Some(transform_keyframes) = overlay.transform_keyframes.as_deref().filter(|frames| !frames.is_empty()) {
+            let x = transform_keyframe_expression(transform_keyframes, "x", &local_time).unwrap_or_else(|| overlay.x.to_string());
+            let y = transform_keyframe_expression(transform_keyframes, "y", &local_time).unwrap_or_else(|| overlay.y.to_string());
+            (format!("main_w*({x})/100-overlay_w/2"), format!("main_h*({y})/100-overlay_h/2"))
+        } else if let Some(animation) = keyframes {
             let translate_x = keyframe_expression(animation, "translateX", &local_time, speed).unwrap_or_else(|| "0".into());
             let translate_y = keyframe_expression(animation, "translateY", &local_time, speed).unwrap_or_else(|| "0".into());
             (format!("{target_x}+overlay_w*({translate_x})/100"), format!("{target_y}+overlay_h*({translate_y})/100"))
@@ -852,7 +946,7 @@ fn render_overlays(ffmpeg: &Path, plan: &RenderPlan, input: &Path, output: &Path
         ));
     }
     chain.pop();
-    let final_label = format!("[v{}]", plan.overlays.len() - 1);
+    let final_label = format!("[v{}]", overlays.len() - 1);
     let total_duration_us = plan.segments.iter().map(|segment| segment.duration_us).sum::<u64>();
     command.args(["-filter_complex", &chain, "-map", &final_label, "-map", "0:a?", "-t", &seconds(total_duration_us)]);
     apply_video_encoder(&mut command, encoder);
@@ -1059,6 +1153,9 @@ mod tests {
                 image_data_base64: Some(BASE64.encode(fs::read(&fixture).unwrap())),
                 image_path: None,
                 target_width_px: None,
+                scale: Some(1.0), z_index: Some(220), transform_keyframes: None,
+                path: None, source_in_us: None, playback_rate: None, fit: None, loop_media: None,
+                camera: None, camera_duration_us: None,
             }, RenderOverlay {
                 kind: Some("text".into()),
                 start_us: 0,
@@ -1075,6 +1172,9 @@ mod tests {
                 image_data_base64: Some(BASE64.encode(fs::read(&fixture).unwrap())),
                 image_path: None,
                 target_width_px: None,
+                scale: Some(1.0), z_index: Some(230), transform_keyframes: None,
+                path: None, source_in_us: None, playback_rate: None, fit: None, loop_media: None,
+                camera: None, camera_duration_us: None,
             }, RenderOverlay {
                 kind: Some("image".into()),
                 start_us: 0,
@@ -1091,6 +1191,35 @@ mod tests {
                 image_data_base64: None,
                 image_path: Some(fixture.to_string_lossy().into_owned()),
                 target_width_px: Some(32),
+                scale: Some(1.0), z_index: Some(150), transform_keyframes: None,
+                path: None, source_in_us: None, playback_rate: None, fit: None, loop_media: None,
+                camera: None, camera_duration_us: None,
+            }, RenderOverlay {
+                kind: Some("video".into()),
+                start_us: 500_000,
+                duration_us: 500_000,
+                x: 50.0,
+                y: 50.0,
+                opacity: Some(1.0),
+                rotation: Some(0.0),
+                speed: Some(1.0),
+                recipe: None,
+                image_data_base64: None,
+                image_path: None,
+                target_width_px: None,
+                scale: Some(1.0),
+                z_index: Some(10),
+                transform_keyframes: Some(vec![
+                    RenderTransformKeyframe { offset_us: 0, x: 50.0, y: 50.0, scale: 1.0, easing: "ease-in-out".into() },
+                    RenderTransformKeyframe { offset_us: 300_000, x: 82.0, y: 20.0, scale: 0.3, easing: "ease-in-out".into() },
+                ]),
+                path: Some(source.to_string_lossy().into_owned()),
+                source_in_us: Some(0),
+                playback_rate: Some(1.0),
+                fit: Some("cover".into()),
+                loop_media: Some(true),
+                camera: Some(RenderCameraMotion { start_scale: 1.0, end_scale: 1.1, start_x: 0.0, end_x: 10.0, start_y: 0.0, end_y: 0.0, easing: "ease-out".into() }),
+                camera_duration_us: Some(500_000),
             }],
             audios: vec![
                 RenderAudioClip { path: voice.to_string_lossy().into_owned(), start_us: 200_000, duration_us: 500_000, source_in_us: 0, playback_rate: 1.0, volume: 1.0, fade_in_us: 50_000, fade_out_us: 50_000, role: "voice".into() },

@@ -1,4 +1,4 @@
-export type EffectCategory = "标题" | "强调" | "卡片" | "标注" | "布局";
+export type EffectCategory = "标题" | "强调" | "卡片" | "标注" | "布局" | "场景";
 export type EffectLayout = "highlight" | "number" | "panel" | "underline" | "frame";
 export type EffectEntrance = "slide-left" | "fade-up" | "pop" | "none";
 export type EffectAnimationEasing = "linear" | "ease-in" | "ease-out" | "ease-in-out";
@@ -39,6 +39,22 @@ export interface EffectDefinition {
   defaultColor: string;
   defaultAccentColor: string;
   recipe: EffectRecipe;
+  kind?: "effect" | "scene";
+  sceneLayers?: SceneEffectTemplateLayer[];
+}
+
+export interface SceneEffectTemplateLayer {
+  effectId: string;
+  text?: string;
+  x: number;
+  y: number;
+  scale?: number;
+  rotation?: number;
+  opacity?: number;
+  fontSize?: number;
+  zIndex: number;
+  startRatio?: number;
+  durationRatio?: number;
 }
 
 const CORE_EFFECTS: readonly EffectDefinition[] = [
@@ -195,7 +211,69 @@ function familyEffect(family: EffectFamily, presentation: typeof EFFECT_PRESENTA
 
 const FAMILY_EFFECTS = EFFECT_FAMILIES.flatMap((family, familyIndex) => EFFECT_PRESENTATIONS.map((presentation) => familyEffect(family, presentation, familyIndex)));
 
-export const BUILTIN_EFFECTS: readonly EffectDefinition[] = [...CORE_EFFECTS, ...FAMILY_EFFECTS];
+const SCENE_EFFECTS: readonly EffectDefinition[] = [
+  {
+    id: "scene-focus-stack", name: "重点信息组合", category: "场景", kind: "scene", description: "主标题、数字与结论标注组合", tags: ["场景", "组合", "重点", "数据", "字幕", "观点"],
+    defaultDurationUs: 4_000_000, defaultText: "核心观点", defaultColor: "#ffffff", defaultAccentColor: "#ffb84d",
+    recipe: { layout: "frame", entrance: "fade-up", paddingX: 24, paddingY: 18, borderWidth: 1, borderRadius: 3, backgroundOpacity: 0.72 },
+    sceneLayers: [
+      { effectId: "title-highlight", x: 50, y: 27, fontSize: 62, zIndex: 30 },
+      { effectId: "number-pop", text: "42%", x: 50, y: 52, scale: 0.9, fontSize: 76, zIndex: 20, startRatio: 0.12 },
+      { effectId: "underline-sweep", text: "关键结论", x: 50, y: 73, scale: 0.8, fontSize: 38, zIndex: 10, startRatio: 0.28 }
+    ]
+  },
+  {
+    id: "scene-quote-summary", name: "金句总结组合", category: "场景", kind: "scene", description: "引用卡、关键词和收束标题叠加", tags: ["场景", "金句", "总结", "引用", "字幕", "结论"],
+    defaultDurationUs: 4_500_000, defaultText: "让重要内容被看见", defaultColor: "#ffffff", defaultAccentColor: "#ff7b72",
+    recipe: { layout: "frame", entrance: "fade-up", paddingX: 28, paddingY: 20, borderWidth: 2, borderRadius: 3, backgroundOpacity: 0.86 },
+    sceneLayers: [
+      { effectId: "quote-card", x: 50, y: 46, fontSize: 48, zIndex: 20 },
+      { effectId: "keyword-underline", text: "核心结论", x: 50, y: 72, scale: 0.75, fontSize: 34, zIndex: 30, startRatio: 0.22 }
+    ]
+  },
+  {
+    id: "scene-step-guide", name: "步骤讲解组合", category: "场景", kind: "scene", description: "步骤卡与强调标题组合", tags: ["场景", "步骤", "教程", "流程", "方法", "字幕"],
+    defaultDurationUs: 5_000_000, defaultText: "第一步：明确目标", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    recipe: { layout: "panel", entrance: "slide-left", paddingX: 22, paddingY: 16, borderWidth: 4, borderRadius: 3, backgroundOpacity: 0.82 },
+    sceneLayers: [
+      { effectId: "steps-highlight", text: "方法拆解", x: 50, y: 25, fontSize: 50, zIndex: 30 },
+      { effectId: "bullet-reveal", x: 38, y: 54, scale: 0.85, fontSize: 40, zIndex: 20, startRatio: 0.14 },
+      { effectId: "steps-underline", text: "照着做即可", x: 63, y: 76, scale: 0.72, fontSize: 32, zIndex: 10, startRatio: 0.32 }
+    ]
+  },
+  {
+    id: "scene-warning-callout", name: "风险提示组合", category: "场景", kind: "scene", description: "警示标题、侧栏提示和关键词叠加", tags: ["场景", "警示", "风险", "误区", "注意", "字幕"],
+    defaultDurationUs: 4_000_000, defaultText: "注意这个常见误区", defaultColor: "#ffffff", defaultAccentColor: "#ff6b6b",
+    recipe: { layout: "panel", entrance: "slide-left", paddingX: 22, paddingY: 14, borderWidth: 4, borderRadius: 3, backgroundOpacity: 0.8 },
+    sceneLayers: [
+      { effectId: "warning-impact", text: "注意", x: 22, y: 28, fontSize: 68, zIndex: 30 },
+      { effectId: "warning-panel", x: 50, y: 53, fontSize: 42, zIndex: 20, startRatio: 0.12 },
+      { effectId: "warning-underline", text: "避免踩坑", x: 62, y: 75, scale: 0.72, fontSize: 32, zIndex: 10, startRatio: 0.3 }
+    ]
+  },
+  {
+    id: "scene-intro-title", name: "开场标题组合", category: "场景", kind: "scene", description: "开场主标题、副标题与描边框组合", tags: ["场景", "开场", "片头", "标题", "介绍", "字幕"],
+    defaultDurationUs: 4_000_000, defaultText: "今天聊一个重要话题", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    recipe: { layout: "frame", entrance: "none", paddingX: 28, paddingY: 20, borderWidth: 2, borderRadius: 3, backgroundOpacity: 0.3 },
+    sceneLayers: [
+      { effectId: "intro-frame", x: 50, y: 48, scale: 1.15, fontSize: 58, zIndex: 10 },
+      { effectId: "intro-highlight", x: 50, y: 42, fontSize: 60, zIndex: 30, startRatio: 0.08 },
+      { effectId: "intro-underline", text: "从这里开始", x: 50, y: 66, scale: 0.7, fontSize: 30, zIndex: 20, startRatio: 0.24 }
+    ]
+  },
+  {
+    id: "scene-comparison", name: "对比结论组合", category: "场景", kind: "scene", description: "对比标题、数据冲击字和结论卡组合", tags: ["场景", "对比", "前后", "变化", "数据", "字幕"],
+    defaultDurationUs: 4_500_000, defaultText: "之前 vs 现在", defaultColor: "#ffffff", defaultAccentColor: "#b59cff",
+    recipe: { layout: "frame", entrance: "fade-up", paddingX: 26, paddingY: 18, borderWidth: 2, borderRadius: 3, backgroundOpacity: 0.76 },
+    sceneLayers: [
+      { effectId: "compare-highlight", x: 50, y: 25, fontSize: 50, zIndex: 30 },
+      { effectId: "compare-impact", text: "VS", x: 50, y: 50, scale: 0.8, fontSize: 76, zIndex: 20, startRatio: 0.12 },
+      { effectId: "compare-frame", text: "差异一目了然", x: 50, y: 75, scale: 0.78, fontSize: 34, zIndex: 10, startRatio: 0.28 }
+    ]
+  }
+] as const;
+
+export const BUILTIN_EFFECTS: readonly EffectDefinition[] = [...CORE_EFFECTS, ...FAMILY_EFFECTS, ...SCENE_EFFECTS];
 
 let installedEffects: EffectDefinition[] = [];
 
@@ -209,6 +287,17 @@ export function allEffects(): EffectDefinition[] {
 
 export function effectById(id: string): EffectDefinition {
   return allEffects().find((effect) => effect.id === id) ?? BUILTIN_EFFECTS[0];
+}
+
+export function effectSelectionsForText(text: string, limit = 3): EffectDefinition[] {
+  const ranked = retrieveEffects(text, Math.max(limit * 3, 6));
+  const selected: EffectDefinition[] = [];
+  for (const effect of ranked) {
+    if (selected.some((item) => item.id === effect.id || (item.kind === "scene" && effect.kind === "scene"))) continue;
+    selected.push(effect);
+    if (selected.length >= limit) break;
+  }
+  return selected;
 }
 
 function eased(progress: number, easing: EffectAnimationEasing) {

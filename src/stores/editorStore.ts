@@ -1,7 +1,9 @@
 import { create } from "zustand";
-import { effectById, retrieveEffects } from "@/domain/effects";
+import { effectById } from "@/domain/effects";
 import { cameraMotionForPreset } from "@/domain/camera";
 import { timedTextSegments } from "@/domain/captions";
+import { createGeneratedEffectLayers } from "@/domain/sceneEffects";
+import { DEFAULT_TRANSFORM, videoLayoutForPreset, visualTransformAt } from "@/domain/transforms";
 import {
   createEmptyProject,
   projectEndUs,
@@ -15,6 +17,7 @@ import {
   type MediaAsset,
   type SubtitleClip,
   type TimelineClip,
+  type TimelineTrack,
   type VideoClip
 } from "@/domain/project";
 import type { AiVideoPlan } from "@/services/ai/schema";
@@ -41,7 +44,7 @@ interface EditorState {
   addImage: (asset: MediaAsset) => void;
   addAudio: (asset: MediaAsset, role?: AudioRole, startUs?: number) => void;
   addExtractedAudio: (asset: MediaAsset, sourceVideoAssetId: string) => void;
-  placeAsset: (assetId: string) => void;
+  placeAsset: (assetId: string, placement?: "auto" | "main" | "overlay") => void;
   updateAsset: (assetId: string, patch: Partial<MediaAsset>) => void;
   replaceProject: (project: EditorProject) => void;
   addGeneratedPlan: (plan: AiVideoPlan, prompt: string, mode: InsertMode, target?: { startUs: number; durationUs?: number }) => void;
@@ -76,6 +79,41 @@ function isSourceClip(clip: TimelineClip): clip is VideoClip | AudioClip {
 function findClip(project: EditorProject, clipId: string | null): TimelineClip | null {
   if (!clipId) return null;
   return project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === clipId) ?? null;
+}
+
+function videoTrackForPlacement(project: EditorProject, startUs: number, placement: "auto" | "main" | "overlay" = "auto"): TimelineTrack {
+  const videoTracks = project.tracks.filter((track) => track.kind === "video");
+  const preferred = placement === "main" ? videoTracks.find((track) => track.id === "video-main")
+    : placement === "overlay" ? videoTracks.find((track) => track.id === "video-overlay")
+      : videoTracks.find((track) => !track.clips.some((clip) => startUs >= clip.startUs && startUs < clip.startUs + clip.durationUs));
+  if (preferred) return preferred;
+  const track: TimelineTrack = {
+    id: `video-layer-${crypto.randomUUID()}`,
+    kind: "video",
+    name: `视频图层 ${videoTracks.length + 1}`,
+    locked: false,
+    muted: false,
+    hidden: false,
+    clips: []
+  };
+  const imageIndex = project.tracks.findIndex((candidate) => candidate.kind === "image");
+  project.tracks.splice(imageIndex < 0 ? videoTracks.length : imageIndex, 0, track);
+  return track;
+}
+
+function videoClipFields(track: TimelineTrack, placement: "auto" | "main" | "overlay" = "auto") {
+  const main = placement === "main" || (placement === "auto" && track.id === "video-main");
+  const preset = main ? "full" : "picture-in-picture-top-right";
+  const layout = videoLayoutForPreset(preset, 1_000_000);
+  return { zIndex: layout.zIndex, transform: layout.transform, transformKeyframes: layout.transformKeyframes, layoutPreset: preset as VideoClip["layoutPreset"] };
+}
+
+function splitVideoKeyframes(clip: VideoClip, atUs: number) {
+  const base = clip.transform ?? DEFAULT_TRANSFORM;
+  const boundary = visualTransformAt(base, clip.transformKeyframes, atUs);
+  const leading = [...(clip.transformKeyframes ?? []).filter((frame) => frame.offsetUs < atUs), { offsetUs: atUs, x: boundary.x, y: boundary.y, scale: boundary.scale, easing: "ease-in-out" as const }];
+  const trailing = [{ offsetUs: 0, x: boundary.x, y: boundary.y, scale: boundary.scale, easing: "ease-in-out" as const }, ...(clip.transformKeyframes ?? []).filter((frame) => frame.offsetUs > atUs).map((frame) => ({ ...frame, offsetUs: frame.offsetUs - atUs }))];
+  return { leading, trailing };
 }
 
 function trimGeneratedStart(clip: GeneratedBlock, deltaUs: number) {
@@ -153,6 +191,13 @@ function shiftForInsert(project: EditorProject, atUs: number, durationUs: number
           sourceInUs: clip.sourceInUs + (atUs - clip.startUs) * clip.playbackRate,
           label: `${clip.label}（续）`
         } as TimelineClip;
+        if (clip.kind === "video" && trailing.kind === "video") {
+          const keyframes = splitVideoKeyframes(clip, atUs - clip.startUs);
+          clip.transformKeyframes = keyframes.leading;
+          trailing.transformKeyframes = keyframes.trailing;
+          clip.layoutPreset = "custom";
+          trailing.layoutPreset = "custom";
+        }
         clip.durationUs = atUs - clip.startUs;
         additions.push(trailing);
       }
@@ -177,16 +222,24 @@ function replaceVideoRange(project: EditorProject, startUs: number, durationUs: 
         continue;
       }
       if (clip.startUs < startUs) {
-        next.push({ ...clip, durationUs: startUs - clip.startUs });
+        const leading = { ...clip, durationUs: startUs - clip.startUs };
+        if (clip.transformKeyframes?.length) {
+          leading.transformKeyframes = splitVideoKeyframes(clip, startUs - clip.startUs).leading;
+          leading.layoutPreset = "custom";
+        }
+        next.push(leading);
       }
       if (clipEnd > endUs) {
+        const trailingKeyframes = splitVideoKeyframes(clip, endUs - clip.startUs).trailing;
         next.push({
           ...clip,
           id: crypto.randomUUID(),
           label: `${clip.label}（续）`,
           startUs: endUs,
           durationUs: clipEnd - endUs,
-          sourceInUs: clip.sourceInUs + (endUs - clip.startUs) * clip.playbackRate
+          sourceInUs: clip.sourceInUs + (endUs - clip.startUs) * clip.playbackRate,
+          transformKeyframes: trailingKeyframes,
+          layoutPreset: "custom"
         });
       }
     }
@@ -261,28 +314,34 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   })),
   addEffect: (effectId) => {
     const definition = effectById(effectId);
-    const id = crypto.randomUUID();
+    const groupId = definition.kind === "scene" ? crypto.randomUUID() : undefined;
+    const layers = definition.kind === "scene"
+      ? createGeneratedEffectLayers([definition.id], definition.defaultText, definition.defaultAccentColor, definition.defaultDurationUs, "scene-template")
+      : [];
+    const id = layers[0]?.id ?? crypto.randomUUID();
     set((state) => ({
       ...commit(state, (project) => {
-        const track = project.tracks.find((candidate) => candidate.kind === "effect");
-        const clip: EffectClip = {
-          id,
-          trackId: track!.id,
-          kind: "effect",
-          label: definition.name,
-          startUs: state.playheadUs,
-          durationUs: definition.defaultDurationUs,
-          locked: false,
-          effectId,
-          text: definition.defaultText,
-          color: definition.defaultColor,
-          accentColor: definition.defaultAccentColor,
-          fontSize: 56,
-          speed: 1,
-          transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 },
-          recipe: structuredClone(definition.recipe)
-        };
-        track!.clips.push(clip);
+        const track = project.tracks.find((candidate) => candidate.kind === "effect")!;
+        if (definition.kind === "scene") {
+          for (const layer of layers) {
+            const clip: EffectClip = {
+              id: layer.id, trackId: track.id, kind: "effect", label: `${definition.name} · ${effectById(layer.effectId).name}`,
+              startUs: state.playheadUs + layer.startOffsetUs, durationUs: layer.durationUs, locked: false,
+              effectId: layer.effectId, text: layer.text, color: layer.textColor, accentColor: layer.accentColor,
+              fontSize: layer.fontSize, speed: layer.speed, transform: layer.transform, recipe: layer.recipe,
+              zIndex: layer.zIndex, sceneGroupId: groupId, sceneTemplateId: definition.id, matchQuery: layer.matchQuery
+            };
+            track.clips.push(clip);
+          }
+        } else {
+          const clip: EffectClip = {
+            id, trackId: track.id, kind: "effect", label: definition.name, startUs: state.playheadUs,
+            durationUs: definition.defaultDurationUs, locked: false, effectId, text: definition.defaultText,
+            color: definition.defaultColor, accentColor: definition.defaultAccentColor, fontSize: 56, speed: 1,
+            transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }, recipe: structuredClone(definition.recipe), zIndex: 20
+          };
+          track.clips.push(clip);
+        }
       }),
       selectedClipId: id,
       selectedClipIds: [id]
@@ -302,7 +361,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           };
         }
         project.assets.push(asset);
-        const track = project.tracks.find((candidate) => candidate.kind === "video")!;
+        const track = videoTrackForPlacement(project, state.playheadUs);
         track.clips.push({
           id,
           trackId: track.id,
@@ -316,7 +375,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           playbackRate: 1,
           volume: 1,
           fit: "cover",
-          camera: cameraMotionForPreset("none")
+          camera: cameraMotionForPreset("none"),
+          ...videoClipFields(track)
         });
       }),
       selectedClipId: id,
@@ -397,7 +457,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     });
     return { ...next, selectedClipId: selectedIds[0] ?? null, selectedClipIds: selectedIds };
   }),
-  placeAsset: (assetId) => {
+  placeAsset: (assetId, placement = "auto") => {
     const id = crypto.randomUUID();
     set((state) => {
       const asset = state.project.assets.find((candidate) => candidate.id === assetId);
@@ -405,8 +465,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return {
         ...commit(state, (project) => {
           if (asset.kind === "video") {
-            const track = project.tracks.find((candidate) => candidate.kind === "video")!;
-            track.clips.push({ id, trackId: track.id, kind: "video", label: asset.name, startUs: state.playheadUs, durationUs: asset.durationUs, locked: false, assetId, sourceInUs: 0, playbackRate: 1, volume: 1, fit: "cover", camera: cameraMotionForPreset("none") });
+            const track = videoTrackForPlacement(project, state.playheadUs, placement);
+            track.clips.push({ id, trackId: track.id, kind: "video", label: asset.name, startUs: state.playheadUs, durationUs: asset.durationUs, locked: false, assetId, sourceInUs: 0, playbackRate: 1, volume: 1, fit: "cover", camera: cameraMotionForPreset("none"), ...videoClipFields(track, placement) });
           } else if (asset.kind === "image") {
             const track = project.tracks.find((candidate) => candidate.kind === "image")!;
             track.clips.push({ id, trackId: track.id, kind: "image", label: asset.name, startUs: state.playheadUs, durationUs: asset.durationUs || 5_000_000, locked: false, assetId, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, entrance: "pop", speed: 1 });
@@ -461,31 +521,40 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           prompt,
           insertMode: mode,
           scenes: plan.scenes.map((scene, sceneIndex) => {
-            const matchedEffect = retrieveEffects(`${scene.title} ${scene.narration}`, 1)[0] ?? effectById(scene.effectId);
+            const sceneDurationUs = sceneDurations[sceneIndex];
+            const matchedLayers = createGeneratedEffectLayers(scene.effectIds, scene.title, scene.color, sceneDurationUs, "ai", `${scene.title} ${scene.narration}`);
+            const primaryLayer = matchedLayers[0] ?? createGeneratedEffectLayers([effectById("title-highlight").id], scene.title, scene.color, sceneDurationUs, "ai")[0];
             return ({
             ...(function () {
               const media = scene.mediaAssetId ? project.assets.find((asset) => asset.id === scene.mediaAssetId && asset.kind === "video" && !asset.missing) : undefined;
-              const sceneDurationUs = sceneDurations[sceneIndex];
               const usableMedia = media && media.durationUs > 0 ? media : undefined;
+              const secondaryMedia = scene.secondaryMediaAssetId ? project.assets.find((asset) => asset.id === scene.secondaryMediaAssetId && asset.kind === "video" && !asset.missing) : undefined;
+              const usableSecondaryMedia = secondaryMedia && secondaryMedia.durationUs > 0 ? secondaryMedia : undefined;
               return {
                 mediaAssetId: usableMedia?.id,
                 mediaSourceInUs: usableMedia ? Math.min(Math.round(scene.mediaSourceInSeconds * 1_000_000), Math.max(0, usableMedia.durationUs - 1)) : 0,
+                secondaryMediaAssetId: usableSecondaryMedia?.id,
+                secondaryMediaSourceInUs: usableSecondaryMedia ? Math.min(Math.round(scene.secondaryMediaSourceInSeconds * 1_000_000), Math.max(0, usableSecondaryMedia.durationUs - 1)) : 0,
+                secondaryMediaFit: "cover" as const,
+                secondaryMediaVolume: 0,
+                mediaLayoutPreset: scene.mediaLayoutPreset,
                 durationUs: sceneDurationUs
               };
             })(),
             id: crypto.randomUUID(),
             title: scene.title,
             narration: scene.narration,
-            effectId: matchedEffect.id,
-            textColor: "#ffffff",
-            accentColor: scene.color,
-            fontSize: 58,
-            speed: 1,
-            transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 },
+            effectId: primaryLayer.effectId,
+            textColor: primaryLayer.textColor,
+            accentColor: primaryLayer.accentColor,
+            fontSize: primaryLayer.fontSize,
+            speed: primaryLayer.speed,
+            transform: primaryLayer.transform,
             mediaFit: "cover",
             mediaVolume: 0,
             camera: cameraMotionForPreset(scene.cameraPreset),
-            recipe: structuredClone(matchedEffect.recipe)
+            recipe: primaryLayer.recipe,
+            additionalEffects: matchedLayers.slice(1)
           }); })
         };
         track.clips.push(clip);
@@ -526,6 +595,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const scene = clip.scenes.find((candidate) => candidate.id === sceneId);
     if (!scene) return;
     Object.assign(scene, patch);
+    scene.additionalEffects = (scene.additionalEffects ?? []).map((layer) => {
+      const startOffsetUs = Math.min(Math.max(0, layer.startOffsetUs), Math.max(0, scene.durationUs - 100_000));
+      return {
+        ...layer,
+        startOffsetUs,
+        durationUs: Math.min(Math.max(100_000, layer.durationUs), Math.max(100_000, scene.durationUs - startOffsetUs))
+      };
+    });
     clip.durationUs = Math.max(1_000_000, clip.scenes.reduce((sum, candidate) => sum + candidate.durationUs, 0));
     replaceGeneratedCaptions(project, clip);
   })),
@@ -582,6 +659,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         clip.startUs += boundedDelta;
         clip.durationUs -= boundedDelta;
         if (isSourceClip(clip)) clip.sourceInUs = Math.max(0, Math.round(clip.sourceInUs + boundedDelta * clip.playbackRate));
+        if (clip.kind === "video") {
+          const boundary = visualTransformAt(clip.transform ?? DEFAULT_TRANSFORM, clip.transformKeyframes, Math.max(0, boundedDelta));
+          clip.transformKeyframes = [{ offsetUs: 0, x: boundary.x, y: boundary.y, scale: boundary.scale, easing: "ease-in-out" }, ...(clip.transformKeyframes ?? []).filter((frame) => frame.offsetUs > boundedDelta).map((frame) => ({ ...frame, offsetUs: Math.max(0, frame.offsetUs - boundedDelta) }))];
+        }
         if (clip.kind === "generated") trimGeneratedStart(clip, boundedDelta);
       } else {
         let durationUs = Math.max(minimumDuration, Math.round(clip.durationUs + deltaUs));
@@ -590,6 +671,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           if (asset) durationUs = Math.min(durationUs, Math.max(minimumDuration, (asset.durationUs - clip.sourceInUs) / clip.playbackRate));
         }
         clip.durationUs = durationUs;
+        if (clip.kind === "video") clip.transformKeyframes = (clip.transformKeyframes ?? []).filter((frame) => frame.offsetUs <= durationUs);
         if (clip.kind === "generated") trimGeneratedEnd(clip, durationUs);
       }
     }));
@@ -612,6 +694,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             trailing.startUs = playheadUs;
             trailing.durationUs = clip.durationUs - firstDuration;
             if (isSourceClip(trailing)) trailing.sourceInUs = Math.round(trailing.sourceInUs + firstDuration * trailing.playbackRate);
+            if (clip.kind === "video" && trailing.kind === "video") {
+              const keyframes = splitVideoKeyframes(clip, firstDuration);
+              clip.transformKeyframes = keyframes.leading;
+              trailing.transformKeyframes = keyframes.trailing;
+              clip.layoutPreset = "custom";
+              trailing.layoutPreset = "custom";
+            }
             if (clip.kind === "generated" && trailing.kind === "generated") {
               const scenes = splitGeneratedScenes(clip, firstDuration);
               clip.scenes = scenes.leading;

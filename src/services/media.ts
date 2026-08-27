@@ -2,6 +2,7 @@ import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { isDesktopRuntime } from "@/services/runtime";
 import type { EffectRecipe } from "@/domain/effects";
+import type { VisualTransformKeyframe } from "@/domain/project";
 import type { CameraMotion } from "@/domain/camera";
 
 export interface MediaToolStatus {
@@ -85,6 +86,8 @@ interface RenderOverlayBase {
   rotation: number;
   speed: number;
   recipe: EffectRecipe;
+  zIndex: number;
+  transformKeyframes?: VisualTransformKeyframe[];
 }
 
 export interface RenderTextOverlay extends RenderOverlayBase {
@@ -102,7 +105,18 @@ export interface RenderImageOverlay extends RenderOverlayBase {
   targetWidthPx: number;
 }
 
-export type RenderOverlay = RenderTextOverlay | RenderImageOverlay;
+export interface RenderVideoOverlay extends RenderOverlayBase {
+  kind: "video";
+  path: string;
+  sourceInUs: number;
+  playbackRate: number;
+  fit: "cover" | "contain";
+  loop: boolean;
+  camera: CameraMotion;
+  cameraDurationUs: number;
+}
+
+export type RenderOverlay = RenderTextOverlay | RenderImageOverlay | RenderVideoOverlay;
 
 export interface RenderAudioClip {
   path: string;
@@ -312,7 +326,7 @@ async function rasterizeOverlay(overlay: RenderTextOverlay, canvasWidth: number)
 export async function rasterizeRenderPlan(plan: RenderPlan): Promise<RenderPlan> {
   return {
     ...plan,
-    overlays: await Promise.all(plan.overlays.map(async (overlay) => overlay.kind === "image" ? overlay : {
+    overlays: await Promise.all(plan.overlays.map(async (overlay) => overlay.kind !== "text" ? overlay : {
       ...overlay,
       imageDataBase64: await rasterizeOverlay(overlay, plan.width)
     }))

@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { AssetPanel } from "@/components/AssetPanel";
 import { createEmptyProject } from "@/domain/project";
 import { useEditorStore } from "@/stores/editorStore";
+import { BUILTIN_EFFECTS } from "@/domain/effects";
+import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
 
 describe("AssetPanel video audio actions", () => {
   it("offers local subtitle extraction, aligned audio separation and audio export", () => {
@@ -20,5 +22,19 @@ describe("AssetPanel video audio actions", () => {
     expect(onTranscribe).toHaveBeenCalledWith("video");
     expect(onExtractAudio).toHaveBeenCalledWith("video");
     expect(onExportAudio).toHaveBeenCalledWith("video");
+  });
+
+  it("groups the complete effect library and renders a recipe thumbnail for every effect", () => {
+    const project = createEmptyProject();
+    useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
+    useEffectLibraryStore.setState({ effects: [...BUILTIN_EFFECTS] });
+    const { container } = render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} />);
+
+    for (const category of ["标题", "强调", "卡片", "标注", "布局", "场景"]) {
+      expect(screen.getByText(category, { selector: "summary span" })).toBeInTheDocument();
+    }
+    expect(container.querySelectorAll(".effect-group")).toHaveLength(6);
+    expect(container.querySelectorAll(".effect-swatch")).toHaveLength(BUILTIN_EFFECTS.length);
+    expect(container.querySelectorAll(".effect-swatch i")).toHaveLength(BUILTIN_EFFECTS.length);
   });
 });

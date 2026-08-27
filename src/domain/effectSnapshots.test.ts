@@ -28,14 +28,14 @@ describe("effect recipe snapshots", () => {
       title: "Generated",
       article: "Article",
       narration: "Narration",
-      scenes: [{ title: "Scene", narration: "Narration", durationSeconds: 2, effectId: externalEffect.id, color: "#123456", cameraPreset: "none", mediaAssetId: null, mediaSourceInSeconds: 0 }]
+      scenes: [{ title: "Scene", narration: "Narration", durationSeconds: 2, effectIds: [externalEffect.id], color: "#123456", cameraPreset: "none", mediaAssetId: null, mediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" }]
     }, "prompt", "insert");
     const saved = serializeProject(useEditorStore.getState().project);
 
     setInstalledEffects([]);
     const restored = parseProject(saved);
     const scene = restored.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === "generated")?.scenes[0];
-    expect(restored.schemaVersion).toBe(9);
+    expect(restored.schemaVersion).toBe(11);
     expect(scene?.recipe).toEqual(externalEffect.recipe);
     expect(buildRenderPlan(restored, "/output.mp4").overlays[0].recipe).toEqual(externalEffect.recipe);
   });

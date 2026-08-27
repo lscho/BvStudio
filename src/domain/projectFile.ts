@@ -1,6 +1,7 @@
 import { createEmptyProject, projectEndUs, type EditorProject } from "@/domain/project";
 import { effectById } from "@/domain/effects";
 import { cameraMotionForPreset } from "@/domain/camera";
+import { DEFAULT_TRANSFORM } from "@/domain/transforms";
 
 export function serializeProject(project: EditorProject): string {
   const snapshot = structuredClone(project);
@@ -23,7 +24,7 @@ export function parseProject(contents: string): EditorProject {
   }
   if (!raw || typeof raw !== "object") throw new Error("工程文件结构无效");
   const candidate = raw as Omit<Partial<EditorProject>, "schemaVersion"> & { schemaVersion?: number };
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(candidate.schemaVersion ?? -1)) throw new Error("不支持此工程文件版本");
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(candidate.schemaVersion ?? -1)) throw new Error("不支持此工程文件版本");
   if (!Array.isArray(candidate.assets) || !Array.isArray(candidate.tracks) || !candidate.canvas) throw new Error("工程文件缺少素材、轨道或画布信息");
   const fallback = createEmptyProject();
   const tracks = candidate.tracks.map((track) => ({
@@ -41,8 +42,8 @@ export function parseProject(contents: string): EditorProject {
       fadeInUs: clip.fadeInUs ?? 0,
       fadeOutUs: clip.fadeOutUs ?? 0,
       role: clip.role ?? "music"
-    } : clip.kind === "video" ? { ...clip, camera: clip.camera ?? cameraMotionForPreset("none") }
-      : clip.kind === "effect" ? { ...clip, recipe: clip.recipe ?? structuredClone(effectById(clip.effectId).recipe) }
+    } : clip.kind === "video" ? { ...clip, camera: clip.camera ?? cameraMotionForPreset("none"), zIndex: clip.zIndex ?? (track.id === "video-main" ? 0 : 10), transform: clip.transform ?? { ...DEFAULT_TRANSFORM }, transformKeyframes: clip.transformKeyframes ?? [], layoutPreset: clip.layoutPreset ?? (track.id === "video-main" ? "full" : "picture-in-picture-top-right") }
+      : clip.kind === "effect" ? { ...clip, zIndex: clip.zIndex ?? 20, recipe: clip.recipe ?? structuredClone(effectById(clip.effectId).recipe) }
       : clip.kind === "generated" ? { ...clip, scenes: clip.scenes.map((scene) => ({
         ...scene,
         textColor: scene.textColor ?? "#ffffff",
@@ -54,7 +55,20 @@ export function parseProject(contents: string): EditorProject {
         mediaFit: scene.mediaFit ?? "cover",
         mediaVolume: scene.mediaVolume ?? 0,
         camera: scene.camera ?? cameraMotionForPreset("none"),
-        recipe: scene.recipe ?? structuredClone(effectById(scene.effectId).recipe)
+        recipe: scene.recipe ?? structuredClone(effectById(scene.effectId).recipe),
+        additionalEffects: (scene.additionalEffects ?? []).map((layer) => ({
+          ...layer,
+          startOffsetUs: layer.startOffsetUs ?? 0,
+          durationUs: layer.durationUs ?? scene.durationUs,
+          zIndex: layer.zIndex ?? 20,
+          source: layer.source ?? "manual",
+          matchQuery: layer.matchQuery ?? `${scene.title} ${scene.narration}`.trim(),
+          recipe: layer.recipe ?? structuredClone(effectById(layer.effectId).recipe)
+        })),
+        secondaryMediaSourceInUs: scene.secondaryMediaSourceInUs ?? 0,
+        secondaryMediaFit: scene.secondaryMediaFit ?? "cover",
+        secondaryMediaVolume: scene.secondaryMediaVolume ?? 0,
+        mediaLayoutPreset: scene.mediaLayoutPreset ?? "full"
       })) }
       : clip.kind === "image" ? { ...clip, transform: clip.transform ?? { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, entrance: clip.entrance ?? "pop", speed: clip.speed ?? 1 }
         : clip)
@@ -62,7 +76,9 @@ export function parseProject(contents: string): EditorProject {
   for (const fallbackTrack of fallback.tracks) {
     const exists = fallbackTrack.kind === "audio"
       ? tracks.some((track) => track.kind === "audio" && track.audioRole === fallbackTrack.audioRole)
-      : tracks.some((track) => track.kind === fallbackTrack.kind);
+      : fallbackTrack.kind === "video"
+        ? tracks.some((track) => track.id === fallbackTrack.id)
+        : tracks.some((track) => track.kind === fallbackTrack.kind);
     if (!exists) tracks.push(structuredClone(fallbackTrack));
   }
   const trackOrder = (track: EditorProject["tracks"][number]) => {
@@ -79,7 +95,7 @@ export function parseProject(contents: string): EditorProject {
   const project = {
     ...fallback,
     ...candidate,
-    schemaVersion: 9 as const,
+    schemaVersion: 11 as const,
     canvas: { ...fallback.canvas, ...candidate.canvas },
     assets: candidate.assets,
     tracks
