@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/*
+!src-tauri/binaries/README.md
+
+# Environment variables
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+._*
+.Spotlight-V100/
+.Trashes/
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Temporary folders
+tmp/
+temp/

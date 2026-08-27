@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 2,
+  "manifest": {
+    "id": "bvideo-starter",
+    "name": "BVideo Starter Effects",
+    "version": "2.0.0",
+    "author": "BVideo Studio",
+    "description": "An unsigned example package for local development."
+  },
+  "effects": [
+    {
+      "id": "chapter-card",
+      "name": "章节卡片",
+      "category": "卡片",
+      "description": "从下方淡入的章节说明卡片",
+      "tags": ["章节", "说明", "转场"],
+      "defaultDurationUs": 3000000,
+      "defaultText": "新的章节",
+      "defaultColor": "#ffffff",
+      "defaultAccentColor": "#47d7ac",
+      "recipe": {
+        "layout": "panel",
+        "entrance": "fade-up",
+        "paddingX": 24,
+        "paddingY": 16,
+        "borderWidth": 4,
+        "borderRadius": 4,
+        "backgroundOpacity": 0.84,
+        "animation": {
+          "durationSeconds": 0.55,
+          "easing": "ease-out",
+          "keyframes": [
+            { "offset": 0, "translateX": 0, "translateY": 35, "scale": 0.88, "rotation": -3 },
+            { "offset": 0.72, "translateX": 0, "translateY": -4, "scale": 1.04, "rotation": 1 },
+            { "offset": 1, "translateX": 0, "translateY": 0, "scale": 1, "rotation": 0 }
+          ]
+        }
+      }
+    }
+  ]
+}

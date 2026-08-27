@@ -1,0 +1,632 @@
+import { useEffect, useRef, useState } from "react";
+import * as Tooltip from "@radix-ui/react-tooltip";
+import { AudioLines, Download, FileVideo2, FolderOpen, History, LoaderCircle, Redo2, Save, Settings, Sparkles, Square, Undo2 } from "lucide-react";
+import { AiGenerateDialog } from "@/components/AiGenerateDialog";
+import { AiSettingsDialog } from "@/components/AiSettingsDialog";
+import { AudioCreateDialog, type CreatedAudioSource } from "@/components/AudioCreateDialog";
+import { EditorWorkspace } from "@/components/EditorWorkspace";
+import { EffectLibraryDialog } from "@/components/EffectLibraryDialog";
+import { ProjectRecoveryDialog } from "@/components/ProjectRecoveryDialog";
+import { RecentProjectsDialog } from "@/components/RecentProjectsDialog";
+import { UpdateModal } from "@/components/UpdateModal";
+import { WindowControls } from "@/components/WindowControls";
+import { useAppUpdater } from "@/hooks/useAppUpdater";
+import { useSettings } from "@/hooks/useSettings";
+import type { GeneratedBlock } from "@/domain/project";
+import { buildRenderPlan } from "@/domain/renderPlan";
+import { parseProject, serializeProject } from "@/domain/projectFile";
+import {
+  cancelExportJob,
+  generateMediaDerivatives,
+  localMediaUrl,
+  mediaPathExists,
+  probeMedia,
+  rasterizeRenderPlan,
+  readProjectFile,
+  saveProjectFile,
+  selectMediaPaths,
+  selectAudioDestination,
+  selectProjectDestination,
+  selectProjectToOpen,
+  selectReplacementMediaPath,
+  selectVideoDestination,
+  startProxyGeneration,
+  startAudioExtraction,
+  startExportRenderPlan,
+  type ExportJobEvent,
+  type ProxyJobEvent
+} from "@/services/media";
+import { isDesktopRuntime, toggleDevTools } from "@/services/runtime";
+import {
+  clearRecoverySnapshot,
+  projectHasRecoverableContent,
+  readRecentProjects,
+  readRecoverySnapshot,
+  rememberRecentProject,
+  writeRecoverySnapshot,
+  type RecentProject,
+  type RecoverySnapshot
+} from "@/services/projectSession";
+import { cancelAsrJob, captionSegments, startMediaTranscription, type AsrTranscriptionEvent } from "@/services/asr";
+import { synthesizeSpeech } from "@/services/audio";
+import { useEditorStore } from "@/stores/editorStore";
+import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
+
+function loadVideoMetadata(url: string) {
+  return new Promise<{ duration: number; width: number; height: number }>((resolve, reject) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.onloadedmetadata = () => resolve({ duration: Number.isFinite(video.duration) ? video.duration : 30, width: video.videoWidth, height: video.videoHeight });
+    video.onerror = () => reject(new Error("无法读取视频信息"));
+    video.src = url;
+  });
+}
+
+function loadAudioMetadata(url: string) {
+  return new Promise<{ duration: number }>((resolve, reject) => {
+    const audio = document.createElement("audio");
+    audio.preload = "metadata";
+    audio.onloadedmetadata = () => resolve({ duration: Number.isFinite(audio.duration) ? audio.duration : 30 });
+    audio.onerror = () => reject(new Error("无法读取音频信息"));
+    audio.src = url;
+  });
+}
+
+function loadImageMetadata(url: string) {
+  return new Promise<{ width: number; height: number }>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => reject(new Error("无法读取图片信息"));
+    image.src = url;
+  });
+}
+
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "bmp"]);
+
+function isImagePath(path: string) {
+  return IMAGE_EXTENSIONS.has(path.split(".").at(-1)?.toLowerCase() ?? "");
+}
+
+export default function App() {
+  const { settings, setSettings } = useSettings();
+  const updater = useAppUpdater();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [audioOpen, setAudioOpen] = useState(false);
+  const [effectLibraryOpen, setEffectLibraryOpen] = useState(false);
+  const [recentOpen, setRecentOpen] = useState(false);
+  const [busyMessage, setBusyMessage] = useState<string | null>(null);
+  const [exportJobId, setExportJobId] = useState("");
+  const [exportProgress, setExportProgress] = useState<ExportJobEvent | null>(null);
+  const [proxyJobId, setProxyJobId] = useState("");
+  const [proxyProgress, setProxyProgress] = useState<ProxyJobEvent | null>(null);
+  const [asrJobId, setAsrJobId] = useState("");
+  const [asrProgress, setAsrProgress] = useState<AsrTranscriptionEvent | null>(null);
+  const [audioExtractionJobId, setAudioExtractionJobId] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [currentProjectPath, setCurrentProjectPath] = useState<string | null>(null);
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
+  const [recoverySnapshot, setRecoverySnapshot] = useState<RecoverySnapshot | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const savedProjectRef = useRef(serializeProject(useEditorStore.getState().project));
+  const project = useEditorStore((state) => state.project);
+  const addVideo = useEditorStore((state) => state.addVideo);
+  const addImage = useEditorStore((state) => state.addImage);
+  const addAudio = useEditorStore((state) => state.addAudio);
+  const addExtractedAudio = useEditorStore((state) => state.addExtractedAudio);
+  const updateAsset = useEditorStore((state) => state.updateAsset);
+  const replaceProject = useEditorStore((state) => state.replaceProject);
+  const addSubtitles = useEditorStore((state) => state.addSubtitles);
+  const undo = useEditorStore((state) => state.undo);
+  const redo = useEditorStore((state) => state.redo);
+  const removeSelected = useEditorStore((state) => state.removeSelected);
+  const copySelected = useEditorStore((state) => state.copySelected);
+  const pasteAtPlayhead = useEditorStore((state) => state.pasteAtPlayhead);
+  const splitSelected = useEditorStore((state) => state.splitSelected);
+  const setRangeStart = useEditorStore((state) => state.setRangeStart);
+  const setRangeEnd = useEditorStore((state) => state.setRangeEnd);
+  const pastCount = useEditorStore((state) => state.past.length);
+  const futureCount = useEditorStore((state) => state.future.length);
+  const selectedClipId = useEditorStore((state) => state.selectedClipId);
+  const generatedClips = project.tracks.flatMap((track) => track.clips).filter((clip): clip is GeneratedBlock => clip.kind === "generated");
+  const defaultNarration = generatedClips.find((clip) => clip.id === selectedClipId)?.narration ?? generatedClips[0]?.narration ?? "";
+  const loadEffectLibrary = useEffectLibraryStore((state) => state.load);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      document.documentElement.dataset.colorScheme = settings.colorScheme === "system" ? (media.matches ? "dark" : "light") : settings.colorScheme;
+    };
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [settings.colorScheme]);
+
+  useEffect(() => {
+    void updater.checkForUpdates();
+  }, [updater.checkForUpdates]);
+
+  useEffect(() => {
+    void loadEffectLibrary().catch((error) => console.warn("Failed to load effect library", error));
+  }, [loadEffectLibrary]);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([readRecoverySnapshot(), readRecentProjects()]).then(([recovery, recent]) => {
+      if (!active) return;
+      if (recovery) {
+        try {
+          parseProject(recovery.projectJson);
+          setRecoverySnapshot(recovery);
+        } catch {
+          void clearRecoverySnapshot();
+        }
+      }
+      setRecentProjects(recent);
+      setSessionReady(true);
+    }).catch((error) => {
+      console.warn("Failed to load project session", error);
+      if (active) setSessionReady(true);
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionReady || !projectHasRecoverableContent(project)) return;
+    const serialized = serializeProject(project);
+    if (serialized === savedProjectRef.current) return;
+    const timer = window.setTimeout(() => {
+      void writeRecoverySnapshot(project, currentProjectPath).catch((error) => console.warn("Failed to write recovery snapshot", error));
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [currentProjectPath, project, sessionReady]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        event.shiftKey ? redo() : undo();
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        copySelected();
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "v") {
+        event.preventDefault();
+        pasteAtPlayhead();
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        splitSelected();
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void saveProject();
+      } else if (event.key === "Backspace" || event.key === "Delete") {
+        event.preventDefault();
+        removeSelected();
+      } else if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "i") {
+        event.preventDefault();
+        setRangeStart(useEditorStore.getState().playheadUs);
+      } else if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "o") {
+        event.preventDefault();
+        setRangeEnd(useEditorStore.getState().playheadUs);
+      } else if (import.meta.env.DEV && isDesktopRuntime() && (event.key === "F12" || ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i"))) {
+        event.preventDefault();
+        void toggleDevTools();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [copySelected, currentProjectPath, pasteAtPlayhead, project, redo, removeSelected, setRangeEnd, setRangeStart, splitSelected, undo]);
+
+  async function hydrateProjectAssets(next: ReturnType<typeof parseProject>) {
+    for (const asset of next.assets) {
+      if (!asset.sourcePath) {
+        asset.missing = true;
+        continue;
+      }
+      const exists = !isDesktopRuntime() || await mediaPathExists(asset.sourcePath);
+      asset.missing = !exists;
+      asset.objectUrl = exists && isDesktopRuntime() ? localMediaUrl(asset.sourcePath) : undefined;
+      if (isDesktopRuntime() && exists && asset.kind === "video" && asset.height && asset.height > settings.media.proxyHeight && settings.media.proxyEnabled) {
+        try {
+          const proxy = await createProxy(asset.sourcePath, asset.id, asset.durationUs);
+          asset.proxyPath = proxy.proxyPath;
+          asset.proxyObjectUrl = localMediaUrl(proxy.proxyPath);
+          asset.proxyHeight = proxy.height;
+        } catch {
+          // 代理失败时继续使用源文件。
+        }
+      }
+    }
+    return next;
+  }
+
+  async function importBrowserMedia(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      if (file.type.startsWith("image/")) {
+        const metadata = await loadImageMetadata(objectUrl);
+        addImage({ id: crypto.randomUUID(), name: file.name, kind: "image", durationUs: 5_000_000, objectUrl, hasAudio: false, missing: false, ...metadata });
+      } else if (file.type.startsWith("audio/")) {
+        const metadata = await loadAudioMetadata(objectUrl);
+        addAudio({ id: crypto.randomUUID(), name: file.name, kind: "audio", durationUs: Math.round(metadata.duration * 1_000_000), objectUrl, hasAudio: true, missing: false });
+      } else {
+        const metadata = await loadVideoMetadata(objectUrl);
+        addVideo({ id: crypto.randomUUID(), name: file.name, kind: "video", durationUs: Math.round(metadata.duration * 1_000_000), width: metadata.width, height: metadata.height, objectUrl, hasAudio: true, missing: false });
+      }
+    } catch (error) {
+      URL.revokeObjectURL(objectUrl);
+      window.alert(error instanceof Error ? error.message : "视频导入失败");
+    }
+  }
+
+  async function requestImport() {
+    if (!isDesktopRuntime()) {
+      fileInput.current?.click();
+      return;
+    }
+    const paths = await selectMediaPaths();
+    if (!paths.length) return;
+    setBusyMessage(`正在导入 ${paths.length} 个素材`);
+    try {
+      for (const path of paths) {
+        const id = crypto.randomUUID();
+        const objectUrl = localMediaUrl(path);
+        const name = path.split(/[\\/]/).at(-1) ?? "媒体素材";
+        if (isImagePath(path)) {
+          let width = 0;
+          let height = 0;
+          let fileSize = 0;
+          let videoCodec = "image";
+          try {
+            const imageProbe = await probeMedia(path);
+            ({ width, height, fileSize, videoCodec } = imageProbe);
+          } catch {
+            ({ width, height } = await loadImageMetadata(objectUrl));
+          }
+          addImage({ id, name, kind: "image", durationUs: 5_000_000, sourcePath: path, objectUrl, width, height, fileSize, videoCodec, hasAudio: false, missing: false });
+          continue;
+        }
+        let metadata: Awaited<ReturnType<typeof probeMedia>>;
+        try {
+          metadata = await probeMedia(path);
+        } catch (probeError) {
+          try {
+            const browserMetadata = await loadVideoMetadata(objectUrl);
+            metadata = { durationUs: Math.round(browserMetadata.duration * 1_000_000), width: browserMetadata.width, height: browserMetadata.height, fpsNumerator: 30, fpsDenominator: 1, videoCodec: "unknown", hasVideo: true, hasAudio: false, fileSize: 0 };
+          } catch {
+            const browserMetadata = await loadAudioMetadata(objectUrl);
+            metadata = { durationUs: Math.round(browserMetadata.duration * 1_000_000), width: 0, height: 0, fpsNumerator: 30, fpsDenominator: 1, videoCodec: "none", audioCodec: "unknown", hasVideo: false, hasAudio: true, fileSize: 0 };
+          }
+          setNotice(probeError instanceof Error ? `${probeError.message}；素材已按基础模式导入` : "FFprobe 不可用；素材已按基础模式导入");
+        }
+        const asset = { id, name, kind: metadata.hasVideo ? "video" as const : "audio" as const, sourcePath: path, objectUrl, missing: false, ...metadata };
+        if (metadata.hasVideo) addVideo(asset);
+        else addAudio(asset);
+        try {
+          const derivatives = await generateMediaDerivatives(path, id, metadata.hasVideo, metadata.hasAudio);
+          updateAsset(id, { ...derivatives });
+        } catch {
+          // 缩略图和波形属于可重建缓存，不阻断素材导入。
+        }
+        if (metadata.hasVideo && metadata.height > settings.media.proxyHeight && settings.media.proxyEnabled) {
+          try {
+            const proxy = await createProxy(path, id, metadata.durationUs);
+            updateAsset(id, { proxyPath: proxy.proxyPath, proxyObjectUrl: localMediaUrl(proxy.proxyPath), proxyHeight: proxy.height });
+          } catch (proxyError) {
+            setNotice(proxyError instanceof Error ? `素材已导入，代理生成失败：${proxyError.message}` : "素材已导入，代理生成失败");
+          }
+        }
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "视频导入失败");
+    } finally {
+      setBusyMessage(null);
+    }
+  }
+
+  function downloadProjectInBrowser() {
+    const url = URL.createObjectURL(new Blob([serializeProject(project)], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${project.name}.bvideo.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    savedProjectRef.current = serializeProject(project);
+    void clearRecoverySnapshot();
+  }
+
+  async function saveProject() {
+    if (!isDesktopRuntime()) {
+      downloadProjectInBrowser();
+      return;
+    }
+    const path = currentProjectPath ?? await selectProjectDestination(project.name);
+    if (!path) return;
+    try {
+      const serialized = serializeProject(project);
+      await saveProjectFile(path, serialized);
+      savedProjectRef.current = serialized;
+      setCurrentProjectPath(path);
+      await clearRecoverySnapshot();
+      setRecentProjects(await rememberRecentProject(path, project));
+      setNotice("工程已保存");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "工程保存失败");
+    }
+  }
+
+  async function openProjectPath(path: string) {
+    if (!path) return;
+    try {
+      const next = await hydrateProjectAssets(parseProject(await readProjectFile(path)));
+      replaceProject(next);
+      savedProjectRef.current = serializeProject(next);
+      setCurrentProjectPath(path);
+      await clearRecoverySnapshot();
+      setRecentProjects(await rememberRecentProject(path, next));
+      setRecentOpen(false);
+      const missingCount = next.assets.filter((asset) => asset.missing).length;
+      setNotice(missingCount ? `已打开 ${next.name}，有 ${missingCount} 个素材需要重新定位` : `已打开 ${next.name}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "工程打开失败");
+    }
+  }
+
+  async function openProject() {
+    if (!isDesktopRuntime()) return;
+    const path = await selectProjectToOpen();
+    if (path) await openProjectPath(path);
+  }
+
+  async function restoreProject() {
+    if (!recoverySnapshot) return;
+    try {
+      const next = await hydrateProjectAssets(parseProject(recoverySnapshot.projectJson));
+      replaceProject(next);
+      setCurrentProjectPath(recoverySnapshot.projectPath);
+      setRecoverySnapshot(null);
+      const missingCount = next.assets.filter((asset) => asset.missing).length;
+      setNotice(missingCount ? `已恢复工程，有 ${missingCount} 个素材需要重新定位` : "已恢复未保存的工程");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "工程恢复失败");
+    }
+  }
+
+  async function discardRecovery() {
+    await clearRecoverySnapshot();
+    setRecoverySnapshot(null);
+  }
+
+  async function relinkAsset(assetId: string) {
+    const asset = project.assets.find((candidate) => candidate.id === assetId);
+    if (!asset) return;
+    const path = await selectReplacementMediaPath(asset.sourcePath);
+    if (!path) return;
+    setBusyMessage(`正在重新定位“${asset.name}”`);
+    try {
+      if (asset.kind === "image") {
+        if (!isImagePath(path)) throw new Error("请选择 PNG、JPG、WebP 或 BMP 图片");
+        const metadata = await probeMedia(path);
+        updateAsset(assetId, { sourcePath: path, objectUrl: localMediaUrl(path), missing: false, width: metadata.width, height: metadata.height, fileSize: metadata.fileSize, videoCodec: metadata.videoCodec, hasAudio: false });
+        setNotice(`已重新定位 ${asset.name}`);
+        return;
+      }
+      const metadata = await probeMedia(path);
+      updateAsset(assetId, { sourcePath: path, objectUrl: localMediaUrl(path), missing: false, ...metadata });
+      try {
+        const derivatives = await generateMediaDerivatives(path, assetId, metadata.hasVideo, metadata.hasAudio);
+        updateAsset(assetId, derivatives);
+      } catch {
+        // 缩略图和波形可以稍后重建。
+      }
+      if (metadata.hasVideo && metadata.height > settings.media.proxyHeight && settings.media.proxyEnabled) {
+        const proxy = await createProxy(path, assetId, metadata.durationUs);
+        updateAsset(assetId, { proxyPath: proxy.proxyPath, proxyObjectUrl: localMediaUrl(proxy.proxyPath), proxyHeight: proxy.height });
+      } else {
+        updateAsset(assetId, { proxyPath: undefined, proxyObjectUrl: undefined, proxyHeight: undefined });
+      }
+      setNotice(`已重新定位 ${asset.name}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "素材重新定位失败");
+    } finally {
+      setBusyMessage(null);
+    }
+  }
+
+  async function addCreatedAudio(source: CreatedAudioSource, startUs?: number) {
+    const id = crypto.randomUUID();
+    if (source.path) {
+      const metadata = await probeMedia(source.path);
+      const name = source.path.split(/[\\/]/).at(-1) ?? source.name;
+      addAudio({ id, name, kind: "audio", sourcePath: source.path, objectUrl: localMediaUrl(source.path), missing: false, ...metadata }, source.role, startUs);
+      try {
+        const derivatives = await generateMediaDerivatives(source.path, id, false, true);
+        updateAsset(id, derivatives);
+      } catch {
+        // 波形缓存失败不影响配音素材。
+      }
+      setNotice(`已加入 ${source.name}`);
+      return;
+    }
+    if (source.blob) {
+      const objectUrl = URL.createObjectURL(source.blob);
+      const metadata = await loadAudioMetadata(objectUrl);
+      addAudio({ id, name: source.name, kind: "audio", durationUs: Math.round(metadata.duration * 1_000_000), objectUrl, hasAudio: true, missing: false }, source.role, startUs);
+      setNotice(`已加入 ${source.name}`);
+    }
+  }
+
+  async function createGeneratedNarration(text: string, startUs: number) {
+    try {
+      const path = await synthesizeSpeech(text, "", 190);
+      await addCreatedAudio({ path, name: "AI 配音", role: "voice" }, startUs);
+    } catch (error) {
+      setNotice(error instanceof Error ? `内容已生成，配音失败：${error.message}` : "内容已生成，配音失败");
+    }
+  }
+
+  async function exportVideo() {
+    if (!isDesktopRuntime()) {
+      setNotice("MP4 导出需要在桌面客户端中运行");
+      return;
+    }
+    const missing = project.assets.filter((asset) => asset.missing);
+    if (missing.length) {
+      setNotice(`有 ${missing.length} 个素材已丢失，请先重新定位`);
+      return;
+    }
+    const outputPath = await selectVideoDestination(project.name);
+    if (!outputPath) return;
+    setBusyMessage("正在渲染 MP4，请保持客户端开启");
+    try {
+      const plan = await rasterizeRenderPlan(buildRenderPlan(project, outputPath, { encoder: settings.media.encoder }));
+      const job = startExportRenderPlan(plan, (event) => {
+        setExportProgress(event);
+        setBusyMessage(event.message);
+      });
+      setExportJobId(job.jobId);
+      await job.result;
+      setNotice(`视频已导出到 ${outputPath}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error || "视频导出失败"));
+    } finally {
+      setBusyMessage(null);
+      setExportJobId("");
+      setExportProgress(null);
+    }
+  }
+
+  async function createProxy(path: string, assetId: string, durationUs: number) {
+    const job = startProxyGeneration(path, assetId, settings.media.proxyHeight, durationUs, (event) => {
+      setProxyProgress(event);
+      setBusyMessage(event.message);
+    });
+    setProxyJobId(job.jobId);
+    try {
+      return await job.result;
+    } finally {
+      setProxyJobId("");
+      setProxyProgress(null);
+      setBusyMessage(null);
+    }
+  }
+
+  async function cancelCurrentTask() {
+    if (exportJobId) await cancelExportJob(exportJobId);
+    else if (proxyJobId) await cancelExportJob(proxyJobId);
+    else if (audioExtractionJobId) await cancelExportJob(audioExtractionJobId);
+    else if (asrJobId) await cancelAsrJob(asrJobId);
+  }
+
+  async function extractAssetAudio(assetId: string, exportToFile: boolean) {
+    const asset = project.assets.find((candidate) => candidate.id === assetId);
+    if (!asset?.sourcePath || asset.kind !== "video" || asset.missing || !asset.hasAudio) {
+      setNotice("该视频没有可分离的本地音轨");
+      return;
+    }
+    const baseName = asset.name.replace(/\.[^.]+$/u, "") || "分离音频";
+    const outputPath = exportToFile ? await selectAudioDestination(baseName) : null;
+    if (exportToFile && !outputPath) return;
+    setBusyMessage(`正在分离“${asset.name}”的音频`);
+    try {
+      const job = startAudioExtraction(asset.sourcePath, asset.id, asset.durationUs, outputPath, (event) => setBusyMessage(`${event.message} · ${Math.round(event.progress * 100)}%`));
+      setAudioExtractionJobId(job.jobId);
+      const result = await job.result;
+      if (exportToFile) {
+        setNotice(`音频已导出到 ${result.path}`);
+        return;
+      }
+      const metadata = await probeMedia(result.path);
+      const id = crypto.randomUUID();
+      addExtractedAudio({ id, name: `${baseName} · 分离音频.m4a`, kind: "audio", sourcePath: result.path, objectUrl: localMediaUrl(result.path), missing: false, ...metadata }, asset.id);
+      try {
+        const derivatives = await generateMediaDerivatives(result.path, id, false, true);
+        updateAsset(id, derivatives);
+      } catch {
+        // 波形缓存失败不影响已分离音轨。
+      }
+      setNotice("音频已分离并按原视频时间对齐到音效轨");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error || "音频分离失败"));
+    } finally {
+      setAudioExtractionJobId("");
+      setBusyMessage(null);
+    }
+  }
+
+  async function transcribeAsset(assetId: string) {
+    const asset = project.assets.find((candidate) => candidate.id === assetId);
+    if (!asset?.sourcePath || asset.missing) {
+      setNotice("该素材没有可访问的本地路径");
+      return;
+    }
+    const localAsr = settings.localAsr;
+    if (!localAsr?.modelPath.trim()) {
+      setNotice("请先在设置中配置本地 Qwen3-ASR 模型目录");
+      setSettingsOpen(true);
+      return;
+    }
+    setBusyMessage(`正在本地提取“${asset.name}”的字幕`);
+    try {
+      const job = startMediaTranscription(asset.sourcePath, localAsr, (event) => {
+        setAsrProgress(event);
+        setBusyMessage(event.message);
+      });
+      setAsrJobId(job.jobId);
+      const transcript = await job.result;
+      const segments = captionSegments(transcript, asset.durationUs);
+      if (!segments.length) throw new Error("本地模型没有识别出字幕内容");
+      addSubtitles(assetId, segments);
+      setNotice(`已生成 ${segments.length} 条字幕 · ${transcript.language || "自动识别"} · ${transcript.device}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error || "本地字幕提取失败"));
+    } finally {
+      setBusyMessage(null);
+      setAsrJobId("");
+      setAsrProgress(null);
+    }
+  }
+
+  return (
+    <Tooltip.Provider delayDuration={350}>
+      <div className="app-shell">
+        <header className="app-header" data-tauri-drag-region>
+          <div className="brand"><span className="brand-mark">B</span><strong>BVideo Studio</strong><span className="project-name">{project.name}</span></div>
+          <div className="header-tools">
+            <ToolButton label="撤销" disabled={!pastCount} onClick={undo}><Undo2 size={16} /></ToolButton>
+            <ToolButton label="重做" disabled={!futureCount} onClick={redo}><Redo2 size={16} /></ToolButton>
+            <span className="toolbar-divider" />
+            <ToolButton label="打开工程" onClick={() => void openProject()}><FolderOpen size={16} /></ToolButton>
+            {isDesktopRuntime() && <ToolButton label="最近工程" onClick={() => setRecentOpen(true)}><History size={16} /></ToolButton>}
+            <ToolButton label="保存工程" onClick={() => void saveProject()}><Save size={16} /></ToolButton>
+            <button className="button header-button" type="button" onClick={() => void requestImport()}><FileVideo2 size={16} />导入</button>
+            <button className="button header-button ai" type="button" onClick={() => setGenerateOpen(true)}><Sparkles size={16} />AI 生成</button>
+            <ToolButton label="配音与录音" onClick={() => setAudioOpen(true)}><AudioLines size={17} /></ToolButton>
+            <button className="button header-button export" type="button" disabled={Boolean(busyMessage)} onClick={() => void exportVideo()}>{busyMessage ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{exportProgress ? `${Math.round(exportProgress.progress * 100)}%` : busyMessage ? "处理中" : "导出 MP4"}</button>
+            <ToolButton label="模型与客户端设置" onClick={() => setSettingsOpen(true)}><Settings size={17} /></ToolButton>
+          </div>
+          <WindowControls />
+        </header>
+        <EditorWorkspace onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => setAudioOpen(true)} onManageEffects={() => setEffectLibraryOpen(true)} />
+        <input ref={fileInput} className="visually-hidden" type="file" accept="video/*,audio/*,image/png,image/jpeg,image/webp,image/bmp" onChange={(event) => void importBrowserMedia(event)} />
+      </div>
+      {(busyMessage || notice) && <div className={`status-toast ${busyMessage ? "busy" : ""}`}>{busyMessage && <LoaderCircle className="spin" size={15} />}<span>{busyMessage ?? notice}{exportProgress ? <small>{Math.round(exportProgress.progress * 100)}% · {exportProgress.segmentIndex}/{exportProgress.segmentCount || "-"}</small> : proxyProgress ? <small>{Math.round(proxyProgress.progress * 100)}%</small> : asrProgress ? <small>{Math.round(asrProgress.progress * 100)}% · 本地处理</small> : null}</span>{(exportJobId || proxyJobId || audioExtractionJobId || asrJobId) && <button type="button" aria-label={exportJobId ? "取消视频导出" : proxyJobId ? "取消代理生成" : audioExtractionJobId ? "取消音频分离" : "取消字幕识别"} title="取消任务" onClick={() => void cancelCurrentTask()}><Square size={12} fill="currentColor" /></button>}{notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button>}</div>}
+      <AiSettingsDialog open={settingsOpen} settings={settings} onOpenChange={setSettingsOpen} onSave={setSettings} />
+      <AiGenerateDialog open={generateOpen} settings={settings} onOpenChange={setGenerateOpen} onNeedSettings={() => { setGenerateOpen(false); setSettingsOpen(true); }} onCreateNarration={createGeneratedNarration} />
+      <AudioCreateDialog open={audioOpen} defaultText={defaultNarration} onOpenChange={setAudioOpen} onCreated={addCreatedAudio} />
+      <EffectLibraryDialog open={effectLibraryOpen} onOpenChange={setEffectLibraryOpen} />
+      <ProjectRecoveryDialog snapshot={recoverySnapshot} onDiscard={() => void discardRecovery()} onRestore={() => void restoreProject()} />
+      <RecentProjectsDialog open={recentOpen} projects={recentProjects} onOpenChange={setRecentOpen} onOpenProject={(path) => void openProjectPath(path)} onBrowse={() => { setRecentOpen(false); void openProject(); }} />
+      {updater.visible && updater.info && <UpdateModal info={updater.info} status={updater.status} canDismiss={updater.canDismiss} downloadedBytes={updater.downloadedBytes} totalBytes={updater.totalBytes} progressPercent={updater.progressPercent} errorMessage={updater.errorMessage} installed={updater.installed} onDismiss={() => updater.setVisible(false)} onInstall={() => void updater.installAndRestart()} onRestart={() => void updater.retryRestart()} />}
+    </Tooltip.Provider>
+  );
+}
+
+function ToolButton({ label, disabled, onClick, children }: { label: string; disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
+  return <Tooltip.Root><Tooltip.Trigger asChild><button className="icon-button" type="button" aria-label={label} disabled={disabled} onClick={onClick}>{children}</button></Tooltip.Trigger><Tooltip.Portal><Tooltip.Content className="tooltip" sideOffset={7}>{label}<Tooltip.Arrow className="tooltip-arrow" /></Tooltip.Content></Tooltip.Portal></Tooltip.Root>;
+}

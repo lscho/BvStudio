@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="t-gradient" x1="256" y1="256" x2="768" y2="768" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4D8DFF"/>
+      <stop offset="1" stop-color="#7C5CFF"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="96" y="96" width="832" height="832" rx="192" fill="#101820"/>
+
+  <path
+    d="M300 330h424v96h-164v268h-96V426H300z"
+    fill="url(#t-gradient)"
+  />
+</svg>

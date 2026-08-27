@@ -1,0 +1,65 @@
+{
+  "name": "tauri-base",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:release": "node --test scripts/*.test.mjs",
+    "prepare:media-sidecars": "node scripts/prepare-media-sidecars.mjs",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "release:config": "node scripts/write-tauri-release-config.mjs",
+    "release:manifest": "node scripts/build-desktop-release-manifest.mjs",
+    "generate:icons": "tauri icon src-tauri/app-icon.svg"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "@radix-ui/react-tooltip": "^1.2.8",
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
+    "@tauri-apps/plugin-os": "^2.3.2",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-store": "^2.4.3",
+    "@tauri-apps/plugin-updater": "^2.10.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "zod": "^4.1.5",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@ffprobe-installer/ffprobe": "^2.1.2",
+    "@tauri-apps/cli": "^2.11.0",
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.2",
+    "ffmpeg-static": "^5.3.0",
+    "happy-dom": "^20.11.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^3.2.7"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "ffmpeg-static@5.3.0": true,
+    "@ffprobe-installer/darwin-arm64@5.0.1": true,
+    "@ffprobe-installer/darwin-x64@5.1.0": true,
+    "@ffprobe-installer/linux-x64@5.2.0": true,
+    "@ffprobe-installer/win32-x64@5.1.0": true
+  }
+}

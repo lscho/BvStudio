@@ -1,0 +1,70 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "BVideo Studio",
+  "version": "0.1.0",
+  "identifier": "com.bvideo.studio",
+  "build": {
+    "beforeDevCommand": "npm run prepare:media-sidecars && npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run prepare:media-sidecars && npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "BVideo Studio",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "maximized": false,
+        "fullscreen": false,
+        "dragDropEnabled": false,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 18
+        },
+        "transparent": false,
+        "shadow": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' asset: http://asset.localhost; img-src 'self' asset: http://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": {
+      "../scripts/qwen3_asr_worker.py": "scripts/qwen3_asr_worker.py",
+      "binaries/README.md": "binaries/README.md",
+      "binaries/FFMPEG-LICENSE.txt": "binaries/FFMPEG-LICENSE.txt",
+      "binaries/media-sidecars.json": "binaries/media-sidecars.json"
+    },
+    "externalBin": ["binaries/ffmpeg", "binaries/ffprobe"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "infoPlist": "Info.plist"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [],
+      "pubkey": ""
+    }
+  }
+}
