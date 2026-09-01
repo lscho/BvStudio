@@ -110,6 +110,10 @@ jobs:
           npm_config_arch: ${{ matrix.media_arch }}
         run: npm ci
 
+      - name: Install Windows ARM64 FFprobe compatibility package
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        run: npm install --no-save --package-lock=false --ignore-scripts --force @ffprobe-installer/win32-x64@5.1.0
+
       - name: Validate bundled media tools
         env:
           npm_config_arch: ${{ matrix.media_arch }}
