@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { prepareMediaSidecars, resolveSidecarSources, targetTripleFor } from "./prepare-media-sidecars.mjs";
+import { prepareMediaSidecars, resolveSidecarSources, reusePreparedSidecars, targetTripleFor } from "./prepare-media-sidecars.mjs";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "bvideo-sidecars-"));
@@ -58,6 +58,41 @@ test("uses x64 media binaries for Windows ARM64", () => {
     assert.equal(resolved.compatibleTarget, "win32-x64");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reuses validated prepared sidecars for local development", () => {
+  const item = fixture();
+  try {
+    mkdirSync(item.output, { recursive: true });
+    writeFileSync(join(item.output, "ffmpeg-aarch64-apple-darwin"), "fixture");
+    writeFileSync(join(item.output, "ffprobe-aarch64-apple-darwin"), "fixture");
+    const calls = [];
+    const reused = reusePreparedSidecars({
+      platform: "darwin",
+      arch: "arm64",
+      outputDirectory: item.output,
+      runner: (path, args) => {
+        calls.push({ path, args });
+        return { status: 0, stdout: `${path.includes("ffprobe") ? "ffprobe" : "ffmpeg"} version cached\n`, stderr: "" };
+      }
+    });
+    assert.equal(reused.ffmpegVersion, "ffmpeg version cached");
+    assert.equal(reused.ffprobeVersion, "ffprobe version cached");
+    assert.equal(calls.length, 2);
+  } finally {
+    rmSync(item.root, { recursive: true, force: true });
+  }
+});
+
+test("does not reuse incomplete prepared sidecars", () => {
+  const item = fixture();
+  try {
+    mkdirSync(item.output, { recursive: true });
+    writeFileSync(join(item.output, "ffmpeg-aarch64-apple-darwin"), "fixture");
+    assert.throws(() => reusePreparedSidecars({ platform: "darwin", arch: "arm64", outputDirectory: item.output }), /Prepared media sidecars are missing/u);
+  } finally {
+    rmSync(item.root, { recursive: true, force: true });
   }
 });
 

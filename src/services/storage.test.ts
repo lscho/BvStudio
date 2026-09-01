@@ -66,11 +66,15 @@ describe("readSettings", () => {
     await expect(readSettings()).resolves.toEqual(DEFAULT_SETTINGS);
   });
 
-  it("persists one million output tokens and clamps older oversized values", async () => {
-    storage.setItem(STORAGE_KEY, JSON.stringify({ ...DEFAULT_SETTINGS, aiProvider: { ...DEFAULT_SETTINGS.aiProvider, maxTokens: 1_000_000 } }));
-    await expect(readSettings()).resolves.toMatchObject({ aiProvider: { maxTokens: 1_000_000 } });
-    storage.setItem(STORAGE_KEY, JSON.stringify({ ...DEFAULT_SETTINGS, aiProvider: { ...DEFAULT_SETTINGS.aiProvider, maxTokens: 2_000_000 } }));
-    await expect(readSettings()).resolves.toMatchObject({ aiProvider: { maxTokens: 1_000_000 } });
+  it("drops the legacy client output token limit", async () => {
+    storage.setItem(STORAGE_KEY, JSON.stringify({ ...DEFAULT_SETTINGS, aiProvider: { ...DEFAULT_SETTINGS.aiProvider, maxTokens: 4_000 } }));
+    const settings = await readSettings();
+    expect(settings.aiProvider).not.toHaveProperty("maxTokens");
+  });
+
+  it("migrates legacy local ASR settings to MiMo cloud speech defaults", async () => {
+    storage.setItem(STORAGE_KEY, JSON.stringify({ ...DEFAULT_SETTINGS, cloudSpeech: undefined, localAsr: { modelPath: "/legacy/qwen" } }));
+    await expect(readSettings()).resolves.toMatchObject({ cloudSpeech: DEFAULT_SETTINGS.cloudSpeech });
   });
 
   it("falls back to the default when browser storage is unavailable", async () => {

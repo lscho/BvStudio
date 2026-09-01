@@ -2,8 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AudioLines, LoaderCircle, Mic, Square, Volume2, X } from "lucide-react";
+import { Select } from "@/components/Select";
 import { isDesktopRuntime } from "@/services/runtime";
-import { listSystemVoices, preferredRecordingMimeType, saveRecordedAudio, synthesizeSpeech, type SystemVoice } from "@/services/audio";
+import { preferredRecordingMimeType, saveRecordedAudio } from "@/services/audio";
+import { MIMO_TTS_VOICES, synthesizeCloudSpeech } from "@/services/cloudSpeech";
+import type { CloudSpeechConfig } from "@/services/storage";
 import type { AudioRole } from "@/domain/project";
 
 export interface CreatedAudioSource {
@@ -16,15 +19,15 @@ export interface CreatedAudioSource {
 interface Props {
   open: boolean;
   defaultText: string;
+  cloudSpeech: CloudSpeechConfig;
   onOpenChange: (open: boolean) => void;
   onCreated: (source: CreatedAudioSource) => Promise<void>;
 }
 
-export function AudioCreateDialog({ open, defaultText, onOpenChange, onCreated }: Props) {
+export function AudioCreateDialog({ open, defaultText, cloudSpeech, onOpenChange, onCreated }: Props) {
   const [text, setText] = useState(defaultText);
-  const [voices, setVoices] = useState<SystemVoice[]>([]);
-  const [voice, setVoice] = useState("");
-  const [rate, setRate] = useState(190);
+  const [voice, setVoice] = useState(cloudSpeech.ttsVoice);
+  const [style, setStyle] = useState(cloudSpeech.ttsStyle);
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -36,9 +39,10 @@ export function AudioCreateDialog({ open, defaultText, onOpenChange, onCreated }
   useEffect(() => {
     if (!open) return;
     setText(defaultText);
+    setVoice(cloudSpeech.ttsVoice);
+    setStyle(cloudSpeech.ttsStyle);
     setError("");
-    if (isDesktopRuntime()) void listSystemVoices().then(setVoices).catch(() => setVoices([]));
-  }, [defaultText, open]);
+  }, [cloudSpeech.ttsStyle, cloudSpeech.ttsVoice, defaultText, open]);
 
   useEffect(() => {
     if (!recording) return;
@@ -57,8 +61,8 @@ export function AudioCreateDialog({ open, defaultText, onOpenChange, onCreated }
     setBusy(true);
     setError("");
     try {
-      const path = await synthesizeSpeech(text.trim(), voice, rate);
-      await onCreated({ path, name: "AI 配音", role: "voice" });
+      const path = await synthesizeCloudSpeech({ ...cloudSpeech, ttsVoice: voice, ttsStyle: style }, text.trim());
+      await onCreated({ path, name: "MiMo 云端配音", role: "voice" });
       onOpenChange(false);
     } catch (exception) {
       setError(exception instanceof Error ? exception.message : "配音生成失败");
@@ -125,10 +129,11 @@ export function AudioCreateDialog({ open, defaultText, onOpenChange, onCreated }
           <Dialog.Title>配音与录音</Dialog.Title>
           <Dialog.Description id="audio-description">创建的人声会加入当前播放头。</Dialog.Description>
           <Tabs.Root defaultValue="tts" className="audio-tabs">
-            <Tabs.List aria-label="音频创建方式"><Tabs.Trigger value="tts"><Volume2 size={15} />系统配音</Tabs.Trigger><Tabs.Trigger value="record"><Mic size={15} />麦克风</Tabs.Trigger></Tabs.List>
+            <Tabs.List aria-label="音频创建方式"><Tabs.Trigger value="tts"><Volume2 size={15} />云端配音</Tabs.Trigger><Tabs.Trigger value="record"><Mic size={15} />麦克风</Tabs.Trigger></Tabs.List>
             <Tabs.Content value="tts" className="audio-tab-content">
               <label><span>配音文字</span><textarea rows={7} value={text} onChange={(event) => setText(event.target.value)} /></label>
-              <div className="two-column"><label><span>系统声音</span><select value={voice} onChange={(event) => setVoice(event.target.value)}><option value="">系统默认</option>{voices.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.language}</option>)}</select></label><label className="range-field"><span>语速<output>{rate}</output></span><input type="range" min={80} max={350} step={5} value={rate} onChange={(event) => setRate(Number(event.target.value))} /></label></div>
+              <div className="two-column"><label><span>模型</span><input value={cloudSpeech.ttsModel} disabled /></label><label><span>音色</span><Select label="音色" value={voice} disabled={cloudSpeech.ttsModel === "mimo-v2.5-tts-voicedesign"} onChange={setVoice} options={[...MIMO_TTS_VOICES]} /></label></div>
+              <label><span>{cloudSpeech.ttsModel === "mimo-v2.5-tts-voicedesign" ? "音色设计描述" : "发音风格指令"}</span><textarea rows={3} value={style} onChange={(event) => setStyle(event.target.value)} /></label>
               <button className="button primary" type="button" disabled={busy || !isDesktopRuntime()} onClick={() => void createSpeech()}>{busy ? <LoaderCircle className="spin" size={15} /> : <AudioLines size={15} />}生成并加入</button>
             </Tabs.Content>
             <Tabs.Content value="record" className="audio-tab-content record-pane">

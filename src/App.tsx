@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { AudioLines, Download, FileVideo2, FolderOpen, History, LoaderCircle, Redo2, Save, Settings, Sparkles, Square, Undo2 } from "lucide-react";
+import { Download, FileVideo2, FolderOpen, History, LoaderCircle, Redo2, Save, Settings, Square, Undo2 } from "lucide-react";
 import { AiGenerateDialog } from "@/components/AiGenerateDialog";
 import { AiSettingsDialog } from "@/components/AiSettingsDialog";
 import { AudioCreateDialog, type CreatedAudioSource } from "@/components/AudioCreateDialog";
 import { EditorWorkspace } from "@/components/EditorWorkspace";
+import { ExportDialog, type VideoExportOptions } from "@/components/ExportDialog";
 import { EffectLibraryDialog } from "@/components/EffectLibraryDialog";
 import { ProjectRecoveryDialog } from "@/components/ProjectRecoveryDialog";
 import { RecentProjectsDialog } from "@/components/RecentProjectsDialog";
@@ -49,8 +50,10 @@ import {
   type RecentProject,
   type RecoverySnapshot
 } from "@/services/projectSession";
-import { cancelAsrJob, captionSegments, startMediaTranscription, type AsrTranscriptionEvent } from "@/services/asr";
-import { synthesizeSpeech } from "@/services/audio";
+import { captionSegments } from "@/services/asr";
+import { subtitlesForMotionMatch } from "@/domain/captions";
+import { browserApiKey, hasApiKey, matchTimelineMotion } from "@/services/ai/provider";
+import { cancelCloudSpeechRequest, hasSpeechApiKey, startCloudMediaTranscription, type CloudSpeechProgressEvent } from "@/services/cloudSpeech";
 import { useEditorStore } from "@/stores/editorStore";
 import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
 
@@ -96,6 +99,7 @@ export default function App() {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [audioOpen, setAudioOpen] = useState(false);
   const [effectLibraryOpen, setEffectLibraryOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
   const [exportJobId, setExportJobId] = useState("");
@@ -103,8 +107,9 @@ export default function App() {
   const [proxyJobId, setProxyJobId] = useState("");
   const [proxyProgress, setProxyProgress] = useState<ProxyJobEvent | null>(null);
   const [asrJobId, setAsrJobId] = useState("");
-  const [asrProgress, setAsrProgress] = useState<AsrTranscriptionEvent | null>(null);
+  const [asrProgress, setAsrProgress] = useState<CloudSpeechProgressEvent | null>(null);
   const [audioExtractionJobId, setAudioExtractionJobId] = useState("");
+  const [aiRequestController, setAiRequestController] = useState<AbortController | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [currentProjectPath, setCurrentProjectPath] = useState<string | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
@@ -123,6 +128,8 @@ export default function App() {
   const updateAsset = useEditorStore((state) => state.updateAsset);
   const replaceProject = useEditorStore((state) => state.replaceProject);
   const addSubtitles = useEditorStore((state) => state.addSubtitles);
+  const applyMotionMatches = useEditorStore((state) => state.applyMotionMatches);
+  const alignGeneratedBlockDuration = useEditorStore((state) => state.alignGeneratedBlockDuration);
   const undo = useEditorStore((state) => state.undo);
   const redo = useEditorStore((state) => state.redo);
   const removeSelected = useEditorStore((state) => state.removeSelected);
@@ -135,7 +142,8 @@ export default function App() {
   const futureCount = useEditorStore((state) => state.future.length);
   const selectedClipId = useEditorStore((state) => state.selectedClipId);
   const generatedClips = project.tracks.flatMap((track) => track.clips).filter((clip): clip is GeneratedBlock => clip.kind === "generated");
-  const defaultNarration = generatedClips.find((clip) => clip.id === selectedClipId)?.narration ?? generatedClips[0]?.narration ?? "";
+  const narrationBlock = generatedClips.find((clip) => clip.id === selectedClipId) ?? generatedClips[0];
+  const defaultNarration = narrationBlock?.narration ?? "";
   const loadEffectLibrary = useEffectLibraryStore((state) => state.load);
 
   useEffect(() => {
@@ -435,12 +443,13 @@ export default function App() {
     }
   }
 
-  async function addCreatedAudio(source: CreatedAudioSource, startUs?: number) {
+  async function addCreatedAudio(source: CreatedAudioSource, startUs?: number, generatedBlockId?: string) {
     const id = crypto.randomUUID();
     if (source.path) {
       const metadata = await probeMedia(source.path);
       const name = source.path.split(/[\\/]/).at(-1) ?? source.name;
       addAudio({ id, name, kind: "audio", sourcePath: source.path, objectUrl: localMediaUrl(source.path), missing: false, ...metadata }, source.role, startUs);
+      if (generatedBlockId && source.role === "voice") alignGeneratedBlockDuration(generatedBlockId, metadata.durationUs);
       try {
         const derivatives = await generateMediaDerivatives(source.path, id, false, true);
         updateAsset(id, derivatives);
@@ -454,22 +463,53 @@ export default function App() {
       const objectUrl = URL.createObjectURL(source.blob);
       const metadata = await loadAudioMetadata(objectUrl);
       addAudio({ id, name: source.name, kind: "audio", durationUs: Math.round(metadata.duration * 1_000_000), objectUrl, hasAudio: true, missing: false }, source.role, startUs);
+      if (generatedBlockId && source.role === "voice") alignGeneratedBlockDuration(generatedBlockId, Math.round(metadata.duration * 1_000_000));
       setNotice(`已加入 ${source.name}`);
     }
   }
 
-  async function createGeneratedNarration(text: string, startUs: number) {
+  async function matchSubtitleEffects() {
+    if (aiRequestController) return;
+    const allSubtitles = project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle");
+    if (!allSubtitles.length) {
+      setNotice("请先通过视频识别或 AI 生成获得时间字幕");
+      return;
+    }
+    if (!settings.aiProvider.model || !(await hasApiKey())) {
+      setNotice("请先配置云端大模型和 API Key");
+      setSettingsOpen(true);
+      return;
+    }
+    const subtitles = subtitlesForMotionMatch(allSubtitles, useEditorStore.getState().selectedClipIds);
+    const controller = new AbortController();
+    setAiRequestController(controller);
+    setNotice(null);
+    setBusyMessage(`正在分析 ${subtitles.length} 条字幕的单条与组合动效`);
     try {
-      const path = await synthesizeSpeech(text, "", 190);
-      await addCreatedAudio({ path, name: "AI 配音", role: "voice" }, startUs);
+      const result = await matchTimelineMotion(settings.aiProvider, {
+        topic: project.name,
+        style: "内容优先、关键词精炼、时间轴感知、避免遮挡字幕",
+        article: generatedClips.map((clip) => clip.article).filter(Boolean).join("\n").slice(0, 8_000),
+        captions: subtitles.map((clip) => ({ startSeconds: clip.startUs / 1_000_000, endSeconds: (clip.startUs + clip.durationUs) / 1_000_000, text: clip.text })),
+        timelineDurationSeconds: Math.max(0.1, project.durationUs / 1_000_000),
+        materials: project.assets.filter((asset) => asset.kind === "video" && !asset.missing).slice(0, 40).map((asset) => ({
+          id: asset.id, name: asset.name, durationSeconds: asset.durationUs / 1_000_000, width: asset.width, height: asset.height
+        }))
+      }, browserApiKey(), controller.signal, (progress) => setBusyMessage(progress.message));
+      applyMotionMatches(subtitles.map((clip) => clip.id), result.matches ?? []);
+      setNotice(`已为 ${subtitles.length} 条字幕匹配单条与组合动效、运镜和视频图层`);
     } catch (error) {
-      setNotice(error instanceof Error ? `内容已生成，配音失败：${error.message}` : "内容已生成，配音失败");
+      setNotice(error instanceof Error ? error.message : "动效匹配失败");
+    } finally {
+      setAiRequestController(null);
+      setBusyMessage(null);
     }
   }
 
-  async function exportVideo() {
+  async function exportVideo(options: VideoExportOptions) {
+    setExportOpen(false);
     if (!isDesktopRuntime()) {
-      setNotice("MP4 导出需要在桌面客户端中运行");
+      setNotice("视频导出需要在桌面客户端中运行");
       return;
     }
     const missing = project.assets.filter((asset) => asset.missing);
@@ -477,11 +517,11 @@ export default function App() {
       setNotice(`有 ${missing.length} 个素材已丢失，请先重新定位`);
       return;
     }
-    const outputPath = await selectVideoDestination(project.name);
+    const outputPath = await selectVideoDestination(project.name, options.format);
     if (!outputPath) return;
-    setBusyMessage("正在渲染 MP4，请保持客户端开启");
+    setBusyMessage(`正在渲染 ${options.format.toUpperCase()}，请保持客户端开启`);
     try {
-      const plan = await rasterizeRenderPlan(buildRenderPlan(project, outputPath, { encoder: settings.media.encoder }));
+      const plan = await rasterizeRenderPlan(buildRenderPlan(project, outputPath, options));
       const job = startExportRenderPlan(plan, (event) => {
         setExportProgress(event);
         setBusyMessage(event.message);
@@ -514,10 +554,11 @@ export default function App() {
   }
 
   async function cancelCurrentTask() {
-    if (exportJobId) await cancelExportJob(exportJobId);
+    if (aiRequestController) aiRequestController.abort();
+    else if (exportJobId) await cancelExportJob(exportJobId);
     else if (proxyJobId) await cancelExportJob(proxyJobId);
     else if (audioExtractionJobId) await cancelExportJob(audioExtractionJobId);
-    else if (asrJobId) await cancelAsrJob(asrJobId);
+    else if (asrJobId) await cancelCloudSpeechRequest(asrJobId);
   }
 
   async function extractAssetAudio(assetId: string, exportToFile: boolean) {
@@ -562,26 +603,25 @@ export default function App() {
       setNotice("该素材没有可访问的本地路径");
       return;
     }
-    const localAsr = settings.localAsr;
-    if (!localAsr?.modelPath.trim()) {
-      setNotice("请先在设置中配置本地 Qwen3-ASR 模型目录");
+    if (!(await hasSpeechApiKey())) {
+      setNotice("请先在设置中配置云端语音 API Key");
       setSettingsOpen(true);
       return;
     }
-    setBusyMessage(`正在本地提取“${asset.name}”的字幕`);
+    setBusyMessage(`正在使用 MiMo 云端识别“${asset.name}”`);
     try {
-      const job = startMediaTranscription(asset.sourcePath, localAsr, (event) => {
+      const job = startCloudMediaTranscription(asset.sourcePath, asset.durationUs, settings.cloudSpeech, (event) => {
         setAsrProgress(event);
         setBusyMessage(event.message);
       });
       setAsrJobId(job.jobId);
       const transcript = await job.result;
       const segments = captionSegments(transcript, asset.durationUs);
-      if (!segments.length) throw new Error("本地模型没有识别出字幕内容");
+      if (!segments.length) throw new Error("云端模型没有识别出字幕内容");
       addSubtitles(assetId, segments);
-      setNotice(`已生成 ${segments.length} 条字幕 · ${transcript.language || "自动识别"} · ${transcript.device}`);
+      setNotice(`已生成 ${segments.length} 条云端字幕 · ${transcript.language || "自动识别"} · ${transcript.device}`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error || "本地字幕提取失败"));
+      setNotice(error instanceof Error ? error.message : String(error || "云端字幕提取失败"));
     } finally {
       setBusyMessage(null);
       setAsrJobId("");
@@ -602,21 +642,20 @@ export default function App() {
             {isDesktopRuntime() && <ToolButton label="最近工程" onClick={() => setRecentOpen(true)}><History size={16} /></ToolButton>}
             <ToolButton label="保存工程" onClick={() => void saveProject()}><Save size={16} /></ToolButton>
             <button className="button header-button" type="button" onClick={() => void requestImport()}><FileVideo2 size={16} />导入</button>
-            <button className="button header-button ai" type="button" onClick={() => setGenerateOpen(true)}><Sparkles size={16} />AI 生成</button>
-            <ToolButton label="配音与录音" onClick={() => setAudioOpen(true)}><AudioLines size={17} /></ToolButton>
-            <button className="button header-button export" type="button" disabled={Boolean(busyMessage)} onClick={() => void exportVideo()}>{busyMessage ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{exportProgress ? `${Math.round(exportProgress.progress * 100)}%` : busyMessage ? "处理中" : "导出 MP4"}</button>
+            <button className="button header-button export" type="button" disabled={Boolean(busyMessage)} onClick={() => setExportOpen(true)}>{busyMessage ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{exportProgress ? `${Math.round(exportProgress.progress * 100)}%` : busyMessage ? "处理中" : "导出"}</button>
             <ToolButton label="模型与客户端设置" onClick={() => setSettingsOpen(true)}><Settings size={17} /></ToolButton>
           </div>
           <WindowControls />
         </header>
-        <EditorWorkspace onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => setAudioOpen(true)} onManageEffects={() => setEffectLibraryOpen(true)} />
+        <EditorWorkspace onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onMatchEffects={() => void matchSubtitleEffects()} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => setAudioOpen(true)} onManageEffects={() => setEffectLibraryOpen(true)} />
         <input ref={fileInput} className="visually-hidden" type="file" accept="video/*,audio/*,image/png,image/jpeg,image/webp,image/bmp" onChange={(event) => void importBrowserMedia(event)} />
       </div>
-      {(busyMessage || notice) && <div className={`status-toast ${busyMessage ? "busy" : ""}`}>{busyMessage && <LoaderCircle className="spin" size={15} />}<span>{busyMessage ?? notice}{exportProgress ? <small>{Math.round(exportProgress.progress * 100)}% · {exportProgress.segmentIndex}/{exportProgress.segmentCount || "-"}</small> : proxyProgress ? <small>{Math.round(proxyProgress.progress * 100)}%</small> : asrProgress ? <small>{Math.round(asrProgress.progress * 100)}% · 本地处理</small> : null}</span>{(exportJobId || proxyJobId || audioExtractionJobId || asrJobId) && <button type="button" aria-label={exportJobId ? "取消视频导出" : proxyJobId ? "取消代理生成" : audioExtractionJobId ? "取消音频分离" : "取消字幕识别"} title="取消任务" onClick={() => void cancelCurrentTask()}><Square size={12} fill="currentColor" /></button>}{notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button>}</div>}
+      {(busyMessage || notice) && <div className={`status-toast ${busyMessage ? "busy" : ""}`}>{busyMessage && <LoaderCircle className="spin" size={15} />}<span>{busyMessage ?? notice}{exportProgress ? <small>{Math.round(exportProgress.progress * 100)}% · {exportProgress.segmentIndex}/{exportProgress.segmentCount || "-"}</small> : proxyProgress ? <small>{Math.round(proxyProgress.progress * 100)}%</small> : asrProgress ? <small>{Math.round(asrProgress.progress * 100)}% · 云端处理</small> : null}</span>{(aiRequestController || exportJobId || proxyJobId || audioExtractionJobId || asrJobId) && <button type="button" aria-label={aiRequestController ? "取消 AI 匹配" : exportJobId ? "取消视频导出" : proxyJobId ? "取消代理生成" : audioExtractionJobId ? "取消音频分离" : "取消字幕识别"} title="取消任务" onClick={() => void cancelCurrentTask()}><Square size={12} fill="currentColor" /></button>}{notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button>}</div>}
       <AiSettingsDialog open={settingsOpen} settings={settings} onOpenChange={setSettingsOpen} onSave={setSettings} />
-      <AiGenerateDialog open={generateOpen} settings={settings} onOpenChange={setGenerateOpen} onNeedSettings={() => { setGenerateOpen(false); setSettingsOpen(true); }} onCreateNarration={createGeneratedNarration} />
-      <AudioCreateDialog open={audioOpen} defaultText={defaultNarration} onOpenChange={setAudioOpen} onCreated={addCreatedAudio} />
+      <AiGenerateDialog open={generateOpen} settings={settings} onOpenChange={setGenerateOpen} onNeedSettings={() => { setGenerateOpen(false); setSettingsOpen(true); }} />
+      <AudioCreateDialog open={audioOpen} defaultText={defaultNarration} cloudSpeech={settings.cloudSpeech} onOpenChange={setAudioOpen} onCreated={(source) => addCreatedAudio(source, narrationBlock?.startUs, narrationBlock?.id)} />
       <EffectLibraryDialog open={effectLibraryOpen} onOpenChange={setEffectLibraryOpen} />
+      <ExportDialog open={exportOpen} canvas={project.canvas} defaultEncoder={settings.media.encoder} busy={Boolean(busyMessage)} onOpenChange={setExportOpen} onExport={(options) => void exportVideo(options)} />
       <ProjectRecoveryDialog snapshot={recoverySnapshot} restoring={restoringRecovery} error={recoveryError} onDiscard={() => void discardRecovery()} onRestore={() => void restoreProject()} />
       <RecentProjectsDialog open={recentOpen} projects={recentProjects} onOpenChange={setRecentOpen} onOpenProject={(path) => void openProjectPath(path)} onBrowse={() => { setRecentOpen(false); void openProject(); }} />
       {updater.visible && updater.info && <UpdateModal info={updater.info} status={updater.status} canDismiss={updater.canDismiss} downloadedBytes={updater.downloadedBytes} totalBytes={updater.totalBytes} progressPercent={updater.progressPercent} errorMessage={updater.errorMessage} installed={updater.installed} onDismiss={() => updater.setVisible(false)} onInstall={() => void updater.installAndRestart()} onRestart={() => void updater.retryRestart()} />}

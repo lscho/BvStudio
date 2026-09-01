@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.bvideo.studio",
   "build": {
-    "beforeDevCommand": "npm run prepare:media-sidecars && npm run dev",
+    "beforeDevCommand": "npm run prepare:media-sidecars -- --allow-existing && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run prepare:media-sidecars && npm run build",
     "frontendDist": "../dist"
@@ -18,7 +18,7 @@
         "minWidth": 960,
         "minHeight": 640,
         "resizable": true,
-        "maximized": false,
+        "maximized": true,
         "fullscreen": false,
         "dragDropEnabled": false,
         "decorations": true,
@@ -51,11 +51,11 @@
     },
     "externalBin": ["binaries/ffmpeg", "binaries/ffprobe"],
     "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
+      "icons-macos26/32x32.png",
+      "icons-macos26/128x128.png",
+      "icons-macos26/128x128@2x.png",
+      "icons-macos26/icon.icns",
+      "icons-macos26/icon.ico"
     ],
     "macOS": {
       "infoPlist": "Info.plist"

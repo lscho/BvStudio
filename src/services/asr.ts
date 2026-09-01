@@ -1,6 +1,14 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { LocalAsrConfig } from "@/services/storage";
 import { timedTextSegments } from "@/domain/captions";
+
+/** Legacy local runtime shape kept only for the dormant model-manager module. */
+export interface LocalAsrConfig {
+  pythonPath: string;
+  modelPath: string;
+  alignerPath: string;
+  language: string;
+  device: "auto" | "cpu" | "mps" | "cuda:0";
+}
 
 export interface AsrSegment {
   startSeconds: number;
@@ -143,7 +151,14 @@ function normalizedAlignedSegments(segments: AsrSegment[], durationSeconds: numb
 /** Converts Qwen aligner word/character timestamps into readable subtitle cues. */
 export function captionSegments(transcript: AsrTranscript, durationUs: number): AsrSegment[] {
   const durationSeconds = Number.isFinite(durationUs) && durationUs > 0 ? durationUs / 1_000_000 : Number.POSITIVE_INFINITY;
-  const aligned = normalizedAlignedSegments(transcript.segments, durationSeconds);
+  const sourceSegments = transcript.device.startsWith("cloud:")
+    ? transcript.segments.flatMap((segment) => timedTextSegments(segment.text, Math.max(0, segment.endSeconds - segment.startSeconds) * 1_000_000).map((cue) => ({
+      startSeconds: segment.startSeconds + cue.startSeconds,
+      endSeconds: segment.startSeconds + cue.endSeconds,
+      text: cue.text
+    })))
+    : transcript.segments;
+  const aligned = normalizedAlignedSegments(sourceSegments, durationSeconds);
   if (!aligned.length) return fallbackSegments(transcript.text, durationUs);
 
   const cues: AsrSegment[] = [];

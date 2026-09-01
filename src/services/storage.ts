@@ -1,12 +1,12 @@
 import { Store } from "@tauri-apps/plugin-store";
-import { MAX_MODEL_OUTPUT_TOKENS, type AiProviderConfig } from "@/services/ai/provider";
+import type { AiProviderConfig } from "@/services/ai/provider";
 
 export type ColorScheme = "system" | "light" | "dark";
 
 export interface PersistedSettings {
   colorScheme: ColorScheme;
   aiProvider: AiProviderConfig;
-  localAsr: LocalAsrConfig;
+  cloudSpeech: CloudSpeechConfig;
   media: MediaSettings;
 }
 
@@ -16,12 +16,13 @@ export interface MediaSettings {
   proxyHeight: 540 | 720;
 }
 
-export interface LocalAsrConfig {
-  pythonPath: string;
-  modelPath: string;
-  alignerPath: string;
-  language: string;
-  device: "auto" | "cpu" | "mps" | "cuda:0";
+export interface CloudSpeechConfig {
+  baseUrl: string;
+  ttsModel: string;
+  ttsVoice: string;
+  ttsStyle: string;
+  asrModel: string;
+  asrLanguage: "auto" | "zh" | "en";
 }
 
 export const DEFAULT_SETTINGS: PersistedSettings = {
@@ -30,16 +31,16 @@ export const DEFAULT_SETTINGS: PersistedSettings = {
     protocol: "openai-responses",
     baseUrl: "https://api.openai.com",
     model: "",
-    maxTokens: 4_000,
     inputCostPerMillion: 0,
     outputCostPerMillion: 0
   },
-  localAsr: {
-    pythonPath: "python3",
-    modelPath: "",
-    alignerPath: "",
-    language: "Chinese",
-    device: "auto"
+  cloudSpeech: {
+    baseUrl: "https://api.xiaomimimo.com/v1",
+    ttsModel: "mimo-v2.5-tts",
+    ttsVoice: "冰糖",
+    ttsStyle: "自然、清晰、适合知识讲解，语速适中",
+    asrModel: "mimo-v2.5-asr",
+    asrLanguage: "zh"
   },
   media: {
     encoder: "auto",
@@ -62,7 +63,7 @@ const settingsKey = "preferences";
 
 function normalizeSettings(value: unknown): PersistedSettings {
   if (value && typeof value === "object" && "colorScheme" in value) {
-    const raw = value as { colorScheme: unknown; aiProvider?: Partial<AiProviderConfig>; localAsr?: Partial<LocalAsrConfig>; media?: Partial<MediaSettings> };
+    const raw = value as { colorScheme: unknown; aiProvider?: Partial<AiProviderConfig>; cloudSpeech?: Partial<CloudSpeechConfig>; media?: Partial<MediaSettings> };
     const colorScheme = isColorScheme(raw.colorScheme) ? raw.colorScheme : DEFAULT_SETTINGS.colorScheme;
     const protocol = ["openai-responses", "openai-chat", "anthropic"].includes(raw.aiProvider?.protocol ?? "")
       ? raw.aiProvider!.protocol!
@@ -75,9 +76,6 @@ function normalizeSettings(value: unknown): PersistedSettings {
           ? raw.aiProvider.baseUrl.trim()
           : DEFAULT_SETTINGS.aiProvider.baseUrl,
         model: typeof raw.aiProvider?.model === "string" ? raw.aiProvider.model.trim() : "",
-        maxTokens: typeof raw.aiProvider?.maxTokens === "number" && Number.isInteger(raw.aiProvider.maxTokens)
-          ? Math.min(MAX_MODEL_OUTPUT_TOKENS, Math.max(1, raw.aiProvider.maxTokens))
-          : DEFAULT_SETTINGS.aiProvider.maxTokens,
         inputCostPerMillion: typeof raw.aiProvider?.inputCostPerMillion === "number" && Number.isFinite(raw.aiProvider.inputCostPerMillion)
           ? Math.max(0, raw.aiProvider.inputCostPerMillion)
           : DEFAULT_SETTINGS.aiProvider.inputCostPerMillion,
@@ -85,12 +83,13 @@ function normalizeSettings(value: unknown): PersistedSettings {
           ? Math.max(0, raw.aiProvider.outputCostPerMillion)
           : DEFAULT_SETTINGS.aiProvider.outputCostPerMillion
       },
-      localAsr: {
-        pythonPath: typeof raw.localAsr?.pythonPath === "string" && raw.localAsr.pythonPath.trim() ? raw.localAsr.pythonPath.trim() : DEFAULT_SETTINGS.localAsr.pythonPath,
-        modelPath: typeof raw.localAsr?.modelPath === "string" ? raw.localAsr.modelPath.trim() : "",
-        alignerPath: typeof raw.localAsr?.alignerPath === "string" ? raw.localAsr.alignerPath.trim() : "",
-        language: typeof raw.localAsr?.language === "string" ? raw.localAsr.language.trim() : DEFAULT_SETTINGS.localAsr.language,
-        device: ["auto", "cpu", "mps", "cuda:0"].includes(raw.localAsr?.device ?? "") ? raw.localAsr!.device! : DEFAULT_SETTINGS.localAsr.device
+      cloudSpeech: {
+        baseUrl: typeof raw.cloudSpeech?.baseUrl === "string" && raw.cloudSpeech.baseUrl.trim() ? raw.cloudSpeech.baseUrl.trim() : DEFAULT_SETTINGS.cloudSpeech.baseUrl,
+        ttsModel: typeof raw.cloudSpeech?.ttsModel === "string" && raw.cloudSpeech.ttsModel.trim() ? raw.cloudSpeech.ttsModel.trim() : DEFAULT_SETTINGS.cloudSpeech.ttsModel,
+        ttsVoice: typeof raw.cloudSpeech?.ttsVoice === "string" && raw.cloudSpeech.ttsVoice.trim() ? raw.cloudSpeech.ttsVoice.trim() : DEFAULT_SETTINGS.cloudSpeech.ttsVoice,
+        ttsStyle: typeof raw.cloudSpeech?.ttsStyle === "string" ? raw.cloudSpeech.ttsStyle.trim() : DEFAULT_SETTINGS.cloudSpeech.ttsStyle,
+        asrModel: typeof raw.cloudSpeech?.asrModel === "string" && raw.cloudSpeech.asrModel.trim() ? raw.cloudSpeech.asrModel.trim() : DEFAULT_SETTINGS.cloudSpeech.asrModel,
+        asrLanguage: ["auto", "zh", "en"].includes(raw.cloudSpeech?.asrLanguage ?? "") ? raw.cloudSpeech!.asrLanguage! : DEFAULT_SETTINGS.cloudSpeech.asrLanguage
       },
       media: {
         encoder: ["auto", "software", "videotoolbox", "nvenc", "qsv"].includes(raw.media?.encoder ?? "") ? raw.media!.encoder! : DEFAULT_SETTINGS.media.encoder,

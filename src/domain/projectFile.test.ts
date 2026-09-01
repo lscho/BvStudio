@@ -9,11 +9,170 @@ describe("project files", () => {
     const serialized = serializeProject(project);
     expect(serialized).not.toContain("blob:temporary");
     expect(serialized).not.toContain("missing");
-    expect(parseProject(serialized)).toMatchObject({ schemaVersion: 11, id: project.id, assets: [{ sourcePath: "/source.mp4" }] });
+    expect(parseProject(serialized)).toMatchObject({ schemaVersion: 18, id: project.id, assets: [{ sourcePath: "/source.mp4" }] });
+  });
+
+  it("creates separate scene and effect tracks", () => {
+    const project = createEmptyProject();
+    expect(project.schemaVersion).toBe(18);
+    expect(project.tracks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "scene-main", kind: "scene", name: "场景", clips: [] }),
+      expect.objectContaining({ id: "effect-main", kind: "effect", name: "动效", clips: [] })
+    ]));
+  });
+
+  it("migrates v17 scene background effects onto the scene track", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    raw.schemaVersion = 17;
+    raw.tracks = raw.tracks.filter((track: { kind: string }) => track.kind !== "scene");
+    const effectTrack = raw.tracks.find((track: { kind: string }) => track.kind === "effect");
+    effectTrack.clips.push({
+      id: "legacy-scene", trackId: effectTrack.id, kind: "effect", label: "深色网格", startUs: 1_000_000, durationUs: 4_000_000,
+      locked: false, effectId: "scene-dark-grid", text: "", color: "#15191f", accentColor: "#47d7ac", fontSize: 48, speed: 1,
+      transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 0.8 },
+      recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0, sceneBackground: { preset: "dark-grid", primaryColor: "#15191f", secondaryColor: "#29313b", borderColor: "#47d7ac", intensity: 0.72 } },
+      soundCues: [{ soundId: "demo:notice", offsetUs: 0, volume: 0.5, durationUs: 500_000, sourcePath: "/cache/notice.wav" }]
+    });
+
+    const migrated = parseProject(JSON.stringify(raw));
+    expect(migrated.schemaVersion).toBe(18);
+    expect(migrated.tracks.find((track) => track.kind === "effect")?.clips).toHaveLength(0);
+    expect(migrated.tracks.find((track) => track.kind === "scene")?.clips).toEqual([
+      expect.objectContaining({
+        id: "legacy-scene", trackId: "scene-main", kind: "scene", effectId: "scene-dark-grid", opacity: 0.8,
+        background: expect.objectContaining({ preset: "dark-grid" }),
+        soundCues: [expect.objectContaining({ soundId: "demo:notice" })]
+      })
+    ]);
+  });
+
+  it("normalizes malformed current scene fields from the registered preset", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    const sceneTrack = raw.tracks.find((track: { kind: string }) => track.kind === "scene");
+    sceneTrack.clips.push({
+      id: "malformed-scene", trackId: sceneTrack.id, kind: "scene", label: "损坏场景", startUs: 0, durationUs: 2_000_000,
+      locked: false, effectId: "scene-dark-grid", opacity: 4,
+      background: { preset: "remote-script", primaryColor: "red", secondaryColor: null, borderColor: "#47d7ac", intensity: 20 }
+    });
+
+    const scene = parseProject(JSON.stringify(raw)).tracks.flatMap((track) => track.clips).find((clip) => clip.id === "malformed-scene");
+    expect(scene).toMatchObject({
+      kind: "scene", opacity: 1,
+      background: { preset: "dark-grid", primaryColor: "#15191f", secondaryColor: "#29313b", borderColor: "#47d7ac", intensity: 1 }
+    });
+  });
+
+  it("migrates v16 projects with subtitle, chapter and effect-sound defaults", () => {
+    const project = createEmptyProject();
+    const legacy = JSON.parse(serializeProject(project));
+    legacy.schemaVersion = 16;
+    delete legacy.chapterProgress;
+    legacy.tracks.find((track: { kind: string }) => track.kind === "subtitle").clips.push({
+      id: "caption", trackId: "subtitle-main", kind: "subtitle", label: "示例字幕", startUs: 0, durationUs: 1_000_000,
+      locked: false, text: "示例字幕", color: "#ffffff", backgroundColor: "#000000", fontSize: 44, positionY: 88
+    });
+    legacy.tracks.find((track: { kind: string }) => track.kind === "effect").clips.push({
+      id: "effect-16", trackId: "effect-main", kind: "effect", label: "旧动效", startUs: 0, durationUs: 1_000_000,
+      locked: false, effectId: "test-title-slide", text: "重点", color: "#ffffff", accentColor: "#ffb84d", fontSize: 48, speed: 1,
+      transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }
+    });
+    expect(parseProject(JSON.stringify(legacy))).toMatchObject({
+      schemaVersion: 18,
+      chapterProgress: { enabled: false, chapters: [] },
+      tracks: expect.arrayContaining([
+        expect.objectContaining({ clips: expect.arrayContaining([expect.objectContaining({ id: "caption", stylePreset: "classic", highlightWords: [] })]) }),
+        expect.objectContaining({ clips: expect.arrayContaining([expect.objectContaining({ id: "effect-16", soundCues: [] })]) })
+      ])
+    });
+  });
+
+  it("preserves instant video presentation cues", () => {
+    const project = createEmptyProject();
+    const videoTrack = project.tracks.find((track) => track.kind === "video")!;
+    videoTrack.clips.push({
+      id: "video", trackId: videoTrack.id, kind: "video", label: "讲解人", startUs: 0, durationUs: 2_000_000,
+      locked: false, assetId: "asset", sourceInUs: 0, playbackRate: 1, volume: 1, fit: "cover", camera: cameraMotionForTest(),
+      presentationCues: [{
+        id: "cue", offsetUs: 0, transitionDurationUs: 0, presetId: "presenter-circle-bottom-right",
+        transform: { x: 84, y: 80, scale: 0.26, rotation: 0, opacity: 1 },
+        mask: { shape: "circle", radius: 0, feather: 0, borderWidth: 3, borderColor: "#ffffff", focusX: 50, focusY: 38 },
+        focus: { enabled: false, startOffsetUs: 0, durationUs: 2_000_000, x: 50, y: 50, zoom: 1.8, radius: 14, feather: 6, dimOpacity: 0.58, showCursor: true },
+        camera: cameraMotionForTest(), fit: "cover"
+      }]
+    });
+
+    expect(parseProject(serializeProject(project)).tracks.flatMap((track) => track.clips).find((clip) => clip.id === "video")).toMatchObject({
+      presentationCues: [{ transitionDurationUs: 0 }]
+    });
   });
 
   it("rejects unsupported schemas", () => {
     expect(() => parseProject('{"schemaVersion":99,"assets":[],"tracks":[],"canvas":{}}')).toThrow("不支持");
+  });
+
+  it("normalizes untrusted effect sound cues", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    const effectTrack = raw.tracks.find((track: { kind: string }) => track.kind === "effect");
+    effectTrack.clips.push({
+      id: "effect-sound", trackId: effectTrack.id, kind: "effect", label: "提示", startUs: 0, durationUs: 2_000_000,
+      locked: false, effectId: "test-title-slide", text: "重点", color: "#ffffff", accentColor: "#ffb84d", fontSize: 48, speed: 1,
+      transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 },
+      soundCues: [
+        { soundId: "demo:notice", offsetUs: 100_000.4, volume: 0.5, durationUs: 600_000.2, sourcePath: "/cache/notice.wav" },
+        { soundId: "demo:loud", offsetUs: 0, volume: 3, durationUs: 600_000, sourcePath: "/cache/loud.wav" },
+        { soundId: "demo:broken", offsetUs: "now", volume: 0.5, durationUs: 600_000 }
+      ]
+    });
+
+    const effect = parseProject(JSON.stringify(raw)).tracks.flatMap((track) => track.clips).find((clip) => clip.id === "effect-sound");
+    expect(effect?.kind === "effect" ? effect.soundCues : undefined).toEqual([
+      { soundId: "demo:notice", offsetUs: 100_000, volume: 0.5, durationUs: 600_000, sourcePath: "/cache/notice.wav" }
+    ]);
+  });
+
+  it("migrates schema 13 video masks with a centered crop focus", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    raw.schemaVersion = 13;
+    const videoTrack = raw.tracks.find((track: { kind: string }) => track.kind === "video");
+    videoTrack.clips.push({
+      id: "video-13", trackId: videoTrack.id, kind: "video", label: "旧圆形视频", startUs: 0, durationUs: 1_000_000,
+      locked: false, assetId: "asset", sourceInUs: 0, playbackRate: 1, volume: 1, fit: "cover",
+      camera: cameraMotionForTest(), mask: { shape: "circle", radius: 50, feather: 0, borderWidth: 2, borderColor: "#ffffff" }
+    });
+
+    const migrated = parseProject(JSON.stringify(raw));
+    expect(migrated.schemaVersion).toBe(18);
+    expect(migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "video-13")).toMatchObject({ mask: { shape: "circle", focusX: 50, focusY: 50 } });
+  });
+
+  it("migrates schema 14 videos without presentation cues", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    raw.schemaVersion = 14;
+    const videoTrack = raw.tracks.find((track: { kind: string }) => track.kind === "video");
+    videoTrack.clips.push({
+      id: "video-14", trackId: videoTrack.id, kind: "video", label: "旧视频", startUs: 0, durationUs: 2_000_000,
+      locked: false, assetId: "asset", sourceInUs: 0, playbackRate: 1, volume: 1, fit: "cover",
+      camera: cameraMotionForTest()
+    });
+
+    const migrated = parseProject(JSON.stringify(raw));
+    expect(migrated.schemaVersion).toBe(18);
+    expect(migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "video-14")).toMatchObject({ presentationCues: [] });
+  });
+
+  it("migrates schema 12 projects while preserving scene background snapshots", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    raw.schemaVersion = 12;
+    const effectTrack = raw.tracks.find((track: { kind: string }) => track.kind === "effect");
+    effectTrack.clips.push({
+      id: "scene", trackId: effectTrack.id, kind: "effect", label: "白色边框", startUs: 0, durationUs: 2_000_000,
+      locked: false, effectId: "scene-white-frame", text: "", color: "#ffffff", accentColor: "#111111", fontSize: 48, speed: 1,
+      transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 },
+      recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0, sceneBackground: { preset: "white-frame", primaryColor: "#ffffff", secondaryColor: "#f5f5f5", borderColor: "#111111", intensity: 0.7 } }
+    });
+    const migrated = parseProject(JSON.stringify(raw));
+    expect(migrated.schemaVersion).toBe(18);
+    expect(migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "scene")).toMatchObject({ kind: "scene", trackId: "scene-main", background: { preset: "white-frame" } });
   });
 
   it("migrates legacy tracks and adds the current image and audio layout", () => {
@@ -24,7 +183,7 @@ describe("project files", () => {
     raw.tracks.push({ id: "audio-main", kind: "audio", name: "音频", locked: false, muted: false, hidden: false, clips: [] });
 
     const migrated = parseProject(JSON.stringify(raw));
-    expect(migrated.schemaVersion).toBe(11);
+    expect(migrated.schemaVersion).toBe(18);
     expect(migrated.tracks.some((track) => track.kind === "image" && track.name === "贴图")).toBe(true);
     expect(migrated.tracks.filter((track) => track.kind === "audio").map((track) => [track.name, track.audioRole])).toEqual([
       ["配音", "voice"], ["背景音乐", "music"], ["音效", "sound"]
@@ -79,7 +238,57 @@ describe("project files", () => {
 
     const migrated = parseProject(JSON.stringify(raw));
     const clip = migrated.tracks.flatMap((track) => track.clips).find((item) => item.id === "generated-9");
-    expect(migrated.schemaVersion).toBe(11);
+    expect(migrated.schemaVersion).toBe(18);
     expect(clip?.kind === "generated" ? clip.scenes[0].additionalEffects : undefined).toEqual([]);
   });
+
+  it("migrates schema 11 video roles, masks, transitions, focus and effect backgrounds", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    raw.schemaVersion = 11;
+    const videoTrack = raw.tracks.find((track: { kind: string }) => track.kind === "video");
+    videoTrack.id = "video-main";
+    videoTrack.name = "主视频";
+    videoTrack.clips.push({ id: "legacy-video", trackId: "video-main", kind: "video", label: "旧视频", startUs: 0, durationUs: 2_000_000, locked: false, assetId: "asset", sourceInUs: 0, playbackRate: 1, volume: 1, fit: "cover", camera: cameraMotionForTest() });
+    const effectTrack = raw.tracks.find((track: { kind: string }) => track.kind === "effect");
+    effectTrack.clips.push({ id: "legacy-effect", trackId: effectTrack.id, kind: "effect", label: "旧动效", startUs: 0, durationUs: 1_000_000, locked: false, effectId: "test-title-slide", text: "重点", color: "#ffffff", accentColor: "#ffb84d", fontSize: 48, speed: 1, transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 } });
+
+    const migrated = parseProject(JSON.stringify(raw));
+    const video = migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "legacy-video");
+    const effect = migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "legacy-effect");
+    expect(migrated.schemaVersion).toBe(18);
+    expect(migrated.tracks.find((track) => track.kind === "video")?.name).toBe("视频");
+    expect(video).toMatchObject({ kind: "video", role: "a-roll", cameraOffsetUs: 0, cameraDurationUs: 2_000_000, mask: { shape: "rectangle", focusX: 50, focusY: 50 }, transition: { preset: "none" } });
+    expect(effect).toMatchObject({ kind: "effect", backdrop: { enabled: true, color: "#111316", opacity: 0.64 } });
+  });
+
+  it("repairs legacy AI layers that were all persisted at the canvas center", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    const generatedTrack = raw.tracks.find((track: { kind: string }) => track.kind === "generated");
+    const centered = { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 };
+    generatedTrack.clips.push({
+      id: "generated-centered", trackId: generatedTrack.id, kind: "generated", label: "居中旧脚本", startUs: 0,
+      durationUs: 2_000_000, locked: false, article: "", narration: "", prompt: "", insertMode: "overlay",
+      scenes: [{
+        id: "scene-centered", title: "增长 42%", narration: "", durationUs: 2_000_000, effectId: "title-highlight",
+        textColor: "#ffffff", accentColor: "#47d7ac", fontSize: 58, speed: 1, transform: centered,
+        mediaSourceInUs: 0, mediaFit: "cover", mediaVolume: 0, camera: { preset: "none", startScale: 1, endScale: 1, startX: 0, endX: 0, startY: 0, endY: 0, easing: "linear" },
+        additionalEffects: [
+          { id: "number", effectId: "number-pop", text: "42%", textColor: "#ffffff", accentColor: "#47d7ac", fontSize: 58, speed: 1, transform: centered, startOffsetUs: 0, durationUs: 2_000_000, zIndex: 21, source: "ai" },
+          { id: "manual", effectId: "quote-card", text: "手动", textColor: "#ffffff", accentColor: "#47d7ac", fontSize: 58, speed: 1, transform: { ...centered, x: 61 }, startOffsetUs: 0, durationUs: 2_000_000, zIndex: 22, source: "manual" }
+        ]
+      }]
+    });
+
+    const migrated = parseProject(JSON.stringify(raw));
+    const clip = migrated.tracks.flatMap((track) => track.clips).find((item) => item.id === "generated-centered");
+    expect(clip?.kind).toBe("generated");
+    if (clip?.kind !== "generated") return;
+    expect(clip.scenes[0].transform).toMatchObject({ x: 50, y: 22 });
+    expect(clip.scenes[0].additionalEffects?.[0].transform).toMatchObject({ x: 76, y: 30 });
+    expect(clip.scenes[0].additionalEffects?.[1].transform).toMatchObject({ x: 61, y: 50 });
+  });
 });
+
+function cameraMotionForTest() {
+  return { preset: "none" as const, startScale: 1, endScale: 1, startX: 0, endX: 0, startY: 0, endY: 0, easing: "linear" as const };
+}

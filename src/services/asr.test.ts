@@ -24,6 +24,18 @@ describe("fallbackSegments", () => {
 });
 
 describe("captionSegments", () => {
+  it("turns coarse cloud ASR chunks into readable timed sentence cues", () => {
+    const cues = captionSegments({
+      language: "zh",
+      text: "第一句。第二句内容更长！",
+      segments: [{ startSeconds: 10, endSeconds: 16, text: "第一句。第二句内容更长！" }],
+      device: "cloud:mimo-v2.5-asr"
+    }, 20_000_000);
+    expect(cues.map((cue) => cue.text)).toEqual(["第一句。", "第二句内容更长！"]);
+    expect(cues[0].startSeconds).toBe(10);
+    expect(cues.at(-1)?.endSeconds).toBe(16);
+  });
+
   it("merges Chinese character timestamps and flushes at sentence punctuation", () => {
     const segments = ["你", "好", "，", "世", "界", "。", "下", "句", "！"].map((text, index) => ({
       startSeconds: index * 0.2,

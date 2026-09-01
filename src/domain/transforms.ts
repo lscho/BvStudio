@@ -1,11 +1,12 @@
 import type { TransformProps, VideoClip, VisualTransformKeyframe } from "@/domain/project";
+import { eased } from "@/domain/easing";
 
 export type VideoLayoutPresetId = NonNullable<VideoClip["layoutPreset"]>;
 
 export const DEFAULT_TRANSFORM: TransformProps = { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 };
 
 export const VIDEO_LAYOUT_PRESETS: readonly { id: VideoLayoutPresetId; name: string; animated: boolean }[] = [
-  { id: "full", name: "全屏主画面", animated: false },
+  { id: "full", name: "全屏画面", animated: false },
   { id: "picture-in-picture-top-left", name: "左上角画中画", animated: false },
   { id: "picture-in-picture-top-right", name: "右上角画中画", animated: false },
   { id: "picture-in-picture-bottom-left", name: "左下角画中画", animated: false },
@@ -15,14 +16,14 @@ export const VIDEO_LAYOUT_PRESETS: readonly { id: VideoLayoutPresetId; name: str
   { id: "shrink-bottom-left", name: "缩小并移到左下角", animated: true },
   { id: "shrink-bottom-right", name: "缩小并移到右下角", animated: true },
   { id: "reveal-center", name: "从中心放大出现", animated: true },
+  { id: "split-left", name: "左侧分屏", animated: true },
+  { id: "split-right", name: "右侧分屏", animated: true },
+  { id: "presenter-bottom-right", name: "右下角讲解人", animated: true },
   { id: "custom", name: "自定义关键帧", animated: true }
 ] as const;
 
 function ease(progress: number, easing: VisualTransformKeyframe["easing"]) {
-  if (easing === "ease-in") return progress * progress;
-  if (easing === "ease-out") return 1 - (1 - progress) ** 2;
-  if (easing === "ease-in-out") return progress < 0.5 ? 2 * progress * progress : 1 - ((-2 * progress + 2) ** 2) / 2;
-  return progress;
+  return eased(progress, easing);
 }
 
 export function visualTransformAt(base: TransformProps, keyframes: readonly VisualTransformKeyframe[] | undefined, offsetUs: number): TransformProps {
@@ -60,6 +61,16 @@ export function videoLayoutForPreset(id: VideoLayoutPresetId, durationUs: number
   if (id === "reveal-center") {
     const endUs = Math.min(800_000, Math.max(100_000, Math.round(durationUs * 0.25)));
     return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [{ offsetUs: 0, x: 50, y: 50, scale: 0.12, easing: "ease-out" }, { offsetUs: endUs, x: 50, y: 50, scale: 1, easing: "ease-out" }], zIndex: 10 };
+  }
+  if (id === "split-left" || id === "split-right") {
+    const target = { x: id === "split-left" ? 25 : 75, y: 50, scale: 0.5 };
+    const endUs = Math.min(700_000, Math.max(160_000, Math.round(durationUs * 0.2)));
+    return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [{ offsetUs: 0, x: 50, y: 50, scale: 1, easing: "ease-in-out" }, { offsetUs: endUs, ...target, easing: "ease-in-out" }], zIndex: 10 };
+  }
+  if (id === "presenter-bottom-right") {
+    const target = { x: 84, y: 80, scale: 0.26 };
+    const endUs = Math.min(650_000, Math.max(150_000, Math.round(durationUs * 0.2)));
+    return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [{ offsetUs: 0, x: 92, y: 88, scale: 0.08, easing: "back-out" }, { offsetUs: endUs, ...target, easing: "back-out" }], zIndex: 30 };
   }
   const cornerName = id.replace("picture-in-picture-", "").replace("shrink-", "");
   const corner = corners[cornerName] ?? corners["top-right"];

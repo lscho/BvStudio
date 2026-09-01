@@ -3,6 +3,8 @@ mod media;
 mod asr;
 mod audio;
 mod effects;
+mod secrets;
+mod speech;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -10,6 +12,7 @@ pub fn run() {
         .manage(asr::AsrManagerState::default())
         .manage(ai::AiRequestState::default())
         .manage(media::ExportManagerState::default())
+        .manage(speech::SpeechRequestState::default())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
@@ -55,6 +58,13 @@ pub fn run() {
             audio::save_recording,
             audio::list_system_voices,
             audio::synthesize_speech,
+            speech::save_speech_api_key,
+            speech::has_speech_api_key,
+            speech::verify_cloud_speech,
+            speech::synthesize_cloud_speech,
+            speech::merge_cloud_speech_segments,
+            speech::transcribe_cloud_media,
+            speech::cancel_cloud_speech_request,
             effects::inspect_effect_package,
             effects::list_effect_packages,
             effects::install_effect_package,

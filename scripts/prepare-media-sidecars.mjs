@@ -74,8 +74,8 @@ export function resolveSidecarSources({
     join(root, "node_modules", "@ffprobe-installer", requestedTarget, `ffprobe${extension}`)
   ]);
 
-  if (!ffmpeg) throw new Error(`FFmpeg sidecar is missing for ${requestedTarget}; run npm ci with install scripts enabled`);
-  if (!ffprobe) throw new Error(`FFprobe sidecar is missing for ${requestedTarget}; run npm ci with the matching optional dependency`);
+  if (!ffmpeg) throw new Error(`FFmpeg sidecar is missing for ${requestedTarget}; use Node 22 and run npm ci with install scripts enabled`);
+  if (!ffprobe) throw new Error(`FFprobe sidecar is missing for ${requestedTarget}; use Node 22 and run npm ci with the matching optional dependency`);
   return { ffmpeg: resolve(ffmpeg), ffprobe: resolve(ffprobe), platform, arch, compatibleTarget, targetTriple: process.env.TAURI_ENV_TARGET_TRIPLE || targetTripleFor(platform, arch), ffprobePackage: `@ffprobe-installer/${compatibleTarget}`, extension };
 }
 
@@ -86,6 +86,26 @@ function verifyBinary(path, label, runner) {
   const firstLine = (result.stdout || result.stderr || "").split(/\r?\n/u).find(Boolean)?.trim();
   if (!firstLine) throw new Error(`${label} sidecar did not report a version`);
   return firstLine;
+}
+
+export function reusePreparedSidecars({
+  platform = process.env.npm_config_platform || process.platform,
+  arch = process.env.npm_config_arch || process.arch,
+  outputDirectory = join(repoRoot, "src-tauri", "binaries"),
+  targetTriple = process.env.TAURI_ENV_TARGET_TRIPLE || targetTripleFor(platform, arch),
+  runner = spawnSync
+} = {}) {
+  const extension = platform === "win32" ? ".exe" : "";
+  const ffmpeg = join(outputDirectory, `ffmpeg-${targetTriple}${extension}`);
+  const ffprobe = join(outputDirectory, `ffprobe-${targetTriple}${extension}`);
+  if (!existsSync(ffmpeg) || !existsSync(ffprobe)) {
+    throw new Error(`Prepared media sidecars are missing for ${targetTriple}`);
+  }
+  return {
+    outputDirectory,
+    ffmpegVersion: verifyBinary(ffmpeg, "FFmpeg", runner),
+    ffprobeVersion: verifyBinary(ffprobe, "FFprobe", runner)
+  };
 }
 
 export function prepareMediaSidecars({
@@ -145,8 +165,16 @@ if (isMainModule()) {
   const outputDirectory = process.env.BVIDEO_SIDECAR_OUTPUT_DIR
     ? resolve(process.env.BVIDEO_SIDECAR_OUTPUT_DIR)
     : join(repoRoot, "src-tauri", "binaries");
-  const { manifest } = prepareMediaSidecars({ outputDirectory });
-  console.log(`Prepared ${manifest.tools.ffmpeg.version}`);
-  console.log(`Prepared ${manifest.tools.ffprobe.version}`);
+  try {
+    const { manifest } = prepareMediaSidecars({ outputDirectory });
+    console.log(`Prepared ${manifest.tools.ffmpeg.version}`);
+    console.log(`Prepared ${manifest.tools.ffprobe.version}`);
+  } catch (error) {
+    if (!process.argv.includes("--allow-existing")) throw error;
+    const reused = reusePreparedSidecars({ outputDirectory });
+    console.warn(`${error instanceof Error ? error.message : String(error)}; reusing validated development sidecars`);
+    console.log(`Reused ${reused.ffmpegVersion}`);
+    console.log(`Reused ${reused.ffprobeVersion}`);
+  }
   console.log(outputDirectory);
 }

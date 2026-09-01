@@ -1,23 +1,65 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 6,
   "manifest": {
     "id": "bvideo-starter",
     "name": "BVideo Starter Effects",
-    "version": "2.0.0",
+    "version": "3.0.0",
     "author": "BVideo Studio",
-    "description": "An unsigned example package for local development."
+    "description": "An unsigned example package with deterministic procedural sound effects."
   },
+  "sounds": [
+    {
+      "id": "notice-soft",
+      "name": "柔和提示",
+      "durationUs": 650000,
+      "layers": [
+        { "waveform": "sine", "startOffsetUs": 0, "durationUs": 650000, "startFrequencyHz": 740, "endFrequencyHz": 880, "volume": 0.28, "attackUs": 8000, "releaseUs": 420000 },
+        { "waveform": "sine", "startOffsetUs": 100000, "durationUs": 500000, "startFrequencyHz": 1110, "endFrequencyHz": 1320, "volume": 0.16, "attackUs": 10000, "releaseUs": 360000 }
+      ]
+    },
+    {
+      "id": "success-double",
+      "name": "成功双音",
+      "durationUs": 900000,
+      "layers": [
+        { "waveform": "sine", "startOffsetUs": 0, "durationUs": 430000, "startFrequencyHz": 660, "endFrequencyHz": 660, "volume": 0.25, "attackUs": 6000, "releaseUs": 300000 },
+        { "waveform": "triangle", "startOffsetUs": 0, "durationUs": 360000, "startFrequencyHz": 1320, "endFrequencyHz": 1320, "volume": 0.08, "attackUs": 6000, "releaseUs": 260000 },
+        { "waveform": "sine", "startOffsetUs": 280000, "durationUs": 620000, "startFrequencyHz": 880, "endFrequencyHz": 990, "volume": 0.28, "attackUs": 7000, "releaseUs": 430000 },
+        { "waveform": "triangle", "startOffsetUs": 280000, "durationUs": 520000, "startFrequencyHz": 1760, "endFrequencyHz": 1980, "volume": 0.07, "attackUs": 7000, "releaseUs": 380000 }
+      ]
+    },
+    {
+      "id": "warning-pulse",
+      "name": "警告脉冲",
+      "durationUs": 900000,
+      "layers": [
+        { "waveform": "sine", "startOffsetUs": 0, "durationUs": 400000, "startFrequencyHz": 220, "endFrequencyHz": 180, "volume": 0.34, "attackUs": 12000, "releaseUs": 180000 },
+        { "waveform": "triangle", "startOffsetUs": 0, "durationUs": 350000, "startFrequencyHz": 440, "endFrequencyHz": 360, "volume": 0.1, "attackUs": 12000, "releaseUs": 160000 },
+        { "waveform": "sine", "startOffsetUs": 420000, "durationUs": 400000, "startFrequencyHz": 220, "endFrequencyHz": 180, "volume": 0.3, "attackUs": 12000, "releaseUs": 180000 }
+      ]
+    },
+    {
+      "id": "whoosh-short",
+      "name": "短促转场",
+      "durationUs": 700000,
+      "layers": [
+        { "waveform": "noise", "startOffsetUs": 0, "durationUs": 700000, "startFrequencyHz": 500, "endFrequencyHz": 6000, "volume": 0.3, "attackUs": 30000, "releaseUs": 180000 },
+        { "waveform": "sine", "startOffsetUs": 0, "durationUs": 650000, "startFrequencyHz": 180, "endFrequencyHz": 900, "volume": 0.14, "attackUs": 20000, "releaseUs": 180000 }
+      ]
+    }
+  ],
   "effects": [
     {
       "id": "chapter-card",
       "name": "章节卡片",
       "category": "卡片",
-      "description": "从下方淡入的章节说明卡片",
+      "description": "从下方淡入的章节说明卡片，带短促转场音",
       "tags": ["章节", "说明", "转场"],
       "defaultDurationUs": 3000000,
       "defaultText": "新的章节",
       "defaultColor": "#ffffff",
       "defaultAccentColor": "#47d7ac",
+      "soundCues": [{ "soundId": "whoosh-short", "offsetUs": 0, "volume": 0.5 }],
       "recipe": {
         "layout": "panel",
         "entrance": "fade-up",
@@ -36,6 +78,45 @@
           ]
         }
       }
+    },
+    {
+      "id": "key-notice",
+      "name": "重点提示",
+      "category": "强调",
+      "description": "适合重点信息出现时的轻量提示",
+      "tags": ["重点", "提示", "注意"],
+      "defaultDurationUs": 2200000,
+      "defaultText": "请注意",
+      "defaultColor": "#ffffff",
+      "defaultAccentColor": "#ffb84d",
+      "soundCues": [{ "soundId": "notice-soft", "offsetUs": 0, "volume": 0.55 }],
+      "recipe": { "layout": "highlight", "entrance": "pop", "paddingX": 20, "paddingY": 10, "borderWidth": 0, "borderRadius": 4, "backgroundOpacity": 0.2 }
+    },
+    {
+      "id": "success-card",
+      "name": "完成确认",
+      "category": "卡片",
+      "description": "适合步骤完成、结果确认或正向结论",
+      "tags": ["完成", "成功", "结果"],
+      "defaultDurationUs": 2400000,
+      "defaultText": "已完成",
+      "defaultColor": "#ffffff",
+      "defaultAccentColor": "#47d7ac",
+      "soundCues": [{ "soundId": "success-double", "offsetUs": 0, "volume": 0.52 }],
+      "recipe": { "layout": "panel", "entrance": "pop", "paddingX": 22, "paddingY": 12, "borderWidth": 3, "borderRadius": 5, "backgroundOpacity": 0.78 }
+    },
+    {
+      "id": "warning-card",
+      "name": "风险警告",
+      "category": "卡片",
+      "description": "适合错误、风险和必须留意的信息",
+      "tags": ["警告", "风险", "错误"],
+      "defaultDurationUs": 2600000,
+      "defaultText": "重要警告",
+      "defaultColor": "#ffffff",
+      "defaultAccentColor": "#ee6b72",
+      "soundCues": [{ "soundId": "warning-pulse", "offsetUs": 0, "volume": 0.48 }],
+      "recipe": { "layout": "frame", "entrance": "fade-up", "paddingX": 22, "paddingY": 14, "borderWidth": 4, "borderRadius": 3, "backgroundOpacity": 0.82 }
     }
   ]
 }

@@ -12,6 +12,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:mimo-speech": "node scripts/mimo-speech-smoke.mjs",
+    "test:mimo-speech-only": "node scripts/mimo-speech-smoke.mjs --speech-only",
     "test:release": "node --test scripts/*.test.mjs",
     "prepare:media-sidecars": "node scripts/prepare-media-sidecars.mjs",
     "tauri": "tauri",
@@ -19,7 +21,7 @@
     "desktop:build": "tauri build",
     "release:config": "node scripts/write-tauri-release-config.mjs",
     "release:manifest": "node scripts/build-desktop-release-manifest.mjs",
-    "generate:icons": "tauri icon src-tauri/app-icon.svg"
+    "generate:icons": "tauri icon src-tauri/app-icon-macos26.svg -o src-tauri/icons-macos26"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
@@ -33,6 +35,9 @@
     "@tauri-apps/plugin-store": "^2.4.3",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "clsx": "^2.1.1",
+    "d3-ease": "^3.0.1",
+    "d3-scale": "^4.0.2",
+    "d3-shape": "^3.2.0",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
@@ -44,6 +49,9 @@
     "@tauri-apps/cli": "^2.11.0",
     "@testing-library/jest-dom": "^6.8.0",
     "@testing-library/react": "^16.3.0",
+    "@types/d3-ease": "^3.0.2",
+    "@types/d3-scale": "^4.0.9",
+    "@types/d3-shape": "^3.2.0",
     "@types/node": "^22.10.2",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",

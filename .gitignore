@@ -20,6 +20,7 @@ src-tauri/binaries/*
 *.swp
 *.swo
 *~
+.zcode
 
 # OS generated files
 .DS_Store

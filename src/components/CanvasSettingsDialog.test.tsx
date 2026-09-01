@@ -24,8 +24,22 @@ describe("CanvasSettingsDialog", () => {
   it("can follow an imported video's exact dimensions", () => {
     const project = useEditorStore.getState().project;
     render(<CanvasSettingsDialog open onOpenChange={vi.fn()} canvas={project.canvas} assets={project.assets} />);
-    fireEvent.change(screen.getByLabelText("跟随素材"), { target: { value: "portrait" } });
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "跟随素材" }), { key: "Enter" });
+    fireEvent.click(screen.getByRole("option", { name: "portrait.mp4 · 576 × 1280" }));
     fireEvent.click(screen.getByRole("button", { name: "应用画布" }));
     expect(useEditorStore.getState().project.canvas).toMatchObject({ width: 576, height: 1280 });
+  });
+
+  it("only offers 30 and 60 fps and normalizes a legacy frame rate", () => {
+    const project = useEditorStore.getState().project;
+    project.canvas = { ...project.canvas, fpsNumerator: 24, fpsDenominator: 1 };
+    render(<CanvasSettingsDialog open onOpenChange={vi.fn()} canvas={project.canvas} assets={project.assets} />);
+
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "帧率" }), { key: "Enter" });
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["30 fps", "60 fps"]);
+    fireEvent.click(screen.getByRole("option", { name: "60 fps" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用画布" }));
+
+    expect(useEditorStore.getState().project.canvas).toMatchObject({ fpsNumerator: 60_000, fpsDenominator: 1_000 });
   });
 });

@@ -1,4 +1,6 @@
-export type CameraEasing = "linear" | "ease-in" | "ease-out" | "ease-in-out";
+import { eased, type EasingName } from "@/domain/easing";
+
+export type CameraEasing = EasingName;
 
 export interface CameraMotion {
   preset: CameraPresetId;
@@ -46,10 +48,7 @@ export function cameraMotionForPreset(id: CameraPresetId): CameraMotion {
 }
 
 function ease(progress: number, easing: CameraEasing) {
-  if (easing === "ease-in") return progress * progress;
-  if (easing === "ease-out") return 1 - (1 - progress) ** 2;
-  if (easing === "ease-in-out") return progress < 0.5 ? 2 * progress * progress : 1 - ((-2 * progress + 2) ** 2) / 2;
-  return progress;
+  return eased(progress, easing);
 }
 
 export function cameraStateAt(motionValue: CameraMotion, progress: number) {

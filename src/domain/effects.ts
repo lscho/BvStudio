@@ -1,7 +1,31 @@
-export type EffectCategory = "标题" | "强调" | "卡片" | "标注" | "布局" | "场景";
+import { EASING_NAMES, eased as evaluateEasing, type EasingName } from "@/domain/easing";
+
+export type EffectCategory = "标题" | "强调" | "卡片" | "标注" | "数据" | "布局" | "场景";
 export type EffectLayout = "highlight" | "number" | "panel" | "underline" | "frame";
 export type EffectEntrance = "slide-left" | "fade-up" | "pop" | "none";
-export type EffectAnimationEasing = "linear" | "ease-in" | "ease-out" | "ease-in-out";
+export type EffectAnimationEasing = EasingName;
+export { EASING_NAMES };
+
+/** Declarative data-driven motion graphic; rendered identically in preview and export. */
+export interface ChartSpec {
+  kind: "counter" | "bar" | "donut" | "line";
+  /** Counter only: numeric range rolled through during playback. */
+  startValue?: number;
+  endValue?: number;
+  prefix?: string;
+  suffix?: string;
+  decimals?: number;
+  /** Bar/line/donut payload. */
+  categories?: string[];
+  series?: number[];
+  comparison?: number[];
+  /** Upper bound of the value axis; defaults to a rounded max of the series. */
+  maxY?: number;
+  unit?: string;
+  gridLines?: number;
+  /** Seconds for the full reveal before easing by overlay speed; default 1.2. */
+  durationSeconds?: number;
+}
 
 export interface EffectKeyframe {
   offset: number;
@@ -9,6 +33,12 @@ export interface EffectKeyframe {
   translateY: number;
   scale: number;
   rotation: number;
+  /** Schema v4: per-segment easing applied on the interval ending at this keyframe. */
+  easing?: EffectAnimationEasing;
+  /** Schema v4: pseudo-3D tilt in degrees (-80..80); previewed via CSS 3D, exported with foreshortening approximation. */
+  rotateX?: number;
+  rotateY?: number;
+  perspective?: number;
 }
 
 export interface EffectAnimation {
@@ -26,6 +56,26 @@ export interface EffectRecipe {
   borderRadius: number;
   backgroundOpacity: number;
   animation?: EffectAnimation;
+  /** Schema v4: replaces the plain text layer with a procedural chart when present. */
+  chart?: ChartSpec;
+  /** Full-canvas background scene rendered below every video and graphic layer. */
+  sceneBackground?: SceneBackgroundSpec;
+}
+
+export interface EffectSoundCue {
+  soundId: string;
+  offsetUs: number;
+  volume: number;
+  durationUs: number;
+  sourcePath?: string;
+}
+
+export interface SceneBackgroundSpec {
+  preset: "black-stripes" | "white-frame" | "dark-grid" | "clean-white" | "spotlight" | "blueprint" | "paper-lines" | "contrast-side";
+  primaryColor: string;
+  secondaryColor: string;
+  borderColor: string;
+  intensity: number;
 }
 
 export interface EffectDefinition {
@@ -39,6 +89,7 @@ export interface EffectDefinition {
   defaultColor: string;
   defaultAccentColor: string;
   recipe: EffectRecipe;
+  soundCues?: EffectSoundCue[];
   kind?: "effect" | "scene";
   sceneLayers?: SceneEffectTemplateLayer[];
 }
@@ -142,6 +193,70 @@ const CORE_EFFECTS: readonly EffectDefinition[] = [
     }
   }
 ] as const;
+
+/** Procedural data-driven effects; pixels are generated per frame from the chart spec. */
+const CHART_EFFECTS: readonly EffectDefinition[] = [
+  {
+    id: "data-counter",
+    name: "数字结论",
+    category: "数据",
+    description: "大号核心数字与进度强调线",
+    tags: ["数字", "数据", "增长", "统计", "金额", "比例", "counter"],
+    defaultDurationUs: 2_400_000,
+    defaultText: "核心数据",
+    defaultColor: "#ffffff",
+    defaultAccentColor: "#47d7ac",
+    recipe: {
+      layout: "frame", entrance: "none", paddingX: 22, paddingY: 18, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.74,
+      chart: { kind: "counter", startValue: 0, endValue: 85, suffix: "%", decimals: 0, durationSeconds: 1.1 }
+    }
+  },
+  {
+    id: "data-bar-chart",
+    name: "横向数据对比",
+    category: "数据",
+    description: "横向条形错峰展开，突出核心差异",
+    tags: ["图表", "数据", "对比", "增长", "统计", "bar"],
+    defaultDurationUs: 3_600_000,
+    defaultText: "近四个月增长",
+    defaultColor: "#ffffff",
+    defaultAccentColor: "#47d7ac",
+    recipe: {
+      layout: "frame", entrance: "none", paddingX: 26, paddingY: 20, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.74,
+      chart: { kind: "bar", series: [32, 48, 41, 76], comparison: [24, 39, 44, 52], categories: ["一月", "二月", "三月", "四月"], unit: "", gridLines: 3, durationSeconds: 1.4 }
+    }
+  },
+  {
+    id: "data-donut-chart",
+    name: "重点占比",
+    category: "数据",
+    description: "主占比居中，构成信息在侧边清晰展开",
+    tags: ["图表", "占比", "数据", "百分比", "构成", "donut"],
+    defaultDurationUs: 3_200_000,
+    defaultText: "渠道构成",
+    defaultColor: "#ffffff",
+    defaultAccentColor: "#5fa8ff",
+    recipe: {
+      layout: "frame", entrance: "none", paddingX: 26, paddingY: 22, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.74,
+      chart: { kind: "donut", series: [45, 30, 25], categories: ["搜索", "推荐", "直达"], suffix: "%", durationSeconds: 1.3 }
+    }
+  },
+  {
+    id: "data-line-chart",
+    name: "趋势变化",
+    category: "数据",
+    description: "平滑趋势线逐段绘制并强调最终结论",
+    tags: ["图表", "趋势", "数据", "走势", "line"],
+    defaultDurationUs: 3_600_000,
+    defaultText: "全年走势",
+    defaultColor: "#ffffff",
+    defaultAccentColor: "#b59cff",
+    recipe: {
+      layout: "frame", entrance: "none", paddingX: 26, paddingY: 20, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.74,
+      chart: { kind: "line", series: [18, 34, 29, 46, 61, 55, 72], categories: ["一月", "二月", "三月", "四月", "五月", "六月", "七月"], gridLines: 3, durationSeconds: 1.5 }
+    }
+  }
+];
 
 interface EffectFamily {
   id: string;
@@ -273,7 +388,86 @@ const SCENE_EFFECTS: readonly EffectDefinition[] = [
   }
 ] as const;
 
-export const BUILTIN_EFFECTS: readonly EffectDefinition[] = [...CORE_EFFECTS, ...FAMILY_EFFECTS, ...SCENE_EFFECTS];
+const LEGACY_EFFECTS: readonly EffectDefinition[] = [...CORE_EFFECTS, ...CHART_EFFECTS, ...FAMILY_EFFECTS, ...SCENE_EFFECTS];
+
+const TEST_EFFECTS: readonly EffectDefinition[] = [
+  {
+    id: "test-title-slide", name: "标题滑入", category: "标题", description: "简洁标题从左侧进入", tags: ["标题", "开场", "主题"],
+    defaultDurationUs: 2_500_000, defaultText: "输入标题", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    recipe: { layout: "highlight", entrance: "slide-left", paddingX: 18, paddingY: 10, borderWidth: 0, borderRadius: 2, backgroundOpacity: 0 }
+  },
+  {
+    id: "test-keyword-underline", name: "关键词下划线", category: "标注", description: "为字幕中的关键词增加扫线强调", tags: ["关键词", "强调", "标注"],
+    defaultDurationUs: 2_200_000, defaultText: "输入关键词", defaultColor: "#ffffff", defaultAccentColor: "#ffd166",
+    recipe: { layout: "underline", entrance: "fade-up", paddingX: 14, paddingY: 9, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 }
+  },
+  {
+    id: "test-quote-card", name: "引用卡片", category: "卡片", description: "用于金句、观点和结论", tags: ["引用", "金句", "观点", "总结"],
+    defaultDurationUs: 3_200_000, defaultText: "输入引用内容", defaultColor: "#ffffff", defaultAccentColor: "#ff7b72",
+    recipe: { layout: "frame", entrance: "fade-up", paddingX: 28, paddingY: 20, borderWidth: 2, borderRadius: 3, backgroundOpacity: 0.86 }
+  },
+  {
+    id: "test-number-counter", name: "数字结论", category: "数据", description: "大号核心数字与进度强调线", tags: ["数字", "数据", "比例", "金额"],
+    defaultDurationUs: 2_400_000, defaultText: "核心数据", defaultColor: "#ffffff", defaultAccentColor: "#47d7ac",
+    recipe: { layout: "frame", entrance: "none", paddingX: 22, paddingY: 18, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.74, chart: { kind: "counter", startValue: 0, endValue: 100, durationSeconds: 1.1 } }
+  },
+  {
+    id: "test-bar-chart", name: "横向数据对比", category: "数据", description: "横向条形错峰展开，突出核心差异", tags: ["图表", "柱状图", "数据", "对比"],
+    defaultDurationUs: 3_600_000, defaultText: "关键指标对比", defaultColor: "#ffffff", defaultAccentColor: "#47d7ac",
+    recipe: { layout: "frame", entrance: "none", paddingX: 26, paddingY: 20, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.74, chart: { kind: "bar", series: [38, 72, 56], categories: ["效率", "质量", "成本"], gridLines: 0, durationSeconds: 1.4 } }
+  },
+  {
+    id: "test-donut-chart", name: "重点占比", category: "数据", description: "主占比居中，构成信息在侧边清晰展开", tags: ["图表", "环形图", "占比", "数据"],
+    defaultDurationUs: 3_200_000, defaultText: "渠道构成", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    recipe: { layout: "frame", entrance: "none", paddingX: 24, paddingY: 20, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.74, chart: { kind: "donut", series: [54, 28, 18], categories: ["推荐", "搜索", "直达"], durationSeconds: 1.3 } }
+  },
+  {
+    id: "test-line-chart", name: "趋势变化", category: "数据", description: "平滑趋势线逐段绘制并强调最终结论", tags: ["图表", "折线图", "趋势", "数据"],
+    defaultDurationUs: 3_600_000, defaultText: "近半年趋势", defaultColor: "#ffffff", defaultAccentColor: "#b59cff",
+    recipe: { layout: "frame", entrance: "none", paddingX: 26, paddingY: 20, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.74, chart: { kind: "line", series: [18, 28, 24, 46, 58, 72], categories: ["一月", "二月", "三月", "四月", "五月", "六月"], gridLines: 0, durationSeconds: 1.5 } }
+  },
+  {
+    id: "test-3d-card-flip", name: "3D 卡片翻转", category: "卡片", description: "卡片沿 Y 轴翻转进入", tags: ["3D", "翻转", "卡片", "转场"],
+    defaultDurationUs: 2_800_000, defaultText: "输入卡片内容", defaultColor: "#ffffff", defaultAccentColor: "#47d7ac",
+    recipe: { layout: "frame", entrance: "none", paddingX: 28, paddingY: 20, borderWidth: 2, borderRadius: 3, backgroundOpacity: 0.88, animation: { durationSeconds: 0.9, easing: "ease-out", keyframes: [{ offset: 0, translateX: 0, translateY: 8, scale: 0.82, rotation: 0, rotateY: -76, perspective: 1000 }, { offset: 1, translateX: 0, translateY: 0, scale: 1, rotation: 0, rotateY: 0, perspective: 1000 }] } }
+  },
+  {
+    id: "test-3d-title-tilt", name: "3D 标题倾斜", category: "标题", description: "标题带空间倾斜与回正", tags: ["3D", "标题", "倾斜", "强调"],
+    defaultDurationUs: 2_500_000, defaultText: "输入标题", defaultColor: "#ffffff", defaultAccentColor: "#ffb84d",
+    recipe: { layout: "highlight", entrance: "none", paddingX: 20, paddingY: 11, borderWidth: 0, borderRadius: 2, backgroundOpacity: 0, animation: { durationSeconds: 0.8, easing: "ease-out", keyframes: [{ offset: 0, translateX: -18, translateY: 12, scale: 0.78, rotation: -4, rotateX: 34, rotateY: -28, perspective: 1100 }, { offset: 1, translateX: 0, translateY: 0, scale: 1, rotation: 0, rotateX: 0, rotateY: 0, perspective: 1100 }] } }
+  },
+  {
+    id: "test-3d-depth-push", name: "3D 景深推进", category: "强调", description: "内容从远处推进到画面", tags: ["3D", "景深", "推进", "冲击"],
+    defaultDurationUs: 2_400_000, defaultText: "输入重点内容", defaultColor: "#ffffff", defaultAccentColor: "#6ea8fe",
+    recipe: { layout: "number", entrance: "none", paddingX: 18, paddingY: 10, borderWidth: 0, borderRadius: 2, backgroundOpacity: 0, animation: { durationSeconds: 0.75, easing: "ease-out", keyframes: [{ offset: 0, translateX: 0, translateY: 0, scale: 0.25, rotation: 0, rotateX: 18, perspective: 1400 }, { offset: 0.78, translateX: 0, translateY: 0, scale: 1.08, rotation: 0, rotateX: -3, perspective: 1400 }, { offset: 1, translateX: 0, translateY: 0, scale: 1, rotation: 0, rotateX: 0, perspective: 1400 }] } }
+  },
+  {
+    id: "test-lower-third", name: "底部信息条", category: "标注", description: "适合人物、地点和补充信息", tags: ["人名", "地点", "说明", "底栏"],
+    defaultDurationUs: 3_500_000, defaultText: "输入补充信息", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    recipe: { layout: "panel", entrance: "slide-left", paddingX: 20, paddingY: 12, borderWidth: 4, borderRadius: 2, backgroundOpacity: 0.8 }
+  },
+  {
+    id: "test-callout-panel", name: "侧边提示卡", category: "卡片", description: "在画面侧边承载步骤、解释或提醒", tags: ["步骤", "流程", "方法", "提示", "解释", "注意", "补充", "风险", "误区"],
+    defaultDurationUs: 3_200_000, defaultText: "输入提示内容", defaultColor: "#ffffff", defaultAccentColor: "#ff6b6b",
+    recipe: { layout: "panel", entrance: "fade-up", paddingX: 22, paddingY: 16, borderWidth: 4, borderRadius: 3, backgroundOpacity: 0.84 }
+  },
+  ...([
+    ["scene-black-stripes", "黑色条纹", "black-stripes", "#111317", "#252a31", "#5fa8ff", "深色斜纹知识讲解背景"],
+    ["scene-white-frame", "白色边框", "white-frame", "#f5f6f7", "#ffffff", "#1b1d21", "白底与细边框演示场景"],
+    ["scene-dark-grid", "深色网格", "dark-grid", "#15191f", "#29313b", "#47d7ac", "适合数据与技术内容的网格背景"],
+    ["scene-clean-white", "清爽白底", "clean-white", "#f7f8fa", "#e9edf2", "#5fa8ff", "轻量知识卡片与产品介绍背景"],
+    ["scene-spotlight", "中央聚光", "spotlight", "#0d0f12", "#343b46", "#ffb84d", "中央提亮、四周收暗的舞台场景"],
+    ["scene-blueprint", "蓝图网格", "blueprint", "#0f2740", "#25547a", "#7dc4ff", "适合结构、架构和原理讲解"],
+    ["scene-paper-lines", "纸张横线", "paper-lines", "#f4f1e9", "#d8d3c8", "#d65a4a", "适合清单、步骤和读书笔记"],
+    ["scene-contrast-side", "对比侧栏", "contrast-side", "#f5f6f8", "#1b1f25", "#ffb84d", "带深色侧栏的观点与章节背景"]
+  ] as const).map(([id, name, preset, primaryColor, secondaryColor, borderColor, description]) => ({
+    id, name, category: "场景" as const, description, tags: ["场景", "背景", name, preset],
+    defaultDurationUs: 8_000_000, defaultText: "", defaultColor: primaryColor, defaultAccentColor: borderColor,
+    recipe: { layout: "frame" as const, entrance: "none" as const, paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0, sceneBackground: { preset, primaryColor, secondaryColor, borderColor, intensity: 0.72 } }
+  }))
+] as const;
+
+export const BUILTIN_EFFECTS: readonly EffectDefinition[] = TEST_EFFECTS;
 
 let installedEffects: EffectDefinition[] = [];
 
@@ -286,7 +480,9 @@ export function allEffects(): EffectDefinition[] {
 }
 
 export function effectById(id: string): EffectDefinition {
-  return allEffects().find((effect) => effect.id === id) ?? BUILTIN_EFFECTS[0];
+  return allEffects().find((effect) => effect.id === id)
+    ?? LEGACY_EFFECTS.find((effect) => effect.id === id)
+    ?? BUILTIN_EFFECTS[0];
 }
 
 export function effectSelectionsForText(text: string, limit = 3): EffectDefinition[] {
@@ -301,35 +497,57 @@ export function effectSelectionsForText(text: string, limit = 3): EffectDefiniti
 }
 
 function eased(progress: number, easing: EffectAnimationEasing) {
-  if (easing === "ease-in") return progress * progress;
-  if (easing === "ease-out") return 1 - (1 - progress) ** 2;
-  if (easing === "ease-in-out") return progress < 0.5 ? 2 * progress * progress : 1 - ((-2 * progress + 2) ** 2) / 2;
-  return progress;
+  return evaluateEasing(progress, easing);
 }
 
-export function effectAnimationState(recipe: EffectRecipe, elapsedUs: number, speed: number) {
+export interface EffectAnimationState {
+  translateX: number;
+  translateY: number;
+  scale: number;
+  rotation: number;
+  rotateX: number;
+  rotateY: number;
+  perspective: number;
+}
+
+export function effectAnimationState(recipe: EffectRecipe, elapsedUs: number, speed: number): EffectAnimationState {
   const animation = recipe.animation;
-  if (!animation?.keyframes.length) return { translateX: 0, translateY: 0, scale: 1, rotation: 0 };
+  const rest: EffectAnimationState = { translateX: 0, translateY: 0, scale: 1, rotation: 0, rotateX: 0, rotateY: 0, perspective: 0 };
+  if (!animation?.keyframes.length) return rest;
   const durationUs = Math.max(1, animation.durationSeconds * 1_000_000 / Math.max(0.1, speed));
   const progress = Math.max(0, Math.min(1, elapsedUs / durationUs));
   const keyframes = animation.keyframes;
   const first = keyframes[0];
-  if (progress <= first.offset) return { translateX: first.translateX, translateY: first.translateY, scale: first.scale, rotation: first.rotation };
+  if (progress <= first.offset) return keyframeState(first);
   for (let index = 1; index < keyframes.length; index += 1) {
     const right = keyframes[index];
     if (progress > right.offset) continue;
     const left = keyframes[index - 1];
-    const local = eased((progress - left.offset) / Math.max(0.000_001, right.offset - left.offset), animation.easing);
-    const interpolate = (from: number, to: number) => from + (to - from) * local;
+    const local = eased((progress - left.offset) / Math.max(0.000_001, right.offset - left.offset), right.easing ?? animation.easing);
+    const interpolate = (from?: number, to?: number) => (from ?? 0) + ((to ?? 0) - (from ?? 0)) * local;
     return {
       translateX: interpolate(left.translateX, right.translateX),
       translateY: interpolate(left.translateY, right.translateY),
-      scale: interpolate(left.scale, right.scale),
-      rotation: interpolate(left.rotation, right.rotation)
+      scale: (left.scale ?? 1) + ((right.scale ?? 1) - (left.scale ?? 1)) * local,
+      rotation: interpolate(left.rotation, right.rotation),
+      rotateX: interpolate(left.rotateX, right.rotateX),
+      rotateY: interpolate(left.rotateY, right.rotateY),
+      perspective: interpolate(left.perspective, right.perspective)
     };
   }
-  const last = keyframes.at(-1)!;
-  return { translateX: last.translateX, translateY: last.translateY, scale: last.scale, rotation: last.rotation };
+  return keyframeState(keyframes.at(-1)!);
+}
+
+function keyframeState(keyframe: Readonly<EffectKeyframe>): EffectAnimationState {
+  return {
+    translateX: keyframe.translateX,
+    translateY: keyframe.translateY,
+    scale: keyframe.scale,
+    rotation: keyframe.rotation,
+    rotateX: keyframe.rotateX ?? 0,
+    rotateY: keyframe.rotateY ?? 0,
+    perspective: keyframe.perspective ?? 0
+  };
 }
 
 const INTENT_GROUPS = [

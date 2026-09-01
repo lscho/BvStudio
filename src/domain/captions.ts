@@ -1,3 +1,5 @@
+import type { SubtitleClip } from "@/domain/project";
+
 export interface TimedTextSegment {
   startSeconds: number;
   endSeconds: number;
@@ -9,6 +11,35 @@ const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hang
 
 function textUnits(text: string) {
   return Array.from(text).reduce((total, character) => total + (/\s/u.test(character) ? 0 : CJK.test(character) ? 1 : 0.5), 0);
+}
+
+function joinCaptionText(left: string, right: string) {
+  const leading = left.trimEnd();
+  const trailing = right.trimStart();
+  if (!leading || !trailing) return leading || trailing;
+  return /[A-Za-z0-9]$/u.test(leading) && /^[A-Za-z0-9]/u.test(trailing)
+    ? `${leading} ${trailing}`
+    : `${leading}${trailing}`;
+}
+
+export function mergeLeadingCaptionFragments(segments: readonly TimedTextSegment[], maxUnits = 8): TimedTextSegment[] {
+  const merged: TimedTextSegment[] = [];
+  let pending: TimedTextSegment | null = null;
+  const isLeadingFragment = (segment: TimedTextSegment) => textUnits(segment.text) <= maxUnits && /[，,:：、]$/u.test(segment.text.trim());
+
+  for (const segment of segments) {
+    const current: TimedTextSegment = pending
+      ? { startSeconds: pending.startSeconds, endSeconds: segment.endSeconds, text: joinCaptionText(pending.text, segment.text) }
+      : { ...segment, text: segment.text.trim() };
+    if (isLeadingFragment(current)) {
+      pending = current;
+    } else {
+      merged.push(current);
+      pending = null;
+    }
+  }
+  if (pending) merged.push(pending);
+  return merged;
 }
 
 function splitLongSentence(sentence: string, maxUnits: number) {
@@ -55,4 +86,11 @@ export function timedTextSegments(text: string, durationUs: number, maxUnits = 2
     cursorUs += allocations[index];
     return { startSeconds, endSeconds: cursorUs / 1_000_000, text: cue };
   });
+}
+
+export function subtitlesForMotionMatch(subtitles: readonly SubtitleClip[], selectedClipIds: readonly string[]): SubtitleClip[] {
+  const ordered = [...subtitles].sort((left, right) => left.startUs - right.startUs);
+  const selectedIds = new Set(selectedClipIds);
+  const selected = ordered.filter((subtitle) => selectedIds.has(subtitle.id));
+  return selected.length ? selected : ordered;
 }

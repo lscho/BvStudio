@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="shell" x1="176" y1="116" x2="844" y2="912" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#26343D"/>
+      <stop offset="0.48" stop-color="#10212B"/>
+      <stop offset="1" stop-color="#071014"/>
+    </linearGradient>
+    <linearGradient id="shell-edge" x1="192" y1="112" x2="808" y2="936" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.66"/>
+      <stop offset="0.38" stop-color="#9FE9FF" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.42"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="306" y1="278" x2="720" y2="742" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A8F2FF"/>
+      <stop offset="0.24" stop-color="#5FCFFF"/>
+      <stop offset="0.58" stop-color="#4B7EFF"/>
+      <stop offset="1" stop-color="#59E2B2"/>
+    </linearGradient>
+    <linearGradient id="glass-highlight" x1="336" y1="282" x2="620" y2="678" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.92"/>
+      <stop offset="0.52" stop-color="#FFFFFF" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="timeline" x1="470" y1="578" x2="650" y2="662" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#D7FFF1"/>
+    </linearGradient>
+    <radialGradient id="ambient" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(292 230) rotate(44) scale(664 600)">
+      <stop stop-color="#65DFFF" stop-opacity="0.34"/>
+      <stop offset="0.48" stop-color="#3374FF" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#0A1116" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shell-shadow" x="34" y="48" width="956" height="964" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="30" stdDeviation="28" flood-color="#000000" flood-opacity="0.34"/>
+    </filter>
+    <filter id="mark-shadow" x="232" y="228" width="570" height="588" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#001A27" flood-opacity="0.5"/>
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#FFFFFF" flood-opacity="0.38"/>
+    </filter>
+    <clipPath id="shell-clip">
+      <rect x="80" y="72" width="864" height="864" rx="210"/>
+    </clipPath>
+    <clipPath id="mark-clip">
+      <path d="M282 312C282 281.072 307.072 256 338 256H539C672.929 256 748 320.954 748 422C748 478.61 718.562 522.538 671.282 550.187C726.779 576.43 758 621.161 758 680C758 786.266 675.841 824 532 824H338C307.072 824 282 798.928 282 768V312ZM398 360V500H532C593.893 500 624 473.676 624 430C624 386.324 593.893 360 532 360H398ZM398 598V720H540C604.684 720 634 698.169 634 658C634 619.831 604.684 598 540 598H398Z"/>
+    </clipPath>
+  </defs>
+
+  <g filter="url(#shell-shadow)">
+    <rect x="80" y="72" width="864" height="864" rx="210" fill="url(#shell)"/>
+  </g>
+  <g clip-path="url(#shell-clip)">
+    <rect x="80" y="72" width="864" height="864" fill="url(#ambient)"/>
+    <path d="M16 237C294 96 614 123 1003 330V72H16V237Z" fill="#FFFFFF" fill-opacity="0.055"/>
+    <path d="M106 784C368 842 674 790 950 602V951H106V784Z" fill="#4DE3B0" fill-opacity="0.055"/>
+  </g>
+  <rect x="81.5" y="73.5" width="861" height="861" rx="208.5" stroke="url(#shell-edge)" stroke-width="3"/>
+  <rect x="100" y="92" width="824" height="824" rx="192" stroke="#FFFFFF" stroke-opacity="0.09" stroke-width="2"/>
+
+  <g filter="url(#mark-shadow)">
+    <path d="M282 312C282 281.072 307.072 256 338 256H539C672.929 256 748 320.954 748 422C748 478.61 718.562 522.538 671.282 550.187C726.779 576.43 758 621.161 758 680C758 786.266 675.841 824 532 824H338C307.072 824 282 798.928 282 768V312ZM398 360V500H532C593.893 500 624 473.676 624 430C624 386.324 593.893 360 532 360H398ZM398 598V720H540C604.684 720 634 698.169 634 658C634 619.831 604.684 598 540 598H398Z" fill="url(#glass)"/>
+    <g clip-path="url(#mark-clip)">
+      <path d="M230 238H716L430 652H230V238Z" fill="url(#glass-highlight)" opacity="0.62"/>
+      <path d="M304 792C438 691 573 634 758 624V842H304V792Z" fill="#6BFFD0" fill-opacity="0.2"/>
+    </g>
+    <path d="M338 257.5H539C671.863 257.5 746.5 321.744 746.5 422C746.5 477.953 717.438 521.399 670.525 548.893L668.155 550.283L670.638 551.457C725.714 577.504 756.5 621.752 756.5 680C756.5 732.569 736.274 767.882 699.064 790.183C661.586 812.644 606.012 822.5 532 822.5H338C307.9 822.5 283.5 798.1 283.5 768V312C283.5 281.9 307.9 257.5 338 257.5Z" stroke="#FFFFFF" stroke-opacity="0.42" stroke-width="3"/>
+  </g>
+
+  <path d="M489 397.91C489 385.91 502.223 378.6 512.39 384.981L572.31 422.571C581.742 428.488 581.742 442.222 572.31 448.139L512.39 485.729C502.223 492.11 489 484.8 489 472.8V397.91Z" fill="#FFFFFF"/>
+  <path d="M493 401.698C493 394.315 501.133 389.816 507.389 393.744L564.259 429.42C570.062 433.061 570.062 441.515 564.259 445.156L507.389 480.832C501.133 484.76 493 480.261 493 472.878V401.698Z" fill="#E6FAFF" fill-opacity="0.58"/>
+
+  <g fill="url(#timeline)">
+    <rect x="466" y="622" width="52" height="16" rx="8"/>
+    <rect x="528" y="622" width="78" height="16" rx="8" fill-opacity="0.72"/>
+    <rect x="466" y="654" width="92" height="16" rx="8" fill-opacity="0.72"/>
+    <rect x="568" y="654" width="48" height="16" rx="8"/>
+    <rect x="466" y="686" width="68" height="16" rx="8" fill-opacity="0.88"/>
+    <rect x="544" y="686" width="42" height="16" rx="8" fill-opacity="0.58"/>
+  </g>
+  <rect x="548" y="607" width="6" height="110" rx="3" fill="#FFD166"/>
+  <circle cx="551" cy="609" r="8" fill="#FFF3C4"/>
+
+  <path d="M775 274L786.237 299.763L812 311L786.237 322.237L775 348L763.763 322.237L738 311L763.763 299.763L775 274Z" fill="#FFFFFF"/>
+  <circle cx="822" cy="365" r="9" fill="#7AF0C2"/>
+</svg>

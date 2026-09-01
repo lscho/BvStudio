@@ -1,8 +1,64 @@
-import type { EffectEntrance, EffectRecipe } from "@/domain/effects";
+import type { EffectEntrance, EffectRecipe, EffectSoundCue, SceneBackgroundSpec } from "@/domain/effects";
 import type { CameraMotion } from "@/domain/camera";
+import type { EasingName } from "@/domain/easing";
 
-export type TrackKind = "video" | "image" | "generated" | "effect" | "subtitle" | "audio";
+export type TrackKind = "video" | "image" | "generated" | "scene" | "effect" | "subtitle" | "audio";
 export type InsertMode = "insert" | "replace" | "overlay";
+export type VideoRole = "a-roll" | "b-roll" | "presenter" | "screen" | "supporting" | "unspecified";
+export type VideoShape = "rectangle" | "rounded" | "circle" | "ellipse" | "square" | "portrait";
+export type VideoTransitionPreset = "none" | "fade" | "slide-left" | "slide-right" | "zoom" | "dock" | "circle-reveal";
+export type VideoMotionPresetId = "full-screen" | "zoom-to-full" | "presenter-circle-bottom-right" | "picture-in-picture-top-right" | "split-left" | "split-right" | "slow-push-in" | "screen-magnify" | "screen-spotlight" | "screen-focus";
+
+export interface VideoMask {
+  shape: VideoShape;
+  radius: number;
+  feather: number;
+  borderWidth: number;
+  borderColor: string;
+  focusX: number;
+  focusY: number;
+}
+
+export interface VideoTransition {
+  preset: VideoTransitionPreset;
+  durationUs: number;
+  easing: EasingName;
+}
+
+export interface VideoFocusEffect {
+  enabled: boolean;
+  startOffsetUs: number;
+  durationUs: number;
+  x: number;
+  y: number;
+  zoom: number;
+  radius: number;
+  feather: number;
+  dimOpacity: number;
+  showCursor: boolean;
+}
+
+export interface VideoPresentationCue {
+  id: string;
+  offsetUs: number;
+  transitionDurationUs: number;
+  presetId: VideoMotionPresetId;
+  transform: TransformProps;
+  mask: VideoMask;
+  focus: VideoFocusEffect;
+  camera: CameraMotion;
+  fit: "cover" | "contain";
+}
+
+export interface EffectBackdrop {
+  enabled: boolean;
+  color: string;
+  opacity: number;
+  blur: number;
+  paddingX: number;
+  paddingY: number;
+  radius: number;
+}
 
 export interface TransformProps {
   x: number;
@@ -17,7 +73,7 @@ export interface VisualTransformKeyframe {
   x: number;
   y: number;
   scale: number;
-  easing: "linear" | "ease-in" | "ease-out" | "ease-in-out";
+  easing: EasingName;
 }
 
 export interface MediaAsset {
@@ -51,6 +107,8 @@ export interface BaseClip {
   startUs: number;
   durationUs: number;
   locked: boolean;
+  sourceBlockId?: string;
+  sourceSubtitleId?: string;
 }
 
 export interface VideoClip extends BaseClip {
@@ -61,10 +119,17 @@ export interface VideoClip extends BaseClip {
   volume: number;
   fit: "cover" | "contain";
   camera: CameraMotion;
+  cameraOffsetUs?: number;
+  cameraDurationUs?: number;
   zIndex?: number;
   transform?: TransformProps;
   transformKeyframes?: VisualTransformKeyframe[];
-  layoutPreset?: "full" | "picture-in-picture-top-left" | "picture-in-picture-top-right" | "picture-in-picture-bottom-left" | "picture-in-picture-bottom-right" | "shrink-top-left" | "shrink-top-right" | "shrink-bottom-left" | "shrink-bottom-right" | "reveal-center" | "custom";
+  layoutPreset?: "full" | "picture-in-picture-top-left" | "picture-in-picture-top-right" | "picture-in-picture-bottom-left" | "picture-in-picture-bottom-right" | "shrink-top-left" | "shrink-top-right" | "shrink-bottom-left" | "shrink-bottom-right" | "reveal-center" | "split-left" | "split-right" | "presenter-bottom-right" | "custom";
+  role?: VideoRole;
+  mask?: VideoMask;
+  transition?: VideoTransition;
+  focus?: VideoFocusEffect;
+  presentationCues?: VideoPresentationCue[];
 }
 
 export interface ImageClip extends BaseClip {
@@ -98,11 +163,23 @@ export interface EffectClip extends BaseClip {
   speed: number;
   transform: TransformProps;
   recipe?: EffectRecipe;
+  soundCues?: EffectSoundCue[];
   zIndex?: number;
   sceneGroupId?: string;
   sceneTemplateId?: string;
   matchQuery?: string;
   transformKeyframes?: VisualTransformKeyframe[];
+  backdrop?: EffectBackdrop;
+}
+
+export interface SceneClip extends BaseClip {
+  kind: "scene";
+  effectId: string;
+  background: SceneBackgroundSpec;
+  opacity: number;
+  soundCues?: EffectSoundCue[];
+  sceneGroupId?: string;
+  matchQuery?: string;
 }
 
 export interface GeneratedEffectLayer {
@@ -120,6 +197,7 @@ export interface GeneratedEffectLayer {
   source: "ai" | "manual" | "scene-template" | "subtitle-match";
   matchQuery?: string;
   recipe?: EffectRecipe;
+  soundCues?: EffectSoundCue[];
   transformKeyframes?: VisualTransformKeyframe[];
 }
 
@@ -165,9 +243,43 @@ export interface SubtitleClip extends BaseClip {
   backgroundColor: string;
   fontSize: number;
   positionY: number;
+  stylePreset?: SubtitleStylePreset;
+  highlightWords?: string[];
+  highlightColor?: string;
+  outlineColor?: string;
+  outlineWidth?: number;
+  backgroundOpacity?: number;
+  borderRadius?: number;
 }
 
-export type TimelineClip = VideoClip | ImageClip | AudioClip | EffectClip | GeneratedBlock | SubtitleClip;
+export type SubtitleStylePreset = "classic" | "bold" | "minimal";
+
+export interface SubtitleStyleSettings {
+  stylePreset: SubtitleStylePreset;
+  highlightWords: string[];
+  highlightColor: string;
+  outlineColor: string;
+  outlineWidth: number;
+  backgroundOpacity: number;
+  borderRadius: number;
+}
+
+export interface ChapterMarker {
+  id: string;
+  title: string;
+  startUs: number;
+}
+
+export interface ChapterProgressSettings {
+  enabled: boolean;
+  backgroundColor: string;
+  activeColor: string;
+  textColor: string;
+  height: number;
+  chapters: ChapterMarker[];
+}
+
+export type TimelineClip = VideoClip | ImageClip | AudioClip | SceneClip | EffectClip | GeneratedBlock | SubtitleClip;
 
 export interface TimelineTrack {
   id: string;
@@ -181,13 +293,14 @@ export interface TimelineTrack {
 }
 
 export interface EditorProject {
-  schemaVersion: 11;
+  schemaVersion: 18;
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
   canvas: { width: number; height: number; fpsNumerator: number; fpsDenominator: number };
   durationUs: number;
+  chapterProgress: ChapterProgressSettings;
   assets: MediaAsset[];
   tracks: TimelineTrack[];
 }
@@ -195,19 +308,20 @@ export interface EditorProject {
 export function createEmptyProject(): EditorProject {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 11,
+    schemaVersion: 18,
     id: crypto.randomUUID(),
     name: "未命名项目",
     createdAt: now,
     updatedAt: now,
     canvas: { width: 1920, height: 1080, fpsNumerator: 30, fpsDenominator: 1 },
     durationUs: 30_000_000,
+    chapterProgress: { enabled: false, backgroundColor: "#111316", activeColor: "#ffb84d", textColor: "#ffffff", height: 52, chapters: [] },
     assets: [],
     tracks: [
-      { id: "video-main", kind: "video", name: "主视频", locked: false, muted: false, hidden: false, clips: [] },
-      { id: "video-overlay", kind: "video", name: "叠加视频", locked: false, muted: false, hidden: false, clips: [] },
+      { id: "video-layer-1", kind: "video", name: "视频", locked: false, muted: false, hidden: false, clips: [] },
       { id: "image-main", kind: "image", name: "贴图", locked: false, muted: false, hidden: false, clips: [] },
       { id: "generated-main", kind: "generated", name: "AI 内容", locked: false, muted: false, hidden: false, clips: [] },
+      { id: "scene-main", kind: "scene", name: "场景", locked: false, muted: false, hidden: false, clips: [] },
       { id: "effect-main", kind: "effect", name: "动效", locked: false, muted: false, hidden: false, clips: [] },
       { id: "subtitle-main", kind: "subtitle", name: "字幕", locked: false, muted: false, hidden: false, clips: [] },
       { id: "audio-voice", kind: "audio", name: "配音", audioRole: "voice", locked: false, muted: false, hidden: false, clips: [] },

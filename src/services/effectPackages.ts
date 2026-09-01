@@ -15,6 +15,7 @@ export interface EffectPackageInfo {
   schemaVersion: number;
   manifest: EffectPackageManifest;
   effects: EffectDefinition[];
+  soundCount: number;
   verified: boolean;
   signerFingerprint?: string;
   path: string;

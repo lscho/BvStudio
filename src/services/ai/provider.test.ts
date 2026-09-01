@@ -1,15 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { extractTokenUsage, generateVideoPlan, listProviderModels, providerEndpoint, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
-import { retrieveEffects } from "@/domain/effects";
+import { captionNumericData, compactMotionText, extractTokenUsage, generateTimedScript, generateVideoPlan, listProviderModels, matchTimelineMotion, normalizeMotionChart, normalizeMotionMatches, normalizeTimedScript, providerEndpoint, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
 
 const pricing = { inputCostPerMillion: 2.5, outputCostPerMillion: 10 };
 const config: AiProviderConfig = {
   protocol: "openai-chat",
   baseUrl: "https://models.example.com",
   model: "test-model",
-  maxTokens: 1_000,
   ...pricing
 };
+
+function sseResponse(events: Array<unknown | "[DONE]">) {
+  const body = events.map((event) => `data: ${event === "[DONE]" ? event : JSON.stringify(event)}\n\n`).join("");
+  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -42,6 +45,237 @@ describe("extractTokenUsage", () => {
 });
 
 describe("provider requests", () => {
+  it("assembles a streamed Responses API structured output and reports progress", async () => {
+    const script = { title: "流式响应", article: "文章", narration: "口播", captions: [{ startSeconds: 0, endSeconds: 2, text: "逐步返回内容。" }] };
+    const serialized = JSON.stringify(script);
+    const fetchMock = vi.fn().mockResolvedValue(sseResponse([
+      { type: "response.created", response: { id: "response-1" } },
+      { type: "response.output_text.delta", delta: serialized.slice(0, 20) },
+      { type: "response.output_text.delta", delta: serialized.slice(20) },
+      { type: "response.completed", response: { output: [{ content: [{ type: "output_text", text: serialized }] }], usage: { input_tokens: 8, output_tokens: 12, total_tokens: 20 } } }
+    ]));
+    vi.stubGlobal("fetch", fetchMock);
+    const progress = vi.fn();
+
+    await expect(generateTimedScript({ ...config, protocol: "openai-responses" }, {
+      topic: "流式响应", durationSeconds: 2, style: "简洁"
+    }, "secret", undefined, progress)).resolves.toMatchObject({ script: { title: "流式响应" }, usage: { totalTokens: 20 } });
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(payload.stream).toBe(true);
+    expect(payload).not.toHaveProperty("stream_options");
+    expect(progress).toHaveBeenCalledWith(expect.objectContaining({ phase: "receiving" }));
+    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "validating", message: "正在校验文章与时间字幕" }));
+  });
+
+  it("assembles Chat Completions content split across SSE chunks", async () => {
+    const script = { title: "兼容接口", article: "文章", narration: "口播", captions: [{ startSeconds: 0, endSeconds: 2, text: "兼容流式返回。" }] };
+    const serialized = JSON.stringify(script);
+    const fetchMock = vi.fn().mockResolvedValue(sseResponse([
+      { choices: [{ delta: { content: serialized.slice(0, 18) } }] },
+      { choices: [{ delta: { content: serialized.slice(18) } }] },
+      { choices: [], usage: { prompt_tokens: 11, completion_tokens: 13, total_tokens: 24 } },
+      "[DONE]"
+    ]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(generateTimedScript(config, {
+      topic: "兼容接口", durationSeconds: 2, style: "简洁"
+    }, "secret")).resolves.toMatchObject({ script: { title: "兼容接口" }, usage: { totalTokens: 24 } });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ stream: true, stream_options: { include_usage: true } });
+  });
+
+  it("assembles streamed Anthropic tool input before schema validation", async () => {
+    const script = { title: "工具调用", article: "文章", narration: "口播", captions: [{ startSeconds: 0, endSeconds: 2, text: "工具参数流式返回。" }] };
+    const serialized = JSON.stringify(script);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sseResponse([
+      { type: "message_start", message: { usage: { input_tokens: 9 } } },
+      { type: "content_block_delta", delta: { type: "input_json_delta", partial_json: serialized.slice(0, 16) } },
+      { type: "content_block_delta", delta: { type: "input_json_delta", partial_json: serialized.slice(16) } },
+      { type: "message_delta", usage: { output_tokens: 14 } },
+      { type: "message_stop" }
+    ])));
+
+    await expect(generateTimedScript({ ...config, protocol: "anthropic" }, {
+      topic: "工具调用", durationSeconds: 2, style: "简洁"
+    }, "secret")).resolves.toMatchObject({ script: { title: "工具调用" }, usage: { inputTokens: 9, outputTokens: 14, totalTokens: 23 } });
+  });
+
+  it("surfaces an SSE error event without applying partial output", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sseResponse([
+      { type: "response.output_text.delta", delta: "{\"title\":" },
+      { type: "error", message: "upstream disconnected" }
+    ])));
+
+    await expect(generateTimedScript({ ...config, protocol: "openai-responses" }, {
+      topic: "错误", durationSeconds: 2, style: "简洁"
+    }, "secret")).rejects.toThrow("upstream disconnected");
+  });
+
+  it("surfaces an incomplete Responses stream as a terminal failure", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sseResponse([
+      { type: "response.output_text.delta", delta: "{\"title\":\"partial\"}" },
+      { type: "response.incomplete", response: { incomplete_details: { reason: "max_output_tokens" } } }
+    ])));
+
+    await expect(generateTimedScript({ ...config, protocol: "openai-responses" }, {
+      topic: "不完整", durationSeconds: 2, style: "简洁"
+    }, "secret")).rejects.toThrow("模型未能完成流式响应");
+  });
+
+  it("keeps script generation and timeline motion matching as independent requests", async () => {
+    const script = { title: "充电桩", article: "文章", narration: "口播", captions: [{ startSeconds: 0, endSeconds: 2, text: "市场份额增长达到42%。" }] };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(script) } }], usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(generateTimedScript(config, { topic: "充电桩", durationSeconds: 2, style: "专业" }, "secret")).resolves.toMatchObject({ script: { captions: [{ text: "市场份额增长达到42%。" }] } });
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    const matches = [
+      { captionIndex: 0, primaryEffectId: "test-number-counter", primaryText: "市场份额增长达到42%。", secondaryEffectId: null, secondaryText: null, accentColor: "#47d7ac", x: 50, y: 30, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "push-in", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: { categories: ["市场份额"], series: [42], unit: "%" } },
+      { captionIndex: 1, primaryEffectId: "test-quote-card", primaryText: "最后给出明确结论。", secondaryEffectId: null, secondaryText: null, accentColor: "#5fa8ff", x: 50, y: 35, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "pull-out", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null }
+    ];
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ matches }) } }], usage: { prompt_tokens: 12, completion_tokens: 18, total_tokens: 30 } }), { status: 200 }));
+    const result = await matchTimelineMotion(config, {
+      topic: "充电桩", style: "专业", timelineDurationSeconds: 10, materials: [],
+      captions: [{ startSeconds: 0, endSeconds: 2, text: "市场份额增长达到42%。" }, { startSeconds: 8.5, endSeconds: 10, text: "最后给出明确结论。" }]
+    }, "secret");
+    expect(result.matches?.map((match) => match.primaryText)).toEqual(["份额增长达到42%", "明确结论"]);
+    const payload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(payload.messages.at(-1)?.content).toContain('"stage":"opening"');
+    expect(payload.messages.at(-1)?.content).toContain('"stage":"ending"');
+  });
+
+  it("extracts a concise motion label instead of repeating a full subtitle", () => {
+    expect(compactMotionText("市场份额增长达到42%。", "市场份额增长达到42%。")).toBe("份额增长达到42%");
+    expect(compactMotionText("最后给出明确结论。", "最后给出明确结论。")).toBe("明确结论");
+    expect(compactMotionText("行业全面爆发", "行业正在进入精细化运营阶段。")).toBe("精细化运营阶段");
+  });
+
+  it("merges fragmented generated captions before fitting them to the target duration", () => {
+    const script = normalizeTimedScript({
+      title: "市场分析",
+      article: "文章",
+      narration: "口播",
+      captions: [
+        { startSeconds: 0, endSeconds: 1, text: "未来，" },
+        { startSeconds: 1, endSeconds: 4, text: "行业将进入精细化运营阶段。" }
+      ]
+    }, 6);
+    expect(script.captions).toEqual([
+      { startSeconds: 0, endSeconds: 6, text: "未来，行业将进入精细化运营阶段。" }
+    ]);
+  });
+
+  it("downgrades middle titles and removes consecutive or duplicate motion layers", () => {
+    const base = {
+      captionIndex: 0, primaryEffectId: "test-title-slide", primaryText: "开场主题", secondaryEffectId: "test-title-slide", secondaryText: "开场主题",
+      accentColor: "#5fa8ff", x: 50, y: 28, scale: 1, secondaryX: 75, secondaryY: 60,
+      cameraPreset: "none" as const, videoLayers: [], backdropPreset: "none" as const,
+      primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null,
+      secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" as const, chart: null
+    };
+    const captions = [
+      { startSeconds: 0, endSeconds: 1, text: "先介绍开场主题。" },
+      { startSeconds: 4, endSeconds: 6, text: "行业进入精细化运营阶段。" },
+      { startSeconds: 6, endSeconds: 8, text: "运营效率成为竞争重点。" }
+    ];
+    const matches = normalizeMotionMatches([
+      base,
+      { ...base, captionIndex: 1, primaryText: "精细化运营" },
+      { ...base, captionIndex: 2, primaryEffectId: "test-keyword-underline", primaryText: "运营效率", secondaryEffectId: null, secondaryText: null }
+    ], captions, 10);
+    expect(matches[0]).toMatchObject({ primaryEffectId: "test-title-slide", secondaryEffectId: null, secondaryText: null });
+    expect(matches[1]).toMatchObject({ primaryEffectId: "test-keyword-underline", primaryText: "精细化运营" });
+    expect(matches[2]).toMatchObject({ primaryEffectId: null, primaryText: "" });
+  });
+
+  it("keeps scene backgrounds text-free", () => {
+    const matches = normalizeMotionMatches([{
+      captionIndex: 0, primaryEffectId: "scene-dark-grid", primaryText: "不应出现的重复字幕", secondaryEffectId: null, secondaryText: null,
+      accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 75, secondaryY: 60,
+      cameraPreset: "none", videoLayers: [], backdropPreset: "none",
+      primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null,
+      secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null
+    }], [{ startSeconds: 0, endSeconds: 3, text: "行业进入精细化运营阶段。" }], 3);
+    expect(matches[0]).toMatchObject({ primaryEffectId: "scene-dark-grid", primaryText: "" });
+  });
+
+  it("keeps a grounded staged motion group across multiple captions", () => {
+    const captions = [
+      { startSeconds: 11.36, endSeconds: 12.8, text: "市场格局上，" },
+      { startSeconds: 12.8, endSeconds: 16, text: "公共充电桩占60%，私人充电桩占40%。" },
+      { startSeconds: 16, endSeconds: 17.76, text: "头部运营商占据主导。" }
+    ];
+    const base = {
+      captionIndex: 0, motionGroupId: "charging-market", persistUntilCaptionIndex: 2,
+      primaryEffectId: "test-title-slide", primaryText: "市场格局", secondaryEffectId: null, secondaryText: null,
+      accentColor: "#5fa8ff", x: 50, y: 24, scale: 1, secondaryX: 75, secondaryY: 60,
+      cameraPreset: "none" as const, videoLayers: [], backdropPreset: "soft" as const,
+      primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null,
+      secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" as const, chart: null
+    };
+    const matches = normalizeMotionMatches([
+      base,
+      {
+        ...base,
+        captionIndex: 1,
+        primaryEffectId: "test-bar-chart",
+        primaryText: "充电桩构成",
+        chart: { categories: ["公共", "私人"], series: [60, 40], unit: "%" }
+      },
+      { ...base, captionIndex: 2, primaryEffectId: "test-keyword-underline", primaryText: "头部运营商占据主导" }
+    ], captions, 30);
+
+    expect(matches).toEqual(expect.arrayContaining([
+      expect.objectContaining({ captionIndex: 0, motionGroupId: "charging-market", persistUntilCaptionIndex: 2, primaryEffectId: "test-title-slide" }),
+      expect.objectContaining({ captionIndex: 1, motionGroupId: "charging-market", chart: expect.objectContaining({ series: [60, 40], unit: "%" }) }),
+      expect.objectContaining({ captionIndex: 2, motionGroupId: "charging-market", persistUntilCaptionIndex: 2, primaryText: "头部运营商占据主导" })
+    ]));
+  });
+
+  it("drops invalid or overly long motion groups", () => {
+    const captions = Array.from({ length: 7 }, (_, index) => ({ startSeconds: index, endSeconds: index + 1, text: `第${index + 1}条字幕。` }));
+    const match = {
+      captionIndex: 0, motionGroupId: "too-long", persistUntilCaptionIndex: 6,
+      primaryEffectId: "test-title-slide", primaryText: "第一条字幕", secondaryEffectId: null, secondaryText: null,
+      accentColor: "#5fa8ff", x: 50, y: 24, scale: 1, secondaryX: 75, secondaryY: 60,
+      cameraPreset: "none" as const, videoLayers: [], backdropPreset: "none" as const,
+      primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null,
+      secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" as const, chart: null
+    };
+    expect(normalizeMotionMatches([match], captions, 7)[0]).toMatchObject({ motionGroupId: null, persistUntilCaptionIndex: null });
+  });
+
+  it("extracts real Arabic and Chinese numeric facts without treating years as values", () => {
+    expect(captionNumericData("据统计，2025年市场规模已突破千亿元。")).toEqual([{ value: 1_000, unit: "亿元" }]);
+    expect(captionNumericData("份额从18%提升至42%。")).toEqual([{ value: 18, unit: "%" }, { value: 42, unit: "%" }]);
+  });
+
+  it("downgrades an unsupported trend chart to a counter backed by the caption", () => {
+    const match = {
+      captionIndex: 0, primaryEffectId: "test-line-chart", primaryText: "突破千亿", secondaryEffectId: null, secondaryText: null,
+      accentColor: "#47d7ac", x: 50, y: 30, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "none" as const,
+      videoLayers: [], backdropPreset: "soft" as const, primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0,
+      secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" as const,
+      chart: { categories: ["2023", "2025"], series: [100, 200], unit: "亿元" }
+    };
+    expect(normalizeMotionChart(match, "预计2025年市场规模将超过两千亿元。")).toMatchObject({
+      primaryEffectId: "test-number-counter",
+      chart: { series: [2_000], unit: "亿元" }
+    });
+  });
+
+  it("removes chart templates when the caption contains no supporting data", () => {
+    const match = {
+      captionIndex: 0, primaryEffectId: "test-bar-chart", primaryText: "稳定增长", secondaryEffectId: null, secondaryText: null,
+      accentColor: "#47d7ac", x: 50, y: 30, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "none" as const,
+      videoLayers: [], backdropPreset: "soft" as const, primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0,
+      secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" as const,
+      chart: null
+    };
+    expect(normalizeMotionChart(match, "充电桩已经成为稳定可持续的优质资产。")).toMatchObject({ primaryEffectId: "test-keyword-underline", chart: null });
+  });
+
   it("normalizes service roots, v1 roots, and full compatible endpoints", () => {
     expect(providerEndpoint(config)).toBe("https://models.example.com/v1/chat/completions");
     expect(providerEndpoint({ ...config, baseUrl: "https://opencode.ai/zen/v1" })).toBe("https://opencode.ai/zen/v1/chat/completions");
@@ -79,17 +313,11 @@ describe("provider requests", () => {
   });
 
   it("sends only local material metadata and accepts a matched material id", async () => {
-    const allowedEffectId = retrieveEffects("制作开篇")[0].id;
-    const responsePlan = {
-      title: "开篇",
-      article: "文章",
-      narration: "口播",
-      scenes: [{ title: "开篇", narration: "口播", durationSeconds: 3, effectIds: [allowedEffectId], color: "#ffb84d", cameraPreset: "push-in", mediaAssetId: "local-video", mediaSourceInSeconds: 2, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" }]
-    };
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      choices: [{ message: { content: JSON.stringify(responsePlan) } }],
-      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 }
-    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const script = { title: "开篇", article: "文章", narration: "口播", captions: [{ startSeconds: 0, endSeconds: 3, text: "口播" }] };
+    const match = { captionIndex: 0, primaryEffectId: "test-title-slide", primaryText: "口播", secondaryEffectId: null, secondaryText: null, accentColor: "#ffb84d", x: 50, y: 28, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "push-in", primaryMediaAssetId: "local-video", primaryMediaSourceInSeconds: 2, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(script) } }], usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ matches: [match] }) } }], usage: { prompt_tokens: 15, completion_tokens: 25, total_tokens: 40 } }), { status: 200, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(generateVideoPlan(config, {
@@ -97,23 +325,43 @@ describe("provider requests", () => {
       durationSeconds: 3,
       style: "简洁",
       materials: [{ id: "local-video", name: "office.mp4", durationSeconds: 12, width: 1920, height: 1080 }]
-    }, "secret")).resolves.toMatchObject({ plan: { title: "开篇", article: "文章", narration: "口播", scenes: [expect.objectContaining({ effectIds: expect.arrayContaining([allowedEffectId]), mediaAssetId: "local-video", mediaSourceInSeconds: 2, cameraPreset: "push-in" })] } });
-    const payload = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(JSON.stringify(payload)).toContain("office.mp4");
-    expect(JSON.stringify(payload)).toContain("local-video");
-    expect(JSON.stringify(payload)).not.toContain("/Users/");
-    expect(payload.response_format).toEqual({ type: "json_object" });
-    expect(payload.max_tokens).toBe(1_000);
+    }, "secret")).resolves.toMatchObject({ plan: { title: "开篇", captions: [{ text: "口播" }], matches: [expect.objectContaining({ primaryEffectId: "test-title-slide", primaryMediaAssetId: "local-video" })] }, usage: { totalTokens: 70 } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const scriptPayload = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const matchPayload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(JSON.stringify(matchPayload)).toContain("office.mp4");
+    expect(matchPayload.messages.at(-1)?.content).toContain('"captionIndex":0');
+    expect(JSON.stringify(matchPayload)).not.toContain("/Users/");
+    expect(scriptPayload).not.toHaveProperty("max_tokens");
   });
 
-  it("accepts one million configured output tokens but probes with a small real request", async () => {
-    const millionConfig = { ...config, baseUrl: "https://opencode.ai/zen/v1", maxTokens: 1_000_000 };
+  it("does not limit Responses API plan output tokens", async () => {
+    const script = { title: "开篇", article: "文章", narration: "口播", captions: [{ startSeconds: 0, endSeconds: 3, text: "口播" }] };
+    const match = { captionIndex: 0, primaryEffectId: null, primaryText: "", secondaryEffectId: null, secondaryText: null, accentColor: "#5fa8ff", x: 50, y: 30, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "none", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null };
+    const response = (data: unknown) => new Response(JSON.stringify({ output: [{ content: [{ type: "output_text", text: JSON.stringify(data) }] }], usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 } }), { status: 200, headers: { "content-type": "application/json" } });
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(script)).mockResolvedValueOnce(response({ matches: [match] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateVideoPlan({ ...config, protocol: "openai-responses" }, {
+      topic: "制作开篇",
+      durationSeconds: 3,
+      style: "简洁",
+      materials: []
+    }, "secret");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).not.toHaveProperty("max_output_tokens");
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).not.toHaveProperty("max_output_tokens");
+  });
+
+  it("probes with a small real request", async () => {
+    const compatibleConfig = { ...config, baseUrl: "https://opencode.ai/zen/v1" };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "not found" } }), { status: 404 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: "OK" } }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(verifyProviderConfiguration(millionConfig, "secret")).resolves.toMatchObject({ models: [], message: expect.stringContaining("配置有效") });
+    await expect(verifyProviderConfiguration(compatibleConfig, "secret")).resolves.toMatchObject({ models: [], message: expect.stringContaining("配置有效") });
     expect(fetchMock.mock.calls[0][0]).toBe("https://opencode.ai/zen/v1/models");
     expect(fetchMock.mock.calls[1][0]).toBe("https://opencode.ai/zen/v1/chat/completions");
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ model: "test-model", max_tokens: 16 });
