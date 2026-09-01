@@ -83,7 +83,7 @@ function filesUnder(directory) {
 function exactlyOne(files, predicate, description) {
   const matches = files.filter(predicate);
   if (matches.length !== 1) {
-    throw new Error(`Expected exactly one ${description}, found ${matches.length}: ${matches.map(basename).join(", ")}`);
+    throw new Error(`Expected exactly one ${description}, found ${matches.length}: ${matches.map((path) => basename(path)).join(", ")}`);
   }
   return matches[0];
 }

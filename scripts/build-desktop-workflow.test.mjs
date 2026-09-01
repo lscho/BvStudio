@@ -20,3 +20,14 @@ test("installs only the x64 FFprobe compatibility package for Windows ARM64", ()
   assert.ok(compatibilityInstall);
   assert.match(compatibilityInstall, /--prefix "\$RUNNER_TEMP\/ffprobe-compat"/u);
 });
+
+test("prepares the signed Linux updater before uploading artifacts", () => {
+  const prepareUpdater = workflow.match(/- name: Prepare Linux updater[\s\S]*?(?=\n\s+- name:)/u)?.[0];
+  assert.ok(prepareUpdater);
+  assert.match(prepareUpdater, /if: runner\.os == 'Linux'/u);
+  assert.match(prepareUpdater, /LINUX_UPDATER_DIRECTORY: src-tauri\/target\/\$\{\{ matrix\.target \}\}\/release\/bundle\/appimage/u);
+  assert.match(prepareUpdater, /TAURI_SIGNING_PRIVATE_KEY: \$\{\{ secrets\.TAURI_SIGNING_PRIVATE_KEY \}\}/u);
+  assert.match(prepareUpdater, /run: node scripts\/prepare-linux-updater\.mjs/u);
+
+  assert.ok(workflow.indexOf("- name: Prepare Linux updater") < workflow.indexOf("- name: Upload desktop bundles"));
+});
