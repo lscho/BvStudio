@@ -112,7 +112,10 @@ jobs:
 
       - name: Install Windows ARM64 FFprobe compatibility package
         if: matrix.target == 'aarch64-pc-windows-msvc'
-        run: npm install --no-save --package-lock=false --ignore-scripts --force @ffprobe-installer/win32-x64@5.1.0
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/ffprobe-compat" --no-save --package-lock=false --ignore-scripts --force @ffprobe-installer/win32-x64@5.1.0
+          echo "BVIDEO_SIDECAR_FFPROBE=$RUNNER_TEMP/ffprobe-compat/node_modules/@ffprobe-installer/win32-x64/ffprobe.exe" >> "$GITHUB_ENV"
 
       - name: Validate bundled media tools
         env:

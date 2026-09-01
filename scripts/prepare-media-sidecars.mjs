@@ -115,6 +115,13 @@ export function prepareMediaSidecars({
 } = {}) {
   const ffmpegPackage = packageMetadata("ffmpeg-static");
   const ffprobePackage = packageMetadata(sources.ffprobePackage ?? "@ffprobe-installer/ffprobe");
+  const ffmpegLicense = firstExisting([
+    `${sources.ffmpeg}.LICENSE`,
+    join(dirname(sources.ffmpeg), "ffmpeg.LICENSE")
+  ]);
+  if (!ffmpegLicense) {
+    throw new Error(`FFmpeg license is missing next to ${sources.ffmpeg}`);
+  }
   mkdirSync(outputDirectory, { recursive: true });
   const targetTriple = sources.targetTriple ?? targetTripleFor(sources.platform, sources.arch);
   const ffmpegTarget = join(outputDirectory, `ffmpeg-${targetTriple}${sources.extension}`);
@@ -152,8 +159,7 @@ export function prepareMediaSidecars({
   };
   writeFileSync(join(outputDirectory, "media-sidecars.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
-  const ffmpegLicense = join(dirname(sources.ffmpeg), "ffmpeg.LICENSE");
-  if (existsSync(ffmpegLicense)) copyFileSync(ffmpegLicense, join(outputDirectory, "FFMPEG-LICENSE.txt"));
+  copyFileSync(ffmpegLicense, join(outputDirectory, "FFMPEG-LICENSE.txt"));
   return { outputDirectory, manifest };
 }
 

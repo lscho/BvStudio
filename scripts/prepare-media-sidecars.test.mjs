@@ -9,6 +9,7 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "bvideo-sidecars-"));
   const source = join(root, "source");
   writeFileSync(source, "fixture", "utf8");
+  writeFileSync(`${source}.LICENSE`, "license fixture", "utf8");
   return { root, source, output: join(root, "output") };
 }
 
@@ -31,6 +32,38 @@ test("copies, validates and describes both sidecars", () => {
     assert.equal(statSync(join(item.output, "ffprobe-aarch64-apple-darwin")).mode & 0o111, 0o111);
     assert.equal(manifest.tools.ffmpeg.version, "ffmpeg version test");
     assert.equal(JSON.parse(readFileSync(join(item.output, "media-sidecars.json"), "utf8")).platform, "darwin");
+    assert.equal(readFileSync(join(item.output, "FFMPEG-LICENSE.txt"), "utf8"), "license fixture");
+  } finally {
+    rmSync(item.root, { recursive: true, force: true });
+  }
+});
+
+test("copies the FFmpeg license named after a Windows executable", () => {
+  const item = fixture();
+  const ffmpeg = join(item.root, "ffmpeg.exe");
+  try {
+    writeFileSync(ffmpeg, "fixture", "utf8");
+    writeFileSync(`${ffmpeg}.LICENSE`, "windows license", "utf8");
+    prepareMediaSidecars({
+      sources: { ffmpeg, ffprobe: item.source, platform: "win32", arch: "x64", compatibleTarget: "win32-x64", targetTriple: "x86_64-pc-windows-msvc", ffprobePackage: "fixture", extension: ".exe" },
+      outputDirectory: item.output,
+      runner: (path) => ({ status: 0, stdout: `${path.includes("ffprobe") ? "ffprobe" : "ffmpeg"} version test\n`, stderr: "" })
+    });
+    assert.equal(readFileSync(join(item.output, "FFMPEG-LICENSE.txt"), "utf8"), "windows license");
+  } finally {
+    rmSync(item.root, { recursive: true, force: true });
+  }
+});
+
+test("fails before preparing sidecars when the FFmpeg license is missing", () => {
+  const item = fixture();
+  try {
+    rmSync(`${item.source}.LICENSE`);
+    assert.throws(() => prepareMediaSidecars({
+      sources: { ffmpeg: item.source, ffprobe: item.source, platform: "linux", arch: "x64", compatibleTarget: "linux-x64", targetTriple: "x86_64-unknown-linux-gnu", ffprobePackage: "fixture", extension: "" },
+      outputDirectory: item.output,
+      runner: () => ({ status: 0, stdout: "version test\n", stderr: "" })
+    }), /FFmpeg license is missing/u);
   } finally {
     rmSync(item.root, { recursive: true, force: true });
   }
