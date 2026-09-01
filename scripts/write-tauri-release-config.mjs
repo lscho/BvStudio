@@ -9,7 +9,7 @@ function requiredEnvironment(name) {
 
 const releaseVersion = requiredEnvironment("RELEASE_VERSION").replace(/^v/u, "");
 const publicKey = requiredEnvironment("TAURI_SIGNING_PUBLIC_KEY");
-const updateEndpoint = requiredEnvironment("TAURI_UPDATER_ENDPOINT");
+const updateEndpoint = process.env.TAURI_UPDATER_ENDPOINT?.trim() ?? "";
 const runnerTemp = requiredEnvironment("RUNNER_TEMP");
 
 if (
@@ -20,17 +20,19 @@ if (
   throw new Error(`Invalid semantic version: ${releaseVersion}`);
 }
 
-let endpointUrl;
-try {
-  endpointUrl = new URL(updateEndpoint);
-} catch {
-  throw new Error(`TAURI_UPDATER_ENDPOINT is not a valid URL: ${updateEndpoint}`);
-}
-if (endpointUrl.protocol !== "https:") {
-  throw new Error("TAURI_UPDATER_ENDPOINT must use HTTPS");
-}
-if (!updateEndpoint.includes("{{target}}")) {
-  throw new Error("TAURI_UPDATER_ENDPOINT must contain the {{target}} placeholder");
+if (updateEndpoint) {
+  let endpointUrl;
+  try {
+    endpointUrl = new URL(updateEndpoint);
+  } catch {
+    throw new Error(`TAURI_UPDATER_ENDPOINT is not a valid URL: ${updateEndpoint}`);
+  }
+  if (endpointUrl.protocol !== "https:") {
+    throw new Error("TAURI_UPDATER_ENDPOINT must use HTTPS");
+  }
+  if (!updateEndpoint.includes("{{target}}")) {
+    throw new Error("TAURI_UPDATER_ENDPOINT must contain the {{target}} placeholder");
+  }
 }
 
 const outputDirectory = join(runnerTemp, "tauri-base-release");
@@ -44,7 +46,7 @@ writeFileSync(
       bundle: { createUpdaterArtifacts: true },
       plugins: {
         updater: {
-          endpoints: [updateEndpoint],
+          endpoints: updateEndpoint ? [updateEndpoint] : [],
           pubkey: publicKey,
           windows: { installMode: "passive" }
         }

@@ -119,7 +119,6 @@ jobs:
         shell: bash
         env:
           RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
-          VITE_ENABLE_UPDATER: "true"
           TAURI_UPDATER_ENDPOINT: ${{ vars.TAURI_UPDATER_ENDPOINT }}
           TAURI_SIGNING_PUBLIC_KEY: ${{ vars.TAURI_SIGNING_PUBLIC_KEY || secrets.TAURI_SIGNING_PUBLIC_KEY }}
         run: node scripts/write-tauri-release-config.mjs
@@ -181,7 +180,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         env:
-          VITE_ENABLE_UPDATER: "true"
+          VITE_ENABLE_UPDATER: ${{ vars.TAURI_UPDATER_ENDPOINT != '' && 'true' || 'false' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$RUNNER_TEMP/tauri-base-release/tauri.release.conf.json"
@@ -190,7 +189,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         env:
-          VITE_ENABLE_UPDATER: "true"
+          VITE_ENABLE_UPDATER: ${{ vars.TAURI_UPDATER_ENDPOINT != '' && 'true' || 'false' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$RUNNER_TEMP/tauri-base-release/tauri.release.conf.json"
@@ -199,7 +198,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         env:
-          VITE_ENABLE_UPDATER: "true"
+          VITE_ENABLE_UPDATER: ${{ vars.TAURI_UPDATER_ENDPOINT != '' && 'true' || 'false' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}

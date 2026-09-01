@@ -70,6 +70,24 @@ test("strips a leading v from the version", () => {
   }
 });
 
+test("disables updater endpoints when TAURI_UPDATER_ENDPOINT is not configured", () => {
+  const runnerTemp = mkdtempSync(join(tmpdir(), "tauri-base-config-"));
+  try {
+    const { status, stderr } = runScript({
+      RELEASE_VERSION: "0.1.0",
+      TAURI_SIGNING_PUBLIC_KEY: PUBLIC_KEY,
+      TAURI_UPDATER_ENDPOINT: "",
+      RUNNER_TEMP: runnerTemp
+    });
+    assert.equal(status, 0, stderr);
+
+    const override = JSON.parse(readFileSync(outputPath(runnerTemp), "utf8"));
+    assert.deepEqual(override.plugins.updater.endpoints, []);
+  } finally {
+    rmSync(runnerTemp, { recursive: true, force: true });
+  }
+});
+
 test("rejects missing environment values", () => {
   const runnerTemp = mkdtempSync(join(tmpdir(), "tauri-base-config-"));
   try {
@@ -79,7 +97,7 @@ test("rejects missing environment values", () => {
       TAURI_UPDATER_ENDPOINT: ENDPOINT,
       RUNNER_TEMP: runnerTemp
     };
-    for (const name of ["RELEASE_VERSION", "TAURI_SIGNING_PUBLIC_KEY", "TAURI_UPDATER_ENDPOINT", "RUNNER_TEMP"]) {
+    for (const name of ["RELEASE_VERSION", "TAURI_SIGNING_PUBLIC_KEY", "RUNNER_TEMP"]) {
       const env = { ...base };
       delete env[name];
       const result = runScript(env);

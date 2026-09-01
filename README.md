@@ -65,20 +65,20 @@ npm run release:config
 npm run tauri -- build --config "$RUNNER_TEMP/tauri-base-release/tauri.release.conf.json"
 ```
 
-`release:config` 只把版本与更新器设置写入 `$RUNNER_TEMP/tauri-base-release/tauri.release.conf.json` 临时覆盖文件，**不会**修改提交的 `src-tauri/tauri.conf.json`。
+`release:config` 只把版本与更新器设置写入 `$RUNNER_TEMP/tauri-base-release/tauri.release.conf.json` 临时覆盖文件，**不会**修改提交的 `src-tauri/tauri.conf.json`。`TAURI_UPDATER_ENDPOINT` 可以留空；GitHub Actions 会继续生成签名发布产物，但编译时关闭客户端更新检查，不会发起更新请求。
 
 ## 环境变量
 
 | 变量 | 位置 | 说明 |
 | --- | --- | --- |
 | `VITE_ENABLE_UPDATER` | `.env`（示例见 `.env.example` / `.env.production.example`） | `"true"` 才允许客户端发起更新检查；浏览器预览与默认构建保持关闭 |
-| `TAURI_UPDATER_ENDPOINT` | GitHub 仓库变量 | 含 `{{target}}` 占位符的公共 HTTPS 端点模板；只进入发布构建配置，不进入前端代码 |
+| `TAURI_UPDATER_ENDPOINT` | GitHub 仓库变量（可选） | 含 `{{target}}` 占位符的公共 HTTPS 端点模板；未配置时发布构建不启用客户端更新检查 |
 
 ## GitHub 变量 / Secrets
 
 | 名称 | 类型 | 用途 |
 | --- | --- | --- |
-| `TAURI_UPDATER_ENDPOINT` | Variable | 更新端点模板（见上） |
+| `TAURI_UPDATER_ENDPOINT` | Variable（可选） | 更新端点模板（见上）；未配置时不检查更新 |
 | `TAURI_SIGNING_PUBLIC_KEY` | Variable 或 Secret | 客户端内置的更新公钥 |
 | `TAURI_SIGNING_PRIVATE_KEY` | Secret | 签名更新包的私钥 |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret（可选） | 私钥密码 |
