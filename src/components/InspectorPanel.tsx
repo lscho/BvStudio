@@ -7,6 +7,7 @@ import { selectedClip, useEditorStore } from "@/stores/editorStore";
 import { upsertVisualKeyframe, visualTransformAt } from "@/domain/transforms";
 import { activeVideoPresentationCue, DEFAULT_EFFECT_BACKDROP, VIDEO_MOTION_PRESETS, videoMotionPresetUsesFocusPoint, videoPresentationAt, type VideoMotionPresetId } from "@/domain/videoPresentation";
 import { subtitleStyle } from "@/domain/videoDecorations";
+import { effectControlsFor } from "@/effects/registry";
 
 const EASING_OPTIONS = EASING_NAMES.map((name) => ({ value: name, label: EASING_LABELS[name] }));
 
@@ -27,6 +28,14 @@ const SUBTITLE_STYLE_OPTIONS = [
   { value: "classic", label: "经典字幕" },
   { value: "bold", label: "重点强调" },
   { value: "minimal", label: "简洁无底" }
+];
+
+const MOTION_COLOR_ROLE_OPTIONS = [
+  { value: "data", label: "数据色" },
+  { value: "opinion", label: "观点色" },
+  { value: "warning", label: "警示色" },
+  { value: "auxiliary", label: "辅助色" },
+  { value: "custom", label: "自定义颜色" }
 ];
 
 const VIDEO_MOTION_ICONS = {
@@ -119,6 +128,8 @@ function SceneInspector({ clip, onPatch }: { clip: SceneClip; onPatch: (patch: P
     <label><span>边框 / 强调色</span><input type="color" value={clip.background.borderColor} onChange={(event) => patchBackground({ borderColor: event.target.value })} /></label>
     <RangeField label="纹理强度" value={clip.background.intensity} min={0.1} max={1} step={0.05} suffix="" onChange={(intensity) => patchBackground({ intensity })} />
     <RangeField label="透明度" value={clip.opacity} min={0} max={1} step={0.05} suffix="" onChange={(opacity) => onPatch({ opacity })} />
+    <NumberField label="弱化时间" value={(clip.dimAtUs ?? clip.durationUs) / 1_000_000} min={0} max={clip.durationUs / 1_000_000} step={0.1} suffix="s" onChange={(value) => onPatch({ dimAtUs: Math.round(value * 1_000_000) })} />
+    <label><span>忽略检查规则</span><input value={(clip.lintOff ?? []).join(", ")} placeholder="例如 group-gap" onChange={(event) => onPatch({ lintOff: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></label>
   </div>;
 }
 
@@ -146,17 +157,29 @@ function EffectInspector({ clip, playheadUs, onSeek, onPatch }: { clip: EffectCl
     <div className="selection-heading"><span className="type-dot effect" /><div><strong>{clip.label}</strong><small>动效片段 · 视频上层</small></div></div>
     <div className="two-column"><NumberField label="开始时间" value={clip.startUs / 1_000_000} min={0} step={0.1} suffix="s" onChange={(value) => onPatch({ startUs: Math.round(value * 1_000_000) })} /><NumberField label="持续时间" value={clip.durationUs / 1_000_000} min={0.1} step={0.1} suffix="s" onChange={(value) => onPatch({ durationUs: Math.round(value * 1_000_000) })} /></div>
     <NumberField label="动效层级" value={clip.zIndex ?? 20} min={0} max={200} step={1} suffix="" onChange={(zIndex) => onPatch({ zIndex })} />
-    <label><span>{recipe?.chart ? "说明文字（可留空）" : "文字"}</span><textarea rows={3} value={clip.text} onChange={(event) => onPatch({ text: event.target.value })} /></label>
+    <label><span>语义配色</span><Select label="动效语义配色" value={clip.colorRole ?? "custom"} onChange={(value) => onPatch({ colorRole: value as EffectClip["colorRole"] })} options={MOTION_COLOR_ROLE_OPTIONS} /></label>
+    <EffectRegistryControls clip={clip} onPatch={onPatch} />
     {recipe?.chart && <ChartFields spec={recipe.chart} onChange={(chart) => { if (recipe) onPatch({ recipe: { ...structuredClone(recipe), chart } }); }} />}
-    <div className="two-column"><label><span>文字颜色</span><input type="color" value={clip.color} onChange={(event) => onPatch({ color: event.target.value })} /></label><label><span>强调色</span><input type="color" value={clip.accentColor} onChange={(event) => onPatch({ accentColor: event.target.value })} /></label></div>
     <section className="camera-fields"><span>整体背景</span><label className="check-row"><input type="checkbox" checked={backdrop.enabled} onChange={(event) => onPatch({ backdrop: { ...backdrop, enabled: event.target.checked } })} /><span>启用动效背景</span></label>{backdrop.enabled && <><div className="two-column"><label><span>背景颜色</span><input type="color" value={backdrop.color} onChange={(event) => onPatch({ backdrop: { ...backdrop, color: event.target.value } })} /></label><NumberField label="背景模糊" value={backdrop.blur} min={0} max={30} step={1} suffix="px" onChange={(blur) => onPatch({ backdrop: { ...backdrop, blur } })} /></div><RangeField label="背景透明度" value={backdrop.opacity} min={0} max={1} step={0.05} suffix="" onChange={(opacity) => onPatch({ backdrop: { ...backdrop, opacity } })} /><div className="two-column"><NumberField label="横向留白" value={backdrop.paddingX} min={0} max={100} step={1} suffix="px" onChange={(paddingX) => onPatch({ backdrop: { ...backdrop, paddingX } })} /><NumberField label="纵向留白" value={backdrop.paddingY} min={0} max={60} step={1} suffix="px" onChange={(paddingY) => onPatch({ backdrop: { ...backdrop, paddingY } })} /></div><RangeField label="背景圆角" value={backdrop.radius} min={0} max={40} step={1} suffix="px" onChange={(radius) => onPatch({ backdrop: { ...backdrop, radius } })} /></>}</section>
-    <RangeField label="字号" value={clip.fontSize} min={18} max={120} suffix="px" onChange={(fontSize) => onPatch({ fontSize })} />
-    <RangeField label="速度" value={clip.speed} min={0.25} max={3} step={0.05} suffix="×" onChange={(speed) => onPatch({ speed })} />
+    <NumberField label="弱化时间" value={(clip.dimAtUs ?? clip.durationUs) / 1_000_000} min={0} max={clip.durationUs / 1_000_000} step={0.1} suffix="s" onChange={(value) => onPatch({ dimAtUs: Math.round(value * 1_000_000) })} />
+    <label><span>忽略检查规则</span><input value={(clip.lintOff ?? []).join(", ")} placeholder="例如 unsafe-bounds" onChange={(event) => onPatch({ lintOff: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></label>
     <RangeField label="大小" value={current.scale} min={0.3} max={3} step={0.05} suffix="×" onChange={(scale) => patchTransform({ scale })} />
     <RangeField label="旋转" value={current.rotation} min={-180} max={180} step={1} suffix="°" onChange={(rotation) => patchTransform({ rotation })} />
     <RangeField label="透明度" value={current.opacity} min={0} max={1} step={0.05} suffix="" onChange={(opacity) => patchTransform({ opacity })} />
     <VisualKeyframeEditor clipStartUs={clip.startUs} localUs={localUs} transform={current} keyframes={clip.transformKeyframes ?? []} onSeek={onSeek} onChange={(transformKeyframes) => onPatch({ transformKeyframes })} />
   </div>;
+}
+
+function EffectRegistryControls({ clip, onPatch }: { clip: EffectClip; onPatch: (patch: Partial<EffectClip>) => void }) {
+  return <>{effectControlsFor(clip).map((control) => {
+    if (control.kind === "text") return <label key={control.field}><span>{control.label}</span><textarea rows={control.rows} value={clip.text} onChange={(event) => onPatch({ text: event.target.value })} /></label>;
+    if (control.kind === "color") {
+      if ((clip.colorRole ?? "custom") !== "custom") return null;
+      return <label key={control.field}><span>{control.label}</span><input type="color" value={clip[control.field]} onChange={(event) => onPatch(control.field === "color" ? { color: event.target.value } : { accentColor: event.target.value })} /></label>;
+    }
+    const value = clip[control.field];
+    return <RangeField key={control.field} label={control.label} value={value} min={control.min} max={control.max} step={control.step} suffix={control.suffix === "x" ? "×" : control.suffix} onChange={(next) => onPatch(control.field === "fontSize" ? { fontSize: next } : { speed: next })} />;
+  })}</>;
 }
 
 const CHART_KIND_OPTIONS: { value: ChartSpec["kind"]; label: string }[] = [

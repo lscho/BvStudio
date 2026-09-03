@@ -2,7 +2,7 @@ import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { isDesktopRuntime } from "@/services/runtime";
 import type { EffectRecipe } from "@/domain/effects";
-import type { ChapterMarker, EffectBackdrop, SubtitleStylePreset, VideoFocusEffect, VideoMask, VideoTransition, VisualTransformKeyframe } from "@/domain/project";
+import type { ChapterMarker, ChapterProgressPosition, ChapterProgressStyle, EffectBackdrop, MotionTheme, SubtitleStylePreset, VideoFocusEffect, VideoMask, VideoTransition, VisualTransformKeyframe } from "@/domain/project";
 import type { CameraMotion } from "@/domain/camera";
 import { drawChartFrame, hexAlpha, measureChartBox } from "@/domain/chartEffects";
 import { highlightedTextParts } from "@/domain/videoDecorations";
@@ -89,11 +89,14 @@ interface RenderOverlayBase {
   speed: number;
   recipe: EffectRecipe;
   zIndex: number;
+  verticalAnchor?: "center" | "bottom";
   transformKeyframes?: VisualTransformKeyframe[];
 }
 
 export interface RenderTextOverlay extends RenderOverlayBase {
   kind: "text";
+  effectId?: string;
+  renderer?: "legacy" | "react";
   text: string;
   color: string;
   fontSize: number;
@@ -106,7 +109,10 @@ export interface RenderTextOverlay extends RenderOverlayBase {
    * preview's f(playhead) stays identical on the timeline.
    */
   sequenceFramesBase64?: string[];
+  sequenceFps?: number;
   backdrop?: EffectBackdrop;
+  motionTheme?: MotionTheme;
+  dimAtUs?: number;
   subtitleStyle?: {
     preset: SubtitleStylePreset;
     highlightWords: string[];
@@ -155,10 +161,22 @@ export interface RenderProgressOverlay extends RenderOverlayBase {
   kind: "progress";
   chapters: ChapterMarker[];
   chapterIndex: number;
+  position: ChapterProgressPosition;
+  style: ChapterProgressStyle;
   backgroundColor: string;
+  backgroundOpacity: number;
   activeColor: string;
+  inactiveColor: string;
   textColor: string;
   heightPx: number;
+  showTitles: boolean;
+  animatedProgress?: {
+    xPx: number;
+    yPx: number;
+    widthPx: number;
+    heightPx: number;
+    color: string;
+  };
   imageDataBase64?: string;
 }
 
@@ -339,10 +357,10 @@ function measureOverlay(overlay: RenderTextOverlay, canvasWidth: number): Overla
       measure.font = FONT_STACK.replace("{size}", String(fontSize));
     }
   }
-  const maxTextWidth = canvasWidth * 0.72 - paddingX * 2;
+  const maxTextWidth = canvasWidth * (overlay.subtitleStyle ? 0.86 : 0.8) - paddingX * 2;
   const lines = text ? wrapCanvasText(measure, text, Math.max(40, minBox ? minBox.width - paddingX * 2 : maxTextWidth)) : [];
   const textWidth = lines.length ? Math.max(...lines.map((line) => measure.measureText(line).width), fontSize) : (minBox?.width ?? fontSize);
-  const lineHeight = fontSize * 1.2;
+  const lineHeight = fontSize * (overlay.subtitleStyle?.preset === "bold" ? 1.28 : overlay.subtitleStyle ? 1.35 : 1.12);
   const chartNeed = minBox
     ? {
         width: (minBox.width + paddingX * 2) * 1,
@@ -371,14 +389,16 @@ function measureOverlay(overlay: RenderTextOverlay, canvasWidth: number): Overla
   };
 }
 
+export function exportRasterDimension(logicalPixels: number) {
+  return Math.max(1, Math.ceil(logicalPixels));
+}
+
 function createOverlayCanvas(geometry: OverlayGeometry): CanvasRenderingContext2D | null {
-  const pixelScale = Math.min(2, window.devicePixelRatio || 1);
   const canvas = document.createElement("canvas");
-  canvas.width = Math.ceil(geometry.rotatedWidth * pixelScale);
-  canvas.height = Math.ceil(geometry.rotatedHeight * pixelScale);
+  canvas.width = exportRasterDimension(geometry.rotatedWidth);
+  canvas.height = exportRasterDimension(geometry.rotatedHeight);
   const context = canvas.getContext("2d");
   if (!context) return null;
-  context.scale(pixelScale, pixelScale);
   context.translate(geometry.rotatedWidth / 2, geometry.rotatedHeight / 2);
   context.rotate(geometry.radians);
   context.translate(-geometry.baseWidth / 2, -geometry.baseHeight / 2);
@@ -419,14 +439,14 @@ function paintChrome(context: CanvasRenderingContext2D, overlay: RenderTextOverl
 function paintCaptionAndText(context: CanvasRenderingContext2D, overlay: RenderTextOverlay, geometry: OverlayGeometry) {
   const { lines, fontSize, paddingY, baseWidth } = geometry;
   if (!lines.length) return;
-  const lineHeight = fontSize * 1.2;
+  const lineHeight = fontSize * (overlay.subtitleStyle?.preset === "bold" ? 1.28 : overlay.subtitleStyle ? 1.35 : 1.12);
   const startY = paddingY + lineHeight * 0.5;
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.globalAlpha = overlay.opacity;
   const style = overlay.subtitleStyle;
   const fontWeight = style?.preset === "bold" ? 900 : style?.preset === "minimal" ? 700 : 800;
-  context.lineWidth = style ? style.outlineWidth : Math.max(2, fontSize * 0.07);
+  context.lineWidth = style ? style.outlineWidth : 0;
   context.strokeStyle = style?.outlineColor ?? "rgba(0, 0, 0, 0.68)";
   context.font = `${fontWeight} ${fontSize}px Inter, "PingFang SC", "Microsoft YaHei", sans-serif`;
   lines.forEach((line, index) => {
@@ -631,29 +651,83 @@ function rasterizeProgressOverlay(overlay: RenderProgressOverlay, width: number)
   canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("当前环境不支持章节进度画布");
-  context.fillStyle = hexAlpha(overlay.backgroundColor, 0.9);
+  context.fillStyle = hexAlpha(overlay.backgroundColor, overlay.backgroundOpacity);
   context.fillRect(0, 0, width, height);
   const count = Math.max(1, overlay.chapters.length);
   const itemWidth = width / count;
-  const fontSize = Math.max(10, Math.min(18, height * 0.3));
+  const fontSize = Math.max(14, Math.min(40, height * 0.42));
   context.font = `700 ${fontSize}px Inter, "PingFang SC", "Microsoft YaHei", sans-serif`;
   context.textAlign = "center";
   context.textBaseline = "middle";
+  const progressThickness = Math.max(3, height * 0.08);
+  const progressY = overlay.position === "top" ? height - progressThickness : 0;
+
+  if (overlay.style === "line") {
+    context.fillStyle = hexAlpha(overlay.inactiveColor, 0.7);
+    context.fillRect(0, progressY, width, progressThickness);
+  }
+  if (overlay.style === "steps") {
+    const stepY = height * 0.64;
+    const stepLineWidth = Math.max(2, height * 0.025);
+    context.strokeStyle = hexAlpha(overlay.inactiveColor, 0.7);
+    context.lineWidth = stepLineWidth;
+    context.beginPath();
+    context.moveTo(itemWidth * 0.5, stepY);
+    context.lineTo(width - itemWidth * 0.5, stepY);
+    context.stroke();
+    if (overlay.chapterIndex > 0) {
+      context.strokeStyle = overlay.activeColor;
+      context.beginPath();
+      context.moveTo(itemWidth * 0.5, stepY);
+      context.lineTo(itemWidth * (overlay.chapterIndex + 0.5), stepY);
+      context.stroke();
+    }
+  }
+
   overlay.chapters.forEach((chapter, index) => {
     const active = index === overlay.chapterIndex;
     const completed = index < overlay.chapterIndex;
-    context.globalAlpha = active ? 1 : completed ? 0.72 : 0.46;
-    context.fillStyle = overlay.textColor;
-    const label = ellipsizeCanvasText(context, chapter.title, Math.max(16, itemWidth - 22));
-    context.fillText(label, itemWidth * (index + 0.5), height * 0.47);
-    if (index > 0) {
-      context.globalAlpha = 0.18;
+    const centerX = itemWidth * (index + 0.5);
+    context.globalAlpha = 1;
+
+    if (overlay.style === "labels") {
+      const padding = Math.max(5, width * 0.006);
+      const pillX = itemWidth * index + padding;
+      const pillY = height * 0.2;
+      const pillWidth = Math.max(1, itemWidth - padding * 2);
+      const pillHeight = height * 0.6;
+      context.beginPath();
+      context.roundRect(pillX, pillY, pillWidth, pillHeight, Math.max(2, height * 0.08));
+      context.fillStyle = active ? hexAlpha(overlay.activeColor, 0.22) : hexAlpha(overlay.backgroundColor, 0.16);
+      context.fill();
+      context.strokeStyle = active ? overlay.activeColor : hexAlpha(overlay.inactiveColor, 0.5);
+      context.lineWidth = Math.max(1, height * 0.02);
+      context.stroke();
+    } else if (overlay.style === "steps") {
+      const dotRadius = Math.max(5, height * 0.1);
+      context.beginPath();
+      context.arc(centerX, height * 0.64, dotRadius, 0, Math.PI * 2);
+      context.fillStyle = active || completed ? overlay.activeColor : overlay.backgroundColor;
+      context.fill();
+      context.strokeStyle = active || completed ? overlay.activeColor : overlay.inactiveColor;
+      context.lineWidth = Math.max(1, height * 0.025);
+      context.stroke();
+    } else if (overlay.style === "segments" && index > 0) {
+      context.fillStyle = hexAlpha(overlay.textColor, 0.16);
       context.fillRect(itemWidth * index, height * 0.25, 1, height * 0.5);
     }
-    if (active) {
-      context.globalAlpha = 1;
+
+    if ((overlay.style === "segments" || overlay.style === "line") && completed) {
       context.fillStyle = overlay.activeColor;
-      context.fillRect(itemWidth * index, height - Math.max(3, height * 0.08), itemWidth, Math.max(3, height * 0.08));
+      context.fillRect(itemWidth * index, progressY, itemWidth, progressThickness);
+    }
+
+    if (overlay.showTitles) {
+      context.fillStyle = active ? overlay.textColor : overlay.inactiveColor;
+      context.globalAlpha = active ? 1 : completed ? 0.8 : 0.68;
+      const label = ellipsizeCanvasText(context, chapter.title, Math.max(16, itemWidth - 22));
+      const labelY = overlay.style === "steps" ? height * 0.29 : height * 0.5;
+      context.fillText(label, centerX, labelY);
     }
   });
   context.globalAlpha = 1;
@@ -666,6 +740,7 @@ export async function rasterizeRenderPlan(plan: RenderPlan): Promise<RenderPlan>
     if (overlay.kind === "scene") return { ...overlay, imageDataBase64: rasterizeSceneOverlay(overlay, plan.width, plan.height) };
     if (overlay.kind === "progress") return { ...overlay, imageDataBase64: rasterizeProgressOverlay(overlay, plan.width) };
     if (overlay.kind !== "text") return overlay;
+    if (overlay.imageDataBase64 || overlay.sequenceFramesBase64?.length) return overlay;
     if (needsSequence(overlay)) {
       const sequence = rasterizeSequence(overlay, plan.width, plan.fps);
       if (sequence) return { ...overlay, sequenceFramesBase64: sequence };

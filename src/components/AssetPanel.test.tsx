@@ -31,10 +31,10 @@ describe("AssetPanel video audio actions", () => {
     useEffectLibraryStore.setState({ effects: [...BUILTIN_EFFECTS] });
     const { container } = render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} />);
 
-    for (const category of ["场景", "标题", "强调", "卡片", "标注", "数据"]) {
+    for (const category of ["场景", "标题", "强调", "卡片", "标注", "数据", "布局"]) {
       expect(screen.getByText(category, { selector: "summary span" })).toBeInTheDocument();
     }
-    expect(container.querySelectorAll(".effect-group")).toHaveLength(6);
+    expect(container.querySelectorAll(".effect-group")).toHaveLength(7);
     const dataGroup = screen.getByText("数据", { selector: "summary span" }).closest("details");
     expect(dataGroup).toHaveTextContent("数字结论");
     expect(dataGroup).toHaveTextContent("横向数据对比");
@@ -43,6 +43,23 @@ describe("AssetPanel video audio actions", () => {
     expect(dataGroup?.querySelectorAll(".chart-swatch")).toHaveLength(4);
     expect(container.querySelectorAll(".effect-swatch")).toHaveLength(BUILTIN_EFFECTS.length);
     expect(container.querySelectorAll(".effect-swatch i")).toHaveLength(BUILTIN_EFFECTS.length);
+  });
+
+  it("filters the production effect library by name, description and tags", () => {
+    const project = createEmptyProject();
+    useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
+    useEffectLibraryStore.setState({ effects: [...BUILTIN_EFFECTS] });
+    render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} />);
+
+    const effectsTab = screen.getByRole("tab", { name: "动效" });
+    fireEvent.mouseDown(effectsTab, { button: 0, ctrlKey: false });
+    fireEvent.click(effectsTab);
+    const search = screen.getByRole("searchbox", { name: "搜索动效" });
+    fireEvent.change(search, { target: { value: "风险" } });
+
+    expect(screen.getByText("警示 · 侧栏卡")).toBeInTheDocument();
+    expect(screen.queryByText("开场 · 高亮条")).not.toBeInTheDocument();
+    expect(screen.getByText(/个匹配/)).toBeInTheDocument();
   });
 
   it("lists timed subtitles in chronological order and synchronizes selection and playhead", () => {

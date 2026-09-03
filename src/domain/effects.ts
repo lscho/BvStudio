@@ -289,6 +289,64 @@ const EFFECT_PRESENTATIONS = [
   { id: "frame", name: "描边框", layout: "frame" as const, entrance: "none" as const }
 ] as const;
 
+function familyAnimation(presentation: typeof EFFECT_PRESENTATIONS[number], familyIndex: number): EffectAnimation {
+  const direction = familyIndex % 2 === 0 ? -1 : 1;
+  if (presentation.id === "highlight") {
+    return {
+      durationSeconds: 0.62,
+      easing: "back-out",
+      keyframes: [
+        { offset: 0, translateX: 38 * direction, translateY: 10, scale: 0.86, rotation: 2 * direction },
+        { offset: 0.78, translateX: -2 * direction, translateY: -1, scale: 1.03, rotation: 0, easing: "back-out" },
+        { offset: 1, translateX: 0, translateY: 0, scale: 1, rotation: 0, easing: "ease-out" }
+      ]
+    };
+  }
+  if (presentation.id === "impact") {
+    return {
+      durationSeconds: 0.72,
+      easing: "back-out",
+      keyframes: [
+        { offset: 0, translateX: 0, translateY: 5, scale: 0.24, rotation: -4 * direction },
+        { offset: 0.64, translateX: 0, translateY: -2, scale: 1.18, rotation: 1.5 * direction, easing: "back-out" },
+        { offset: 0.86, translateX: 0, translateY: 1, scale: 0.97, rotation: 0, easing: "ease-in-out" },
+        { offset: 1, translateX: 0, translateY: 0, scale: 1, rotation: 0, easing: "ease-out" }
+      ]
+    };
+  }
+  if (presentation.id === "panel") {
+    return {
+      durationSeconds: 0.68,
+      easing: "quart-out",
+      keyframes: [
+        { offset: 0, translateX: 62 * direction, translateY: 8, scale: 0.92, rotation: 1.5 * direction },
+        { offset: 0.78, translateX: -3 * direction, translateY: 0, scale: 1.015, rotation: 0, easing: "quart-out" },
+        { offset: 1, translateX: 0, translateY: 0, scale: 1, rotation: 0, easing: "ease-out" }
+      ]
+    };
+  }
+  if (presentation.id === "underline") {
+    return {
+      durationSeconds: 0.58,
+      easing: "cubic-out",
+      keyframes: [
+        { offset: 0, translateX: 12 * direction, translateY: 20, scale: 0.88, rotation: 1.5 * direction },
+        { offset: 0.82, translateX: 0, translateY: -2, scale: 1.02, rotation: 0, easing: "cubic-out" },
+        { offset: 1, translateX: 0, translateY: 0, scale: 1, rotation: 0, easing: "ease-out" }
+      ]
+    };
+  }
+  return {
+    durationSeconds: 0.68 + familyIndex % 3 * 0.06,
+    easing: "back-out",
+    keyframes: [
+      { offset: 0, translateX: 18 * direction, translateY: 24, scale: 0.72, rotation: 5 * direction },
+      { offset: 0.72, translateX: -2 * direction, translateY: -3, scale: 1.04, rotation: -direction, easing: "back-out" },
+      { offset: 1, translateX: 0, translateY: 0, scale: 1, rotation: 0, easing: "ease-out" }
+    ]
+  };
+}
+
 function familyEffect(family: EffectFamily, presentation: typeof EFFECT_PRESENTATIONS[number], familyIndex: number): EffectDefinition {
   const framed = presentation.layout === "frame";
   return {
@@ -303,23 +361,13 @@ function familyEffect(family: EffectFamily, presentation: typeof EFFECT_PRESENTA
     defaultAccentColor: family.accent,
     recipe: {
       layout: presentation.layout,
-      entrance: presentation.entrance,
+      entrance: "none",
       paddingX: framed ? 26 : presentation.layout === "panel" ? 22 : 16,
       paddingY: framed ? 18 : presentation.layout === "panel" ? 14 : 10,
       borderWidth: presentation.layout === "panel" ? 4 : framed ? 2 : 0,
       borderRadius: framed || presentation.layout === "panel" ? 3 : 1,
       backgroundOpacity: framed ? 0.82 : presentation.layout === "panel" ? 0.78 : 0,
-      ...(framed ? {
-        animation: {
-          durationSeconds: 0.55 + familyIndex % 3 * 0.1,
-          easing: "ease-out" as const,
-          keyframes: [
-            { offset: 0, translateX: familyIndex % 2 ? 14 : -14, translateY: 14, scale: 0.78, rotation: familyIndex % 2 ? 3 : -3 },
-            { offset: 0.72, translateX: 0, translateY: -2, scale: 1.04, rotation: 0 },
-            { offset: 1, translateX: 0, translateY: 0, scale: 1, rotation: 0 }
-          ]
-        }
-      } : {})
+      animation: familyAnimation(presentation, familyIndex)
     }
   };
 }
@@ -467,7 +515,7 @@ const TEST_EFFECTS: readonly EffectDefinition[] = [
   }))
 ] as const;
 
-export const BUILTIN_EFFECTS: readonly EffectDefinition[] = TEST_EFFECTS;
+export const BUILTIN_EFFECTS: readonly EffectDefinition[] = [...TEST_EFFECTS, ...FAMILY_EFFECTS, ...SCENE_EFFECTS];
 
 let installedEffects: EffectDefinition[] = [];
 
@@ -483,6 +531,32 @@ export function effectById(id: string): EffectDefinition {
   return allEffects().find((effect) => effect.id === id)
     ?? LEGACY_EFFECTS.find((effect) => effect.id === id)
     ?? BUILTIN_EFFECTS[0];
+}
+
+/** Keeps text effects readable while allowing longer copy to fit common video canvases. */
+export function recommendedEffectFontSize(recipe: EffectRecipe, text = ""): number {
+  if (recipe.chart?.kind === "counter") return 80;
+  if (recipe.chart) return 48;
+  const textLength = Array.from(text.trim().replace(/[\s，。！？、；：,.!?;:()（）【】\[\]"'“”‘’]/gu, "")).length;
+  if (recipe.layout === "number") {
+    if (textLength <= 4) return 96;
+    if (textLength <= 8) return 84;
+    if (textLength <= 14) return 72;
+    return 64;
+  }
+  if (recipe.layout === "highlight") return textLength > 12 ? 56 : 64;
+  if (recipe.layout === "underline") return 56;
+  if (recipe.layout === "panel") return 48;
+  return 52;
+}
+
+/** Repairs only known legacy defaults; explicit user-selected sizes remain untouched. */
+export function effectiveEffectFontSize(fontSize: number, recipe: EffectRecipe, text = ""): number {
+  if (!Number.isFinite(fontSize) || fontSize <= 0) return recommendedEffectFontSize(recipe, text);
+  if (recipe.layout === "number" && fontSize >= 54 && fontSize <= 58) {
+    return recommendedEffectFontSize(recipe, text);
+  }
+  return fontSize;
 }
 
 export function effectSelectionsForText(text: string, limit = 3): EffectDefinition[] {
@@ -511,7 +585,7 @@ export interface EffectAnimationState {
 }
 
 export function effectAnimationState(recipe: EffectRecipe, elapsedUs: number, speed: number): EffectAnimationState {
-  const animation = recipe.animation;
+  const animation = clockControlledRecipe(recipe).animation;
   const rest: EffectAnimationState = { translateX: 0, translateY: 0, scale: 1, rotation: 0, rotateX: 0, rotateY: 0, perspective: 0 };
   if (!animation?.keyframes.length) return rest;
   const durationUs = Math.max(1, animation.durationSeconds * 1_000_000 / Math.max(0.1, speed));
@@ -536,6 +610,39 @@ export function effectAnimationState(recipe: EffectRecipe, elapsedUs: number, sp
     };
   }
   return keyframeState(keyframes.at(-1)!);
+}
+
+/** Converts legacy entrance presets into the same playhead-driven keyframe contract used by new cards. */
+export function clockControlledRecipe(recipe: EffectRecipe): EffectRecipe {
+  if (recipe.animation || recipe.entrance === "none") return recipe;
+  const animation: EffectAnimation = recipe.entrance === "slide-left"
+    ? {
+        durationSeconds: 0.45,
+        easing: "cubic-out",
+        keyframes: [
+          { offset: 0, translateX: -15, translateY: 0, scale: 1, rotation: 0 },
+          { offset: 1, translateX: 0, translateY: 0, scale: 1, rotation: 0 }
+        ]
+      }
+    : recipe.entrance === "fade-up"
+      ? {
+          durationSeconds: 0.45,
+          easing: "cubic-out",
+          keyframes: [
+            { offset: 0, translateX: 0, translateY: 25, scale: 1, rotation: 0 },
+            { offset: 1, translateX: 0, translateY: 0, scale: 1, rotation: 0 }
+          ]
+        }
+      : {
+          durationSeconds: 0.45,
+          easing: "back-out",
+          keyframes: [
+            { offset: 0, translateX: 0, translateY: 0, scale: 0.45, rotation: 0 },
+            { offset: 0.7, translateX: 0, translateY: 0, scale: 1.15, rotation: 0 },
+            { offset: 1, translateX: 0, translateY: 0, scale: 1, rotation: 0 }
+          ]
+        };
+  return { ...recipe, entrance: "none", animation };
 }
 
 function keyframeState(keyframe: Readonly<EffectKeyframe>): EffectAnimationState {

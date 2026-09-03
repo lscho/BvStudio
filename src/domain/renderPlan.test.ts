@@ -24,7 +24,34 @@ describe("buildRenderPlan", () => {
     project.tracks.find((track) => track.kind === "subtitle")!.clips.push({ id: "subtitle", trackId: "subtitle-main", kind: "subtitle", label: "字幕", startUs: 1_000_000, durationUs: 2_000_000, locked: false, text: "时间字幕。", color: "#ffffff", backgroundColor: "#000000", fontSize: 44, positionY: 88 });
     const overlays = buildRenderPlan(project, "/output.mp4").overlays;
     expect(overlays).toContainEqual(expect.objectContaining({ text: "真实内容", startUs: 1_000_000, x: 40 }));
-    expect(overlays).toContainEqual(expect.objectContaining({ text: "时间字幕", startUs: 1_000_000, y: 88 }));
+    expect(overlays).toContainEqual(expect.objectContaining({ text: "时间字幕", startUs: 1_000_000, y: 88, verticalAnchor: "bottom" }));
+  });
+
+  it("resolves project theme roles and React renderer metadata for export", () => {
+    const project = createEmptyProject();
+    project.motionTheme = { ...project.motionTheme, skin: "light", style: "editorial", font: "display", colors: { ...project.motionTheme.colors, text: "#121212", data: "#0099cc" } };
+    project.tracks.find((track) => track.kind === "effect")!.clips.push({
+      id: "themed", trackId: "effect-main", kind: "effect", label: "数据", startUs: 0, durationUs: 3_000_000, locked: false,
+      effectId: "test-number-counter", text: "42%", color: "#ffffff", accentColor: "#ff0000", colorRole: "data", fontSize: 80,
+      speed: 1, dimAtUs: 2_000_000, transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }
+    });
+    expect(buildRenderPlan(project, "/output.mp4").overlays[0]).toMatchObject({
+      renderer: "react", effectId: "test-number-counter", color: "#121212", accentColor: "#0099cc", dimAtUs: 2_000_000,
+      motionTheme: { skin: "light", style: "editorial", font: "display" }
+    });
+  });
+
+  it("repairs legacy impact text size in export without changing custom sizes", () => {
+    const project = createEmptyProject();
+    const track = project.tracks.find((candidate) => candidate.kind === "effect")!;
+    track.clips.push(
+      { id: "legacy-impact", trackId: track.id, kind: "effect", label: "冲击字", startUs: 0, durationUs: 2_000_000, locked: false, effectId: "data-impact", text: "42%", color: "#ffffff", accentColor: "#47d7ac", fontSize: 56, speed: 1, transform: { x: 50, y: 40, scale: 1, rotation: 0, opacity: 1 } },
+      { id: "custom-impact", trackId: track.id, kind: "effect", label: "自定义冲击字", startUs: 2_000_000, durationUs: 2_000_000, locked: false, effectId: "data-impact", text: "自定义", color: "#ffffff", accentColor: "#47d7ac", fontSize: 40, speed: 1, transform: { x: 50, y: 40, scale: 1, rotation: 0, opacity: 1 } }
+    );
+
+    const overlays = buildRenderPlan(project, "/output.mp4").overlays;
+    expect(overlays).toContainEqual(expect.objectContaining({ text: "42%", fontSize: 96 }));
+    expect(overlays).toContainEqual(expect.objectContaining({ text: "自定义", fontSize: 40 }));
   });
 
   it("preserves staged cross-caption motion timing in the render plan", () => {
@@ -42,7 +69,9 @@ describe("buildRenderPlan", () => {
   it("exports styled subtitle keywords and chapter progress", () => {
     const project = createEmptyProject();
     project.chapterProgress = {
-      enabled: true, backgroundColor: "#111316", activeColor: "#ffb84d", textColor: "#ffffff", height: 52,
+      enabled: true, preset: "bottom-labels", position: "bottom", style: "labels", backgroundColor: "#111316",
+      backgroundOpacity: 0.8, activeColor: "#ffb84d", inactiveColor: "#77808c", textColor: "#ffffff",
+      height: 52, showTitles: true,
       chapters: [{ id: "intro", title: "开场", startUs: 0 }, { id: "steps", title: "步骤", startUs: 4_000_000 }]
     };
     project.tracks.find((track) => track.kind === "subtitle")!.clips.push({
@@ -53,13 +82,71 @@ describe("buildRenderPlan", () => {
     });
     const overlays = buildRenderPlan(project, "/output.mp4").overlays;
     expect(overlays).toContainEqual(expect.objectContaining({ kind: "text", subtitleStyle: expect.objectContaining({ preset: "bold", highlightWords: ["整理素材"] }) }));
-    expect(overlays).toContainEqual(expect.objectContaining({ kind: "progress", chapters: project.chapterProgress.chapters, zIndex: 500 }));
+    expect(overlays).toContainEqual(expect.objectContaining({
+      kind: "progress", chapters: project.chapterProgress.chapters, zIndex: 500,
+      position: "bottom", style: "labels", y: expect.closeTo(97.6, 1), animatedProgress: undefined
+    }));
+  });
+
+  it("exports a chapter-local progress region for line and segment styles", () => {
+    const project = createEmptyProject();
+    project.chapterProgress = {
+      ...project.chapterProgress,
+      enabled: true,
+      position: "top",
+      style: "segments",
+      height: 50,
+      chapters: [{ id: "intro", title: "开场", startUs: 0 }, { id: "end", title: "结尾", startUs: 2_000_000 }]
+    };
+    project.durationUs = 4_000_000;
+    project.tracks.find((track) => track.kind === "generated")!.clips.push({
+      id: "content", trackId: "generated-main", kind: "generated", label: "内容", startUs: 0, durationUs: 4_000_000,
+      locked: false, article: "", narration: "", prompt: "", insertMode: "insert", scenes: []
+    });
+
+    const progress = buildRenderPlan(project, "/output.mp4").overlays.filter((overlay) => overlay.kind === "progress");
+    expect(progress[0]).toMatchObject({ animatedProgress: { xPx: 0, yPx: 46, widthPx: 960, heightPx: 4, color: project.chapterProgress.activeColor } });
+    expect(progress[1]).toMatchObject({ animatedProgress: { xPx: 960, yPx: 46, widthPx: 960, heightPx: 4, color: project.chapterProgress.activeColor } });
+  });
+
+  it("animates bottom step progress between node centers without extending past the last node", () => {
+    const project = createEmptyProject();
+    project.chapterProgress = {
+      ...project.chapterProgress,
+      enabled: true,
+      preset: "bottom-steps",
+      position: "bottom",
+      style: "steps",
+      height: 96,
+      chapters: [
+        { id: "one", title: "市场转向竞争", startUs: 0 },
+        { id: "two", title: "市场规模扩张", startUs: 1_000_000 },
+        { id: "three", title: "产品成本升级", startUs: 2_000_000 },
+        { id: "four", title: "补能与未来竞争", startUs: 3_000_000 }
+      ]
+    };
+    project.durationUs = 4_000_000;
+    project.tracks.find((track) => track.kind === "generated")!.clips.push({
+      id: "content", trackId: "generated-main", kind: "generated", label: "内容", startUs: 0, durationUs: 4_000_000,
+      locked: false, article: "", narration: "", prompt: "", insertMode: "insert", scenes: []
+    });
+
+    const progress = buildRenderPlan(project, "/output.mp4").overlays.filter((overlay) => overlay.kind === "progress");
+    expect(progress[0]).toMatchObject({ animatedProgress: { xPx: 240, yPx: expect.closeTo(60.24, 5), widthPx: 480, heightPx: expect.closeTo(2.4, 5) } });
+    expect(progress[1]).toMatchObject({ animatedProgress: { xPx: 720, yPx: expect.closeTo(60.24, 5), widthPx: 480, heightPx: expect.closeTo(2.4, 5) } });
+    expect(progress[3]).toMatchObject({ animatedProgress: undefined });
   });
 
   it("applies one-off output dimensions, frame rate and format without changing the project", () => {
     const project = createEmptyProject();
+    project.tracks.find((track) => track.kind === "effect")!.clips.push({
+      id: "scaled-effect", trackId: "effect-main", kind: "effect", label: "动效", startUs: 0, durationUs: 1_000_000,
+      locked: false, effectId: "test-title-slide", text: "输出尺寸", color: "#ffffff", accentColor: "#5fa8ff",
+      fontSize: 60, speed: 1, transform: { x: 50, y: 40, scale: 1, rotation: 0, opacity: 1 }
+    });
     const plan = buildRenderPlan(project, "/output.mov", { format: "mov", width: 1280, height: 720, fps: 24 });
     expect(plan).toMatchObject({ format: "mov", width: 1280, height: 720, fps: 24 });
+    expect(plan.overlays).toContainEqual(expect.objectContaining({ kind: "text", fontSize: 40 }));
     expect(project.canvas).toMatchObject({ width: 1920, height: 1080, fpsNumerator: 30 });
   });
 

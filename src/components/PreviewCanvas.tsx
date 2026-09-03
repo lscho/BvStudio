@@ -2,19 +2,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Crosshair, FileVideo2, ListTree, Settings2, Sparkles } from "lucide-react";
 import { CanvasSettingsDialog } from "@/components/CanvasSettingsDialog";
 import { ChapterProgressDialog } from "@/components/ChapterProgressDialog";
-import { EffectChartCanvas } from "@/components/EffectChartCanvas";
 import { contentEndUs, type AudioClip, type EffectClip, type GeneratedBlock, type ImageClip, type SceneClip, type SubtitleClip, type VideoClip } from "@/domain/project";
 import { useEditorStore } from "@/stores/editorStore";
-import { effectAnimationState, effectById, type EffectRecipe, type SceneBackgroundSpec } from "@/domain/effects";
-import { measureChartBox } from "@/domain/chartEffects";
+import { clockControlledRecipe, effectAnimationState, effectById, effectiveEffectFontSize, type EffectRecipe, type SceneBackgroundSpec } from "@/domain/effects";
+import { EffectCardContent, effectCardChromeStyle } from "@/effects/registry";
+import { resolveEffectAppearance } from "@/domain/motionTheme";
 import { cameraStateAt, type CameraMotion } from "@/domain/camera";
 import { upsertVisualKeyframe, visualTransformAt } from "@/domain/transforms";
 import { createMediaPlaybackGate, mediaNeedsSeek, previewMediaTimeSeconds, syncMediaPlayback } from "@/domain/playback";
 import { activeVideoPresentationCue, focusEnvelope, transitionEnvelope, videoFocus, videoPresentationAt, videoTransition } from "@/domain/videoPresentation";
 import { chapterProgressAt, displaySubtitleText, highlightedTextParts, subtitleStyle } from "@/domain/videoDecorations";
 import { localMediaUrl } from "@/services/media";
+import type { AiProviderConfig } from "@/services/ai/provider";
 
 interface Props {
+  aiProvider: AiProviderConfig;
+  onNeedSettings: () => void;
   onImport: () => void;
   onGenerate: () => void;
   playing: boolean;
@@ -29,6 +32,12 @@ type ResizeHandle = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+let previewAudioContext: AudioContext | null = null;
+
+export function previewAudioGain(volume: number, fadeInGain: number, fadeOutGain: number, ducked: boolean) {
+  return clamp(volume, 0, 2) * clamp(Math.min(fadeInGain, fadeOutGain), 0, 1) * (ducked ? 0.28 : 1);
 }
 
 function colorWithOpacity(color: string, opacity: number) {
@@ -205,7 +214,7 @@ function VideoTargetHandle({ point, kind, onCommit }: { point: VideoTargetPoint;
   ><Crosshair size={15} /></button>;
 }
 
-export function PreviewCanvas({ onImport, onGenerate, playing }: Props) {
+export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate, playing }: Props) {
   const [canvasSettingsOpen, setCanvasSettingsOpen] = useState(false);
   const [chapterSettingsOpen, setChapterSettingsOpen] = useState(false);
   const project = useEditorStore((state) => state.project);
@@ -288,12 +297,6 @@ export function PreviewCanvas({ onImport, onGenerate, playing }: Props) {
       transform: `translate(-50%, -50%) translate(${animation.translateX}%, ${animation.translateY}%) scale(${transform.scale * animation.scale}) rotate(${transform.rotation + animation.rotation}deg)${tilt}`
     };
   };
-  const chartProgressFor = (recipe: EffectRecipe, startUs: number, speed: number) => {
-    const spec = recipe.chart;
-    if (!spec) return 0;
-    const durationUs = Math.max(50_000, (spec.durationSeconds ?? 1.2) * 1_000_000 / Math.max(0.1, speed));
-    return Math.max(0, Math.min(1, (playheadUs - startUs) / durationUs));
-  };
   const pickFocus = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!focusPickClipId) return;
     event.preventDefault();
@@ -318,7 +321,7 @@ export function PreviewCanvas({ onImport, onGenerate, playing }: Props) {
             return audioAsset?.objectUrl ? <AudioPreview key={clip.id} clip={clip} src={audioAsset.objectUrl} playheadUs={playheadUs} playing={playing} ducked={voiceActive && clip.role === "music"} /> : null;
           })}
           {activeEffectSounds.map(({ clip, sourcePath }) => <AudioPreview key={clip.id} clip={clip} src={localMediaUrl(sourcePath)} playheadUs={playheadUs} playing={playing} ducked={false} />)}
-          {visibleScenes.map((scene) => <div key={scene.id} className="scene-background" style={{ ...sceneBackgroundStyle(scene.background), opacity: scene.opacity }} />)}
+          {visibleScenes.map((scene) => <div key={scene.id} className="scene-background" style={{ ...sceneBackgroundStyle(scene.background), opacity: scene.opacity * (scene.dimAtUs !== undefined && playheadUs - scene.startUs >= scene.dimAtUs ? 0.35 : 1) }} />)}
           {generated && !activeVideos.length && !visibleScenes.length && <div className="generated-background" />}
           {activeVideos.map((video) => {
             const videoAsset = project.assets.find((candidate) => candidate.id === video.assetId);
@@ -345,25 +348,39 @@ export function PreviewCanvas({ onImport, onGenerate, playing }: Props) {
           })}
           {activeImages.map((clip) => {
             const imageAsset = project.assets.find((candidate) => candidate.id === clip.assetId);
-            return imageAsset?.objectUrl ? <img key={clip.id} className={`image-overlay entrance-${clip.entrance} ${selectedClipId === clip.id ? "selected" : ""}`} src={imageAsset.objectUrl} alt="" draggable={false} onPointerDown={(event) => { event.stopPropagation(); selectClip(clip.id); }} style={{ left: `${clip.transform.x}%`, top: `${clip.transform.y}%`, width: "30%", opacity: clip.transform.opacity, transform: `translate(-50%, -50%) scale(${clip.transform.scale}) rotate(${clip.transform.rotation}deg)`, "--effect-speed": `${0.45 / clip.speed}s` } as React.CSSProperties} /> : null;
+            const recipe = clockControlledRecipe({ layout: "frame", entrance: clip.entrance, paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 });
+            return imageAsset?.objectUrl ? <img key={clip.id} className={`image-overlay entrance-none ${selectedClipId === clip.id ? "selected" : ""}`} src={imageAsset.objectUrl} alt="" draggable={false} onPointerDown={(event) => { event.stopPropagation(); selectClip(clip.id); }} style={{ left: `${clip.transform.x}%`, top: `${clip.transform.y}%`, width: "30%", ...animatedStyle(recipe, clip.transform, clip.startUs, clip.speed) }} /> : null;
           })}
           {foregroundEffects.sort((left, right) => (left.zIndex ?? 20) - (right.zIndex ?? 20)).map((effect) => {
-            const recipe = effect.recipe ?? effectById(effect.effectId).recipe;
+            const recipe = clockControlledRecipe(effect.recipe ?? effectById(effect.effectId).recipe);
             const localUs = playheadUs - effect.startUs;
             const transform = visualTransformAt(effect.transform, effect.transformKeyframes, localUs);
-            const backdrop = effect.backdrop;
-            const frameBorderWidth = recipe.layout === "frame" ? canvasLength(recipe.borderWidth, 1) : undefined;
-            return <InteractiveEffectOverlay key={effect.id} className={`effect-overlay recipe-${recipe.layout} entrance-${recipe.animation ? "none" : recipe.entrance}`} transform={transform} selected={selectedClipId === effect.id} onSelect={() => selectClip(effect.id)} onCommit={(nextTransform) => updateEffect(effect.id, effect.transformKeyframes?.length ? { transformKeyframes: upsertVisualKeyframe(effect.transformKeyframes, localUs, nextTransform) } : { transform: nextTransform })} styleFor={(nextTransform) => ({ left: `${nextTransform.x}%`, top: `${nextTransform.y}%`, zIndex: 200 + (effect.zIndex ?? 20), color: recipe.layout === "number" ? effect.accentColor : effect.color, ...animatedStyle(recipe, nextTransform, effect.startUs, effect.speed), fontSize: canvasLength(effect.fontSize, 10), padding: backdrop?.enabled ? `${canvasLength(backdrop.paddingY, 2)} ${canvasLength(backdrop.paddingX, 2)}` : `${canvasLength(recipe.paddingY, 2)} ${canvasLength(recipe.paddingX, 2)}`, borderTopWidth: frameBorderWidth, borderRightWidth: frameBorderWidth, borderBottomWidth: frameBorderWidth, borderLeftWidth: recipe.layout === "panel" ? canvasLength(Math.max(2, recipe.borderWidth), 1) : frameBorderWidth, borderColor: effect.accentColor, borderRadius: backdrop?.enabled ? canvasLength(backdrop.radius) : canvasLength(recipe.borderRadius), backgroundColor: backdrop?.enabled ? colorWithOpacity(backdrop.color, backdrop.opacity) : recipe.backgroundOpacity > 0 ? `rgb(17 19 22 / ${recipe.backgroundOpacity})` : undefined, backdropFilter: backdrop?.enabled && backdrop.blur > 0 ? `blur(${canvasLength(backdrop.blur)})` : undefined, "--effect-accent": effect.accentColor, "--effect-speed": `${0.45 / effect.speed}s` } as React.CSSProperties)}>{recipe.chart
-              ? <EffectChartCanvas spec={recipe.chart} caption={effect.text} textColor={effect.color} accentColor={effect.accentColor} fontSize={effect.fontSize} progress={chartProgressFor(recipe, effect.startUs, effect.speed)} cssWidth={`${measureChartBox(recipe.chart, effect.fontSize).width / project.canvas.width * 100}cqw`} />
-              : <span>{effect.text}</span>}</InteractiveEffectOverlay>;
+            const fontSize = effectiveEffectFontSize(effect.fontSize, recipe, effect.text);
+            const appearance = resolveEffectAppearance(effect, project.motionTheme);
+            const themedEffect = { ...effect, ...appearance };
+            const dim = effect.dimAtUs !== undefined && localUs >= effect.dimAtUs ? 0.35 : 1;
+            return <InteractiveEffectOverlay key={effect.id} className={`effect-overlay react-effect motion-${project.motionTheme.skin} style-${project.motionTheme.style} recipe-${recipe.layout} entrance-none`} transform={transform} selected={selectedClipId === effect.id} onSelect={() => selectClip(effect.id)} onCommit={(nextTransform) => updateEffect(effect.id, effect.transformKeyframes?.length ? { transformKeyframes: upsertVisualKeyframe(effect.transformKeyframes, localUs, nextTransform) } : { transform: nextTransform })} styleFor={(nextTransform) => ({ left: `${nextTransform.x}%`, top: `${nextTransform.y}%`, zIndex: 200 + (effect.zIndex ?? 20), ...effectCardChromeStyle(themedEffect, recipe, canvasLength, project.motionTheme), ...animatedStyle(recipe, { ...nextTransform, opacity: nextTransform.opacity * dim }, effect.startUs, effect.speed), fontSize: canvasLength(fontSize, 10) } as React.CSSProperties)}><EffectCardContent effectId={effect.effectId} text={effect.text} color={appearance.color} accentColor={appearance.accentColor} fontSize={fontSize} recipe={recipe} timeUs={localUs * effect.speed} durationUs={effect.durationUs} canvasWidth={project.canvas.width} /></InteractiveEffectOverlay>;
           })}
-          {project.chapterProgress.enabled && project.chapterProgress.chapters.length > 0 && <div className="chapter-progress-overlay" style={{ height: canvasLength(project.chapterProgress.height, 18), backgroundColor: colorWithOpacity(project.chapterProgress.backgroundColor, 0.9), color: project.chapterProgress.textColor }}>{project.chapterProgress.chapters.map((chapter, index) => <div key={chapter.id} className={`chapter-progress-item ${index === chapterState.activeIndex ? "active" : ""} ${index < chapterState.activeIndex ? "completed" : ""}`} style={{ "--chapter-accent": project.chapterProgress.activeColor, "--chapter-fill": `${index === chapterState.activeIndex ? chapterState.localProgress * 100 : index < chapterState.activeIndex ? 100 : 0}%` } as React.CSSProperties}><span>{chapter.title}</span></div>)}</div>}
+          {project.chapterProgress.enabled && project.chapterProgress.chapters.length > 0 && <div
+            className={`chapter-progress-overlay position-${project.chapterProgress.position} style-${project.chapterProgress.style} ${project.chapterProgress.showTitles ? "" : "hide-titles"}`}
+            aria-hidden
+            style={{
+              height: canvasLength(project.chapterProgress.height, 18),
+              backgroundColor: colorWithOpacity(project.chapterProgress.backgroundColor, project.chapterProgress.backgroundOpacity),
+              color: project.chapterProgress.textColor,
+              "--chapter-bg": project.chapterProgress.backgroundColor,
+              "--chapter-text": project.chapterProgress.textColor,
+              "--chapter-accent": project.chapterProgress.activeColor,
+              "--chapter-inactive": project.chapterProgress.inactiveColor,
+              "--chapter-count": project.chapterProgress.chapters.length
+            } as React.CSSProperties}
+          >{project.chapterProgress.chapters.map((chapter, index) => <div key={chapter.id} className={`chapter-progress-item ${index === chapterState.activeIndex ? "active" : ""} ${index < chapterState.activeIndex ? "completed" : ""}`} style={{ "--chapter-fill": `${index === chapterState.activeIndex ? chapterState.localProgress * 100 : index < chapterState.activeIndex ? 100 : 0}%` } as React.CSSProperties}><span>{chapter.title}</span></div>)}</div>}
           {subtitle && activeSubtitleStyle && <div className={`subtitle-overlay preset-${activeSubtitleStyle.stylePreset}`} style={{ bottom: `${100 - subtitle.positionY}%`, color: subtitle.color, backgroundColor: colorWithOpacity(subtitle.backgroundColor, activeSubtitleStyle.stylePreset === "minimal" ? 0 : activeSubtitleStyle.backgroundOpacity), borderRadius: canvasLength(activeSubtitleStyle.borderRadius), fontSize: canvasLength(subtitle.fontSize, 9), WebkitTextStroke: activeSubtitleStyle.outlineWidth > 0 ? `${canvasLength(activeSubtitleStyle.outlineWidth)} ${activeSubtitleStyle.outlineColor}` : undefined }}>{highlightedTextParts(displaySubtitleText(subtitle.text), activeSubtitleStyle.highlightWords).map((part, index) => <span key={`${index}-${part.text}`} className={part.highlighted ? "subtitle-highlight" : undefined} style={part.highlighted ? { color: activeSubtitleStyle.highlightColor } : undefined}>{part.text}</span>)}</div>}
           {!hasContent && <div className="empty-canvas"><strong>从任意内容开始</strong><p>导入视频或音频，也可以直接生成 AI 内容。</p><div><button className="button secondary" onClick={onImport}><FileVideo2 size={16} />导入媒体</button><button className="button primary" onClick={onGenerate}><Sparkles size={16} />AI 生成</button></div></div>}
         </div>
       </div>
       <CanvasSettingsDialog open={canvasSettingsOpen} onOpenChange={setCanvasSettingsOpen} canvas={project.canvas} assets={project.assets} />
-      <ChapterProgressDialog open={chapterSettingsOpen} onOpenChange={setChapterSettingsOpen} />
+      <ChapterProgressDialog open={chapterSettingsOpen} aiProvider={aiProvider} onOpenChange={setChapterSettingsOpen} onNeedSettings={onNeedSettings} />
     </section>
   );
 }
@@ -416,6 +433,8 @@ function SyncedVideo({ src, sourceInUs, localUs, playbackRate, volume, muted, fi
 
 function AudioPreview({ clip, src, playheadUs, playing, ducked }: { clip: AudioClip; src: string; playheadUs: number; playing: boolean; ducked: boolean }) {
   const ref = useRef<HTMLAudioElement>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const playbackGate = useRef(createMediaPlaybackGate());
   const wasPlaying = useRef(false);
   const localUs = playheadUs - clip.startUs;
@@ -428,9 +447,38 @@ function AudioPreview({ clip, src, playheadUs, playing, ducked }: { clip: AudioC
     const fadeInGain = clip.fadeInUs > 0 ? Math.min(1, localUs / clip.fadeInUs) : 1;
     const remainingUs = clip.durationUs - localUs;
     const fadeOutGain = clip.fadeOutUs > 0 ? Math.min(1, remainingUs / clip.fadeOutUs) : 1;
-    audio.volume = Math.min(1, clip.volume * Math.max(0, Math.min(fadeInGain, fadeOutGain)) * (ducked ? 0.28 : 1));
+    const gain = previewAudioGain(clip.volume, fadeInGain, fadeOutGain, ducked);
+    if (gainNodeRef.current) {
+      gainNodeRef.current.gain.value = gain;
+      audio.volume = 1;
+      if (playing && audioContextRef.current?.state === "suspended") void audioContextRef.current.resume().catch(() => undefined);
+    } else {
+      audio.volume = Math.min(1, gain);
+    }
     syncMediaPlayback(audio, playing, playbackGate.current);
   };
+  useEffect(() => {
+    const audio = ref.current;
+    if (!audio || typeof window.AudioContext === "undefined") return;
+    try {
+      previewAudioContext ??= new window.AudioContext();
+      const sourceNode = previewAudioContext.createMediaElementSource(audio);
+      const gainNode = previewAudioContext.createGain();
+      sourceNode.connect(gainNode).connect(previewAudioContext.destination);
+      audioContextRef.current = previewAudioContext;
+      gainNodeRef.current = gainNode;
+      sync(false);
+      return () => {
+        sourceNode.disconnect();
+        gainNode.disconnect();
+        gainNodeRef.current = null;
+        audioContextRef.current = null;
+      };
+    } catch {
+      gainNodeRef.current = null;
+      audioContextRef.current = null;
+    }
+  }, []);
   useEffect(() => {
     const justStarted = playing && !wasPlaying.current;
     wasPlaying.current = playing;

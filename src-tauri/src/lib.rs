@@ -1,8 +1,8 @@
 mod ai;
-mod media;
 mod asr;
 mod audio;
 mod effects;
+mod media;
 mod secrets;
 mod speech;
 

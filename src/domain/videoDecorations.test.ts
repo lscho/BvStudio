@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { autoChapterMarkers, chapterProgressAt, displaySubtitleText, highlightedTextParts, motionKeywordsForSubtitle } from "@/domain/videoDecorations";
+import { autoChapterMarkers, chapterProgressAt, CHAPTER_PROGRESS_PRESETS, DEFAULT_CHAPTER_PROGRESS, displaySubtitleText, highlightedTextParts, subtitleKeywordsForText } from "@/domain/videoDecorations";
 
 describe("video decorations", () => {
+  it("uses phone-readable sizes for chapter progress presets", () => {
+    expect(DEFAULT_CHAPTER_PROGRESS.height).toBe(80);
+    expect(CHAPTER_PROGRESS_PRESETS.map((preset) => preset.height)).toEqual([80, 80, 60, 96, 84]);
+  });
+
   it("builds editable chapter markers from timed subtitles", () => {
     const chapters = autoChapterMarkers([
       { startUs: 0, durationUs: 2_000_000, text: "先认识剪辑流程" },
@@ -24,8 +29,13 @@ describe("video decorations", () => {
     expect(chapterProgressAt(chapters, 12_000_000, 12_000_000)).toMatchObject({ activeIndex: 2, localProgress: 1 });
   });
 
-  it("uses only AI phrases that exist in the subtitle", () => {
-    expect(motionKeywordsForSubtitle("这一步需要先整理素材，再开始剪辑", ["整理素材", "不存在的结论", "开始剪辑"])).toEqual(["整理素材", "开始剪辑"]);
+  it("keeps subtitle highlights grounded in the original text and fills missing keywords locally", () => {
+    expect(subtitleKeywordsForText("这一步需要先整理素材，再开始剪辑", ["整理素材", "不存在的结论", "开始剪辑"])).toEqual(["整理素材", "开始剪辑"]);
+    expect(subtitleKeywordsForText("未来的竞争，将看技术效率、品牌能力和全生命周期服务。", [])).toEqual([
+      "技术效率",
+      "品牌能力",
+      "全生命周期服务"
+    ]);
     expect(highlightedTextParts("先整理素材再剪辑", ["整理素材"])).toEqual([
       { text: "先", highlighted: false },
       { text: "整理素材", highlighted: true },

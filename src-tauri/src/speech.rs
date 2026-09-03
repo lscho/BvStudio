@@ -325,25 +325,53 @@ pub fn merge_cloud_speech_segments(app: AppHandle, paths: Vec<String>) -> Result
     if !(2..=100).contains(&paths.len()) {
         return Err("逐句配音合并需要 2 到 100 个音频片段".into());
     }
-    let directory = audio_directory(&app)?.canonicalize().map_err(|error| format!("无法访问配音目录: {error}"))?;
+    let directory = audio_directory(&app)?
+        .canonicalize()
+        .map_err(|error| format!("无法访问配音目录: {error}"))?;
     let mut sources = Vec::with_capacity(paths.len());
     for path in paths {
-        let source = PathBuf::from(path).canonicalize().map_err(|_| "待合并的配音片段不存在".to_string())?;
-        if source.parent() != Some(directory.as_path()) || source.extension().and_then(|value| value.to_str()) != Some("wav") {
+        let source = PathBuf::from(path)
+            .canonicalize()
+            .map_err(|_| "待合并的配音片段不存在".to_string())?;
+        if source.parent() != Some(directory.as_path())
+            || source.extension().and_then(|value| value.to_str()) != Some("wav")
+        {
             return Err("只能合并客户端生成的 WAV 配音片段".into());
         }
         sources.push(source);
     }
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_millis();
     let output = directory.join(format!("mimo-speech-merged-{stamp}.wav"));
     let mut command = Command::new(require_command(&app, "ffmpeg")?);
     command.arg("-y");
-    for source in &sources { command.arg("-i").arg(source); }
-    let inputs = (0..sources.len()).map(|index| format!("[{index}:a:0]")).collect::<String>();
+    for source in &sources {
+        command.arg("-i").arg(source);
+    }
+    let inputs = (0..sources.len())
+        .map(|index| format!("[{index}:a:0]"))
+        .collect::<String>();
     let filter = format!("{inputs}concat=n={}:v=0:a=1[out]", sources.len());
-    command.args(["-filter_complex", &filter, "-map", "[out]", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le"]).arg(&output);
+    command
+        .args([
+            "-filter_complex",
+            &filter,
+            "-map",
+            "[out]",
+            "-ac",
+            "1",
+            "-ar",
+            "24000",
+            "-c:a",
+            "pcm_s16le",
+        ])
+        .arg(&output);
     run(command, "合并逐句配音")?;
-    for source in sources { let _ = fs::remove_file(source); }
+    for source in sources {
+        let _ = fs::remove_file(source);
+    }
     Ok(output.to_string_lossy().into_owned())
 }
 

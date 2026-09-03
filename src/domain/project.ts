@@ -60,6 +60,39 @@ export interface EffectBackdrop {
   radius: number;
 }
 
+export type MotionSkin = "dark" | "light";
+export type MotionStyle = "minimal" | "editorial";
+export type MotionFont = "sans" | "display";
+export type MotionColorRole = "data" | "opinion" | "warning" | "auxiliary" | "custom";
+
+export interface MotionTheme {
+  skin: MotionSkin;
+  style: MotionStyle;
+  font: MotionFont;
+  colors: {
+    text: string;
+    surface: string;
+    data: string;
+    opinion: string;
+    warning: string;
+    auxiliary: string;
+  };
+}
+
+export const DEFAULT_MOTION_THEME: MotionTheme = {
+  skin: "dark",
+  style: "minimal",
+  font: "sans",
+  colors: {
+    text: "#ffffff",
+    surface: "#111316",
+    data: "#47d7ac",
+    opinion: "#5fa8ff",
+    warning: "#ff6b6b",
+    auxiliary: "#ffd166"
+  }
+};
+
 export interface TransformProps {
   x: number;
   y: number;
@@ -170,6 +203,9 @@ export interface EffectClip extends BaseClip {
   matchQuery?: string;
   transformKeyframes?: VisualTransformKeyframe[];
   backdrop?: EffectBackdrop;
+  colorRole?: MotionColorRole;
+  dimAtUs?: number;
+  lintOff?: string[];
 }
 
 export interface SceneClip extends BaseClip {
@@ -180,6 +216,8 @@ export interface SceneClip extends BaseClip {
   soundCues?: EffectSoundCue[];
   sceneGroupId?: string;
   matchQuery?: string;
+  dimAtUs?: number;
+  lintOff?: string[];
 }
 
 export interface GeneratedEffectLayer {
@@ -270,12 +308,22 @@ export interface ChapterMarker {
   startUs: number;
 }
 
+export type ChapterProgressPreset = "top-dark" | "bottom-light" | "top-minimal" | "bottom-steps" | "bottom-labels" | "custom";
+export type ChapterProgressPosition = "top" | "bottom";
+export type ChapterProgressStyle = "segments" | "line" | "steps" | "labels";
+
 export interface ChapterProgressSettings {
   enabled: boolean;
+  preset: ChapterProgressPreset;
+  position: ChapterProgressPosition;
+  style: ChapterProgressStyle;
   backgroundColor: string;
+  backgroundOpacity: number;
   activeColor: string;
+  inactiveColor: string;
   textColor: string;
   height: number;
+  showTitles: boolean;
   chapters: ChapterMarker[];
 }
 
@@ -293,7 +341,7 @@ export interface TimelineTrack {
 }
 
 export interface EditorProject {
-  schemaVersion: 18;
+  schemaVersion: 20;
   id: string;
   name: string;
   createdAt: string;
@@ -301,6 +349,7 @@ export interface EditorProject {
   canvas: { width: number; height: number; fpsNumerator: number; fpsDenominator: number };
   durationUs: number;
   chapterProgress: ChapterProgressSettings;
+  motionTheme: MotionTheme;
   assets: MediaAsset[];
   tracks: TimelineTrack[];
 }
@@ -308,14 +357,28 @@ export interface EditorProject {
 export function createEmptyProject(): EditorProject {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 18,
+    schemaVersion: 20,
     id: crypto.randomUUID(),
     name: "未命名项目",
     createdAt: now,
     updatedAt: now,
     canvas: { width: 1920, height: 1080, fpsNumerator: 30, fpsDenominator: 1 },
     durationUs: 30_000_000,
-    chapterProgress: { enabled: false, backgroundColor: "#111316", activeColor: "#ffb84d", textColor: "#ffffff", height: 52, chapters: [] },
+    chapterProgress: {
+      enabled: false,
+      preset: "top-dark",
+      position: "top",
+      style: "segments",
+      backgroundColor: "#111316",
+      backgroundOpacity: 0.9,
+      activeColor: "#ffb84d",
+      inactiveColor: "#7d8793",
+      textColor: "#ffffff",
+      height: 80,
+      showTitles: true,
+      chapters: []
+    },
+    motionTheme: structuredClone(DEFAULT_MOTION_THEME),
     assets: [],
     tracks: [
       { id: "video-layer-1", kind: "video", name: "视频", locked: false, muted: false, hidden: false, clips: [] },

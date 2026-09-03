@@ -29,6 +29,15 @@ export const aiTimedScriptSchema = z.object({
 
 export type AiTimedScript = z.infer<typeof aiTimedScriptSchema>;
 
+export const aiChapterPlanSchema = z.object({
+  chapters: z.array(z.object({
+    captionIndex: z.number().int().min(0).max(10_000),
+    title: z.string().trim().min(1).max(24)
+  })).min(1).max(6)
+});
+
+export type AiChapterPlan = z.infer<typeof aiChapterPlanSchema>;
+
 const chartMatchSchema = z.object({
   categories: z.array(z.string().trim().min(1).max(30)).min(1).max(12),
   series: z.array(z.number().finite()).min(1).max(12),
@@ -62,6 +71,7 @@ export function createAiMotionMatchesSchema(allowedEffectIds: readonly string[],
   return z.object({
     matches: z.array(z.object({
       captionIndex: z.number().int().min(0).max(79),
+      subtitleKeywords: z.array(z.string().trim().min(2).max(16)).max(3).optional(),
       motionGroupId: motionGroupIdSchema.nullable().optional(),
       persistUntilCaptionIndex: z.number().int().min(0).max(79).nullable().optional(),
       primaryEffectId: effectId.nullable(),
@@ -127,6 +137,28 @@ export const TIMED_SCRIPT_JSON_SCHEMA = {
   }
 } as const;
 
+export const CHAPTER_PLAN_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["chapters"],
+  properties: {
+    chapters: {
+      type: "array",
+      minItems: 1,
+      maxItems: 6,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["captionIndex", "title"],
+        properties: {
+          captionIndex: { type: "integer", minimum: 0, maximum: 10_000 },
+          title: { type: "string", minLength: 1, maxLength: 24 }
+        }
+      }
+    }
+  }
+} as const;
+
 export function createMotionMatchesJsonSchema(allowedEffectIds: readonly string[], allowedMediaAssetIds: readonly string[] = []) {
   const nullableEnum = (values: readonly string[]) => values.length ? { anyOf: [{ type: "string", enum: [...values] }, { type: "null" }] } : { type: "null" };
   return {
@@ -134,9 +166,9 @@ export function createMotionMatchesJsonSchema(allowedEffectIds: readonly string[
     properties: {
       matches: { type: "array", minItems: 1, maxItems: 80, items: {
         type: "object", additionalProperties: false,
-        required: ["captionIndex", "motionGroupId", "persistUntilCaptionIndex", "primaryEffectId", "primaryText", "secondaryEffectId", "secondaryText", "accentColor", "x", "y", "scale", "secondaryX", "secondaryY", "cameraPreset", "videoLayers", "backdropPreset", "chart"],
+        required: ["captionIndex", "subtitleKeywords", "motionGroupId", "persistUntilCaptionIndex", "primaryEffectId", "primaryText", "secondaryEffectId", "secondaryText", "accentColor", "x", "y", "scale", "secondaryX", "secondaryY", "cameraPreset", "videoLayers", "backdropPreset", "chart"],
         properties: {
-          captionIndex: { type: "integer", minimum: 0, maximum: 79 }, motionGroupId: { anyOf: [{ type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, { type: "null" }] }, persistUntilCaptionIndex: { anyOf: [{ type: "integer", minimum: 0, maximum: 79 }, { type: "null" }] }, primaryEffectId: nullableEnum(allowedEffectIds), primaryText: { type: "string" }, secondaryEffectId: nullableEnum(allowedEffectIds), secondaryText: { anyOf: [{ type: "string" }, { type: "null" }] }, accentColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }, x: { type: "number", minimum: 5, maximum: 95 }, y: { type: "number", minimum: 5, maximum: 95 }, scale: { type: "number", minimum: 0.65, maximum: 2.5 }, secondaryX: { type: "number", minimum: 5, maximum: 95 }, secondaryY: { type: "number", minimum: 5, maximum: 95 }, cameraPreset: { type: "string", enum: [...cameraPresetIds] },
+          captionIndex: { type: "integer", minimum: 0, maximum: 79 }, subtitleKeywords: { type: "array", maxItems: 3, items: { type: "string", minLength: 2, maxLength: 16 } }, motionGroupId: { anyOf: [{ type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, { type: "null" }] }, persistUntilCaptionIndex: { anyOf: [{ type: "integer", minimum: 0, maximum: 79 }, { type: "null" }] }, primaryEffectId: nullableEnum(allowedEffectIds), primaryText: { type: "string" }, secondaryEffectId: nullableEnum(allowedEffectIds), secondaryText: { anyOf: [{ type: "string" }, { type: "null" }] }, accentColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }, x: { type: "number", minimum: 5, maximum: 95 }, y: { type: "number", minimum: 5, maximum: 95 }, scale: { type: "number", minimum: 0.65, maximum: 2.5 }, secondaryX: { type: "number", minimum: 5, maximum: 95 }, secondaryY: { type: "number", minimum: 5, maximum: 95 }, cameraPreset: { type: "string", enum: [...cameraPresetIds] },
           videoLayers: { type: "array", maxItems: allowedMediaAssetIds.length ? 6 : 0, items: { type: "object", additionalProperties: false, required: ["assetId", "role", "sourceInSeconds", "layoutPreset", "shapePreset", "transitionPreset", "cameraPreset", "volume", "focus"], properties: {
             assetId: allowedMediaAssetIds.length ? { type: "string", enum: [...allowedMediaAssetIds] } : { type: "string" }, role: { type: "string", enum: videoRoleSchema.options }, sourceInSeconds: { type: "number", minimum: 0, maximum: 86_400 }, layoutPreset: { type: "string", enum: [...videoLayoutPresetIds] }, shapePreset: { type: "string", enum: videoShapeSchema.options }, transitionPreset: { type: "string", enum: videoTransitionSchema.options }, cameraPreset: { type: "string", enum: [...cameraPresetIds] }, volume: { type: "number", minimum: 0, maximum: 1 }, focus: { anyOf: [{ type: "object", additionalProperties: false, required: ["enabled", "x", "y", "zoom", "startOffsetSeconds", "durationSeconds"], properties: { enabled: { type: "boolean" }, x: { type: "number", minimum: 0, maximum: 100 }, y: { type: "number", minimum: 0, maximum: 100 }, zoom: { type: "number", minimum: 1, maximum: 4 }, startOffsetSeconds: { type: "number", minimum: 0, maximum: 86_400 }, durationSeconds: { type: "number", minimum: 0.1, maximum: 86_400 } } }, { type: "null" }] }
           } } }, backdropPreset: { type: "string", enum: backdropPresetSchema.options },

@@ -15,7 +15,7 @@ describe("two-stage AI schemas", () => {
   it("only accepts active effects and imported media in motion matches", () => {
     const schema = createAiMotionMatchesSchema(["test-title-slide"], ["local-video"]);
     const valid = {
-      captionIndex: 0, primaryEffectId: "test-title-slide", primaryText: "统一团队语言", secondaryEffectId: null, secondaryText: null,
+      captionIndex: 0, subtitleKeywords: ["团队语言"], primaryEffectId: "test-title-slide", primaryText: "协作从共识开始", secondaryEffectId: null, secondaryText: null,
       accentColor: "#5fa8ff", x: 50, y: 28, scale: 1, secondaryX: 75, secondaryY: 60,
       cameraPreset: "push-in", primaryMediaAssetId: "local-video", primaryMediaSourceInSeconds: 2,
       secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full",
@@ -61,6 +61,6 @@ describe("two-stage AI schemas", () => {
     const videoLayers = schema.properties.matches.items.properties.videoLayers;
     expect(videoLayers.maxItems).toBe(0);
     expect(videoLayers.items.properties.assetId).toEqual({ type: "string" });
-    expect(schema.properties.matches.items.required).toEqual(expect.arrayContaining(["motionGroupId", "persistUntilCaptionIndex"]));
+    expect(schema.properties.matches.items.required).toEqual(expect.arrayContaining(["subtitleKeywords", "motionGroupId", "persistUntilCaptionIndex"]));
   });
 });

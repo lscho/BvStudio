@@ -1,10 +1,10 @@
-import { createEmptyProject, projectEndUs, type EditorProject, type SceneClip } from "@/domain/project";
+import { createEmptyProject, DEFAULT_MOTION_THEME, projectEndUs, type ChapterProgressPosition, type ChapterProgressPreset, type ChapterProgressStyle, type EditorProject, type MotionColorRole, type MotionFont, type MotionSkin, type MotionStyle, type MotionTheme, type SceneClip } from "@/domain/project";
 import { effectById, type EffectSoundCue, type SceneBackgroundSpec } from "@/domain/effects";
 import { cameraMotionForPreset } from "@/domain/camera";
 import { DEFAULT_TRANSFORM } from "@/domain/transforms";
 import { migrateLegacyGeneratedEffectLayout } from "@/domain/sceneEffects";
 import { DEFAULT_EFFECT_BACKDROP, DEFAULT_VIDEO_FOCUS, DEFAULT_VIDEO_MASK, DEFAULT_VIDEO_TRANSITION } from "@/domain/videoPresentation";
-import { DEFAULT_CHAPTER_PROGRESS, DEFAULT_SUBTITLE_STYLE } from "@/domain/videoDecorations";
+import { CHAPTER_PROGRESS_PRESETS, DEFAULT_CHAPTER_PROGRESS, DEFAULT_SUBTITLE_STYLE } from "@/domain/videoDecorations";
 
 function normalizeEffectSoundCues(value: unknown): EffectSoundCue[] {
   if (!Array.isArray(value)) return [];
@@ -26,6 +26,48 @@ function normalizeEffectSoundCues(value: unknown): EffectSoundCue[] {
 const scenePresets: readonly SceneBackgroundSpec["preset"][] = [
   "black-stripes", "white-frame", "dark-grid", "clean-white", "spotlight", "blueprint", "paper-lines", "contrast-side"
 ];
+
+const chapterProgressPresets: readonly ChapterProgressPreset[] = ["top-dark", "bottom-light", "top-minimal", "bottom-steps", "bottom-labels", "custom"];
+const chapterProgressPositions: readonly ChapterProgressPosition[] = ["top", "bottom"];
+const chapterProgressStyles: readonly ChapterProgressStyle[] = ["segments", "line", "steps", "labels"];
+const motionSkins: readonly MotionSkin[] = ["dark", "light"];
+const motionStyles: readonly MotionStyle[] = ["minimal", "editorial"];
+const motionFonts: readonly MotionFont[] = ["sans", "display"];
+const motionColorRoles: readonly MotionColorRole[] = ["data", "opinion", "warning", "auxiliary", "custom"];
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && /^[a-z0-9-]{1,64}$/iu.test(item)).slice(0, 32);
+}
+
+function normalizeOptionalTimeUs(value: unknown, durationUs: number): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.max(0, Math.min(Math.max(0, durationUs), Math.round(value)));
+}
+
+function normalizeMotionTheme(value: unknown): MotionTheme {
+  if (!value || typeof value !== "object") return structuredClone(DEFAULT_MOTION_THEME);
+  const candidate = value as Record<string, unknown>;
+  const colors = candidate.colors && typeof candidate.colors === "object" ? candidate.colors as Record<string, unknown> : {};
+  const color = (field: keyof MotionTheme["colors"]) => chapterProgressColor(colors[field], DEFAULT_MOTION_THEME.colors[field]);
+  return {
+    skin: typeof candidate.skin === "string" && motionSkins.includes(candidate.skin as MotionSkin) ? candidate.skin as MotionSkin : DEFAULT_MOTION_THEME.skin,
+    style: typeof candidate.style === "string" && motionStyles.includes(candidate.style as MotionStyle) ? candidate.style as MotionStyle : DEFAULT_MOTION_THEME.style,
+    font: typeof candidate.font === "string" && motionFonts.includes(candidate.font as MotionFont) ? candidate.font as MotionFont : DEFAULT_MOTION_THEME.font,
+    colors: {
+      text: color("text"),
+      surface: color("surface"),
+      data: color("data"),
+      opinion: color("opinion"),
+      warning: color("warning"),
+      auxiliary: color("auxiliary")
+    }
+  };
+}
+
+function chapterProgressColor(value: unknown, fallback: string): string {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/iu.test(value) ? value : fallback;
+}
 
 function normalizeSceneBackground(value: unknown, effectId: string): SceneBackgroundSpec {
   const fallback = structuredClone(effectById(effectId).recipe.sceneBackground ?? effectById("scene-black-stripes").recipe.sceneBackground!);
@@ -68,7 +110,7 @@ export function parseProject(contents: string): EditorProject {
   }
   if (!raw || typeof raw !== "object") throw new Error("工程文件结构无效");
   const candidate = raw as Omit<Partial<EditorProject>, "schemaVersion"> & { schemaVersion?: number };
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18].includes(candidate.schemaVersion ?? -1)) throw new Error("不支持此工程文件版本");
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].includes(candidate.schemaVersion ?? -1)) throw new Error("不支持此工程文件版本");
   if (!Array.isArray(candidate.assets) || !Array.isArray(candidate.tracks) || !candidate.canvas) throw new Error("工程文件缺少素材、轨道或画布信息");
   const fallback = createEmptyProject();
   const tracks = candidate.tracks.map((track) => ({
@@ -91,7 +133,9 @@ export function parseProject(contents: string): EditorProject {
         ...clip,
         opacity: Number.isFinite(clip.opacity) ? Math.max(0, Math.min(1, clip.opacity)) : 1,
         background: normalizeSceneBackground(clip.background, clip.effectId),
-        soundCues: normalizeEffectSoundCues(clip.soundCues)
+        soundCues: normalizeEffectSoundCues(clip.soundCues),
+        dimAtUs: normalizeOptionalTimeUs(clip.dimAtUs, clip.durationUs),
+        lintOff: normalizeStringList(clip.lintOff)
       }
       : clip.kind === "effect" ? (() => {
         const recipe = clip.recipe ?? structuredClone(effectById(clip.effectId).recipe);
@@ -113,10 +157,21 @@ export function parseProject(contents: string): EditorProject {
               : 1,
             soundCues: normalizeEffectSoundCues(clip.soundCues),
             sceneGroupId: clip.sceneGroupId,
-            matchQuery: clip.matchQuery
+            matchQuery: clip.matchQuery,
+            dimAtUs: normalizeOptionalTimeUs(clip.dimAtUs, clip.durationUs),
+            lintOff: normalizeStringList(clip.lintOff)
           } satisfies SceneClip;
         }
-        return { ...clip, zIndex: clip.zIndex ?? 20, recipe, soundCues: normalizeEffectSoundCues(clip.soundCues), backdrop: { ...DEFAULT_EFFECT_BACKDROP, ...clip.backdrop } };
+        return {
+          ...clip,
+          zIndex: clip.zIndex ?? 20,
+          recipe,
+          soundCues: normalizeEffectSoundCues(clip.soundCues),
+          backdrop: { ...DEFAULT_EFFECT_BACKDROP, ...clip.backdrop },
+          colorRole: typeof clip.colorRole === "string" && motionColorRoles.includes(clip.colorRole as MotionColorRole) ? clip.colorRole as MotionColorRole : "custom",
+          dimAtUs: normalizeOptionalTimeUs(clip.dimAtUs, clip.durationUs),
+          lintOff: normalizeStringList(clip.lintOff)
+        };
       })()
       : clip.kind === "subtitle" ? { ...clip, ...DEFAULT_SUBTITLE_STYLE, ...clip, highlightWords: Array.isArray(clip.highlightWords) ? clip.highlightWords.filter((word): word is string => typeof word === "string").slice(0, 8) : [] }
       : clip.kind === "generated" ? { ...clip, scenes: clip.scenes.map((scene) => migrateLegacyGeneratedEffectLayout({
@@ -180,21 +235,59 @@ export function parseProject(contents: string): EditorProject {
   tracks.filter((track) => track.kind === "video").forEach((track) => {
     track.name = "视频";
   });
+  const chapterCandidate = candidate.chapterProgress;
+  const chapterPreset = typeof chapterCandidate?.preset === "string"
+    ? chapterProgressPresets.includes(chapterCandidate.preset as ChapterProgressPreset) ? chapterCandidate.preset as ChapterProgressPreset : "custom"
+    : DEFAULT_CHAPTER_PROGRESS.preset;
+  const chapterPresetDefinition = CHAPTER_PROGRESS_PRESETS.find((preset) => preset.id === chapterPreset);
   const project = {
     ...fallback,
     ...candidate,
-    schemaVersion: 18 as const,
+    schemaVersion: 20 as const,
     canvas: { ...fallback.canvas, ...candidate.canvas },
+    motionTheme: normalizeMotionTheme(candidate.motionTheme),
     chapterProgress: {
       ...DEFAULT_CHAPTER_PROGRESS,
-      ...candidate.chapterProgress,
-      chapters: Array.isArray(candidate.chapterProgress?.chapters)
-        ? candidate.chapterProgress.chapters.filter((chapter) => chapter && typeof chapter.title === "string" && Number.isFinite(chapter.startUs)).map((chapter) => ({ ...chapter, startUs: Math.max(0, Math.round(chapter.startUs)), title: chapter.title.trim().slice(0, 24) })).sort((left, right) => left.startUs - right.startUs)
+      enabled: typeof chapterCandidate?.enabled === "boolean" ? chapterCandidate.enabled : DEFAULT_CHAPTER_PROGRESS.enabled,
+      preset: chapterPreset,
+      position: typeof chapterCandidate?.position === "string" && chapterProgressPositions.includes(chapterCandidate.position as ChapterProgressPosition)
+        ? chapterCandidate.position as ChapterProgressPosition
+        : DEFAULT_CHAPTER_PROGRESS.position,
+      style: typeof chapterCandidate?.style === "string" && chapterProgressStyles.includes(chapterCandidate.style as ChapterProgressStyle)
+        ? chapterCandidate.style as ChapterProgressStyle
+        : DEFAULT_CHAPTER_PROGRESS.style,
+      backgroundColor: chapterProgressColor(chapterCandidate?.backgroundColor, DEFAULT_CHAPTER_PROGRESS.backgroundColor),
+      backgroundOpacity: typeof chapterCandidate?.backgroundOpacity === "number" && Number.isFinite(chapterCandidate.backgroundOpacity)
+        ? Math.max(0, Math.min(1, chapterCandidate.backgroundOpacity))
+        : DEFAULT_CHAPTER_PROGRESS.backgroundOpacity,
+      activeColor: chapterProgressColor(chapterCandidate?.activeColor, DEFAULT_CHAPTER_PROGRESS.activeColor),
+      inactiveColor: chapterProgressColor(chapterCandidate?.inactiveColor, DEFAULT_CHAPTER_PROGRESS.inactiveColor),
+      textColor: chapterProgressColor(chapterCandidate?.textColor, DEFAULT_CHAPTER_PROGRESS.textColor),
+      height: chapterPresetDefinition?.height ?? (typeof chapterCandidate?.height === "number" && Number.isFinite(chapterCandidate.height)
+        ? Math.max(28, Math.min(120, Math.round(chapterCandidate.height)))
+        : DEFAULT_CHAPTER_PROGRESS.height),
+      showTitles: typeof chapterCandidate?.showTitles === "boolean" ? chapterCandidate.showTitles : DEFAULT_CHAPTER_PROGRESS.showTitles,
+      chapters: Array.isArray(chapterCandidate?.chapters)
+        ? chapterCandidate.chapters.filter((chapter) => chapter && typeof chapter.title === "string" && Number.isFinite(chapter.startUs)).map((chapter) => ({ ...chapter, startUs: Math.max(0, Math.round(chapter.startUs)), title: chapter.title.trim().slice(0, 24) })).sort((left, right) => left.startUs - right.startUs)
         : []
     },
     assets: candidate.assets,
     tracks
   } as EditorProject;
+  const assetById = new Map(project.assets.map((asset) => [asset.id, asset]));
+  const generatedById = new Map(project.tracks
+    .flatMap((track) => track.clips)
+    .filter((clip) => clip.kind === "generated")
+    .map((clip) => [clip.id, clip]));
+  for (const clip of project.tracks.flatMap((track) => track.clips)) {
+    if (clip.kind !== "audio" || clip.role !== "voice" || !clip.sourceBlockId || clip.sourceInUs !== 0 || clip.playbackRate !== 1) continue;
+    const asset = assetById.get(clip.assetId);
+    const block = generatedById.get(clip.sourceBlockId);
+    if (!asset || !block || clip.startUs !== block.startUs) continue;
+    if (Math.abs(asset.durationUs - block.durationUs) <= 250_000 && Math.abs(clip.durationUs - asset.durationUs) > 250_000) {
+      clip.durationUs = asset.durationUs;
+    }
+  }
   project.updatedAt = new Date().toISOString();
   project.durationUs = projectEndUs(project);
   return project;

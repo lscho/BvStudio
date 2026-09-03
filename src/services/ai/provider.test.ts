@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captionNumericData, compactMotionText, extractTokenUsage, generateTimedScript, generateVideoPlan, listProviderModels, matchTimelineMotion, normalizeMotionChart, normalizeMotionMatches, normalizeTimedScript, providerEndpoint, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
+import { captionNumericData, compactMotionText, extractTokenUsage, generateSubtitleChapters, generateTimedScript, generateVideoPlan, listProviderModels, matchTimelineMotion, normalizeMotionChart, normalizeMotionMatches, normalizeTimedScript, providerEndpoint, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
 
 const pricing = { inputCostPerMillion: 2.5, outputCostPerMillion: 10 };
 const config: AiProviderConfig = {
@@ -85,6 +85,38 @@ describe("provider requests", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ stream: true, stream_options: { include_usage: true } });
   });
 
+  it("grounds AI chapter boundaries to subtitle indexes", async () => {
+    const response = {
+      chapters: [
+        { captionIndex: 0, title: "开场背景" },
+        { captionIndex: 2, title: "核心方法" },
+        { captionIndex: 70, title: "越界章节" }
+      ]
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(response) } }],
+      usage: { prompt_tokens: 15, completion_tokens: 8, total_tokens: 23 }
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(generateSubtitleChapters(config, {
+      requestedCount: 3,
+      timelineDurationSeconds: 9,
+      captions: [
+        { startSeconds: 0, endSeconds: 2, text: "先说明背景。" },
+        { startSeconds: 2, endSeconds: 5, text: "接着解释问题。" },
+        { startSeconds: 5, endSeconds: 9, text: "最后给出方法。" }
+      ]
+    }, "secret")).resolves.toMatchObject({
+      chapters: [{ captionIndex: 0, title: "开场背景" }, { captionIndex: 2, title: "核心方法" }],
+      usage: { totalTokens: 23 }
+    });
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(payload.messages.at(-1)?.content).toContain('"startSeconds":5');
+    expect(payload.messages.at(-1)?.content).toContain("章节起点必须引用字幕索引");
+  });
+
   it("assembles streamed Anthropic tool input before schema validation", async () => {
     const script = { title: "工具调用", article: "文章", narration: "口播", captions: [{ startSeconds: 0, endSeconds: 2, text: "工具参数流式返回。" }] };
     const serialized = JSON.stringify(script);
@@ -145,10 +177,39 @@ describe("provider requests", () => {
     expect(payload.messages.at(-1)?.content).toContain('"stage":"ending"');
   });
 
-  it("extracts a concise motion label instead of repeating a full subtitle", () => {
+  it("keeps useful divergent motion copy while shortening full-caption repetition", () => {
     expect(compactMotionText("市场份额增长达到42%。", "市场份额增长达到42%。")).toBe("份额增长达到42%");
     expect(compactMotionText("最后给出明确结论。", "最后给出明确结论。")).toBe("明确结论");
-    expect(compactMotionText("行业全面爆发", "行业正在进入精细化运营阶段。")).toBe("精细化运营阶段");
+    expect(compactMotionText("增长逻辑正在切换", "行业正在进入精细化运营阶段。")).toBe("增长逻辑正在切换");
+    expect(compactMotionText("增长达到99%", "市场份额增长达到42%。")).toBe("份额增长达到42%");
+  });
+
+  it("separates exact subtitle highlights from divergent motion copy", () => {
+    const [match] = normalizeMotionMatches([{
+      captionIndex: 0,
+      subtitleKeywords: ["技术效率", "不存在的词"],
+      primaryEffectId: "test-title-slide",
+      primaryText: "竞争进入综合能力赛",
+      secondaryEffectId: null,
+      secondaryText: null,
+      accentColor: "#5fa8ff",
+      x: 50,
+      y: 28,
+      scale: 1,
+      secondaryX: 75,
+      secondaryY: 60,
+      cameraPreset: "none",
+      videoLayers: [],
+      backdropPreset: "soft",
+      primaryMediaAssetId: null,
+      primaryMediaSourceInSeconds: 0,
+      secondaryMediaAssetId: null,
+      secondaryMediaSourceInSeconds: 0,
+      mediaLayoutPreset: "full",
+      chart: null
+    }], [{ startSeconds: 0, endSeconds: 4, text: "未来的竞争，将看技术效率、品牌能力和全生命周期服务。" }], 4);
+    expect(match.subtitleKeywords).toEqual(["技术效率", "品牌能力", "全生命周期服务"]);
+    expect(match.primaryText).toBe("竞争进入综合能力赛");
   });
 
   it("merges fragmented generated captions before fitting them to the target duration", () => {
@@ -233,17 +294,151 @@ describe("provider requests", () => {
     ]));
   });
 
+  it("keeps a long scene stable while capping text layers and repeated B-roll", () => {
+    const captions = ["背景说明", "核心问题", "影响范围", "第一方法", "第二方法", "案例结果", "场景结论"].map((text, index) => ({
+      startSeconds: index * 2,
+      endSeconds: index * 2 + 2,
+      text: `${text}。`
+    }));
+    const base = {
+      captionIndex: 0,
+      motionGroupId: "stable-scene",
+      persistUntilCaptionIndex: 6,
+      primaryEffectId: "test-callout-panel",
+      primaryText: "背景说明",
+      secondaryEffectId: "test-keyword-underline",
+      secondaryText: "内容提示",
+      accentColor: "#5fa8ff",
+      x: 35,
+      y: 28,
+      scale: 1,
+      secondaryX: 70,
+      secondaryY: 58,
+      cameraPreset: "none" as const,
+      videoLayers: [{
+        assetId: "supporting-video",
+        role: "supporting" as const,
+        sourceInSeconds: 0,
+        layoutPreset: "picture-in-picture-top-right" as const,
+        shapePreset: "rounded" as const,
+        transitionPreset: "zoom" as const,
+        cameraPreset: "push-in" as const,
+        volume: 0.6,
+        focus: null
+      }],
+      backdropPreset: "soft" as const,
+      primaryMediaAssetId: null,
+      primaryMediaSourceInSeconds: 0,
+      secondaryMediaAssetId: null,
+      secondaryMediaSourceInSeconds: 0,
+      mediaLayoutPreset: "full" as const,
+      chart: null
+    };
+    const matches = normalizeMotionMatches(captions.map((caption, index) => ({
+      ...base,
+      captionIndex: index,
+      primaryText: caption.text,
+      secondaryText: `${caption.text}提示`
+    })), captions, 14);
+
+    expect(matches.every((match) => match.motionGroupId === "stable-scene" && match.persistUntilCaptionIndex === 6)).toBe(true);
+    expect(matches.reduce((count, match) => count + Number(Boolean(match.primaryEffectId)) + Number(Boolean(match.secondaryEffectId)), 0)).toBe(4);
+    expect(matches.flatMap((match) => match.videoLayers)).toEqual([expect.objectContaining({
+      assetId: "supporting-video",
+      role: "b-roll",
+      layoutPreset: "full",
+      shapePreset: "rectangle",
+      transitionPreset: "fade",
+      volume: 0
+    })]);
+  });
+
+  it("creates bounded fallback scenes when a model matches every caption independently", () => {
+    const captions = ["开场背景", "问题表现", "原因分析", "解决步骤", "最终结果"].map((text, index) => ({
+      startSeconds: index * 3,
+      endSeconds: index * 3 + 3,
+      text: `${text}。`
+    }));
+    const matches = normalizeMotionMatches(captions.map((caption, index) => ({
+      captionIndex: index,
+      primaryEffectId: "test-callout-panel",
+      primaryText: caption.text,
+      secondaryEffectId: null,
+      secondaryText: null,
+      accentColor: "#5fa8ff",
+      x: 50,
+      y: 35,
+      scale: 1,
+      secondaryX: 70,
+      secondaryY: 58,
+      cameraPreset: "none" as const,
+      videoLayers: [],
+      backdropPreset: "soft" as const,
+      primaryMediaAssetId: null,
+      primaryMediaSourceInSeconds: 0,
+      secondaryMediaAssetId: null,
+      secondaryMediaSourceInSeconds: 0,
+      mediaLayoutPreset: "full" as const,
+      chart: null
+    })), captions, 15);
+
+    expect(matches.every((match) => match.motionGroupId === "auto-scene-0" && match.persistUntilCaptionIndex === 4)).toBe(true);
+    expect(matches.filter((match) => match.primaryEffectId || match.secondaryEffectId)).toHaveLength(4);
+  });
+
+  it("keeps an imported A-roll on its existing track while preserving the requested camera move", () => {
+    const [match] = normalizeMotionMatches([{
+      captionIndex: 0,
+      primaryEffectId: "test-keyword-underline",
+      primaryText: "核心操作",
+      secondaryEffectId: null,
+      secondaryText: null,
+      accentColor: "#5fa8ff",
+      x: 50,
+      y: 35,
+      scale: 1,
+      secondaryX: 70,
+      secondaryY: 58,
+      cameraPreset: "none",
+      videoLayers: [{
+        assetId: "main-video",
+        role: "a-roll",
+        sourceInSeconds: 0,
+        layoutPreset: "full",
+        shapePreset: "rectangle",
+        transitionPreset: "fade",
+        cameraPreset: "push-in",
+        volume: 1,
+        focus: null
+      }],
+      backdropPreset: "soft",
+      primaryMediaAssetId: null,
+      primaryMediaSourceInSeconds: 0,
+      secondaryMediaAssetId: null,
+      secondaryMediaSourceInSeconds: 0,
+      mediaLayoutPreset: "full",
+      chart: null
+    }], [{ startSeconds: 0, endSeconds: 3, text: "先完成这一项核心操作。" }], 3, [{
+      id: "main-video",
+      name: "main.mp4",
+      durationSeconds: 30,
+      roleHint: "a-roll"
+    }]);
+
+    expect(match).toMatchObject({ cameraPreset: "push-in", videoLayers: [] });
+  });
+
   it("drops invalid or overly long motion groups", () => {
-    const captions = Array.from({ length: 7 }, (_, index) => ({ startSeconds: index, endSeconds: index + 1, text: `第${index + 1}条字幕。` }));
+    const captions = Array.from({ length: 9 }, (_, index) => ({ startSeconds: index, endSeconds: index + 1, text: `第${index + 1}条字幕。` }));
     const match = {
-      captionIndex: 0, motionGroupId: "too-long", persistUntilCaptionIndex: 6,
+      captionIndex: 0, motionGroupId: "too-long", persistUntilCaptionIndex: 8,
       primaryEffectId: "test-title-slide", primaryText: "第一条字幕", secondaryEffectId: null, secondaryText: null,
       accentColor: "#5fa8ff", x: 50, y: 24, scale: 1, secondaryX: 75, secondaryY: 60,
       cameraPreset: "none" as const, videoLayers: [], backdropPreset: "none" as const,
       primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null,
       secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" as const, chart: null
     };
-    expect(normalizeMotionMatches([match], captions, 7)[0]).toMatchObject({ motionGroupId: null, persistUntilCaptionIndex: null });
+    expect(normalizeMotionMatches([match], captions, 9)[0]).toMatchObject({ motionGroupId: null, persistUntilCaptionIndex: null });
   });
 
   it("extracts real Arabic and Chinese numeric facts without treating years as values", () => {
@@ -324,9 +519,13 @@ describe("provider requests", () => {
       topic: "制作开篇",
       durationSeconds: 3,
       style: "简洁",
-      materials: [{ id: "local-video", name: "office.mp4", durationSeconds: 12, width: 1920, height: 1080 }]
+      materials: [{ id: "local-video", name: "office.mp4", durationSeconds: 12, width: 1920, height: 1080, roleHint: "a-roll", transcriptExcerpt: "这是主讲人的口播内容" }]
     }, "secret")).resolves.toMatchObject({ plan: { title: "开篇", captions: [{ text: "口播" }], matches: [expect.objectContaining({ primaryEffectId: "test-title-slide", primaryMediaAssetId: "local-video" })] }, usage: { totalTokens: 70 } });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    const motionPayload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(motionPayload.messages[0].content).toContain('"roleHint":"a-roll"');
+    expect(motionPayload.messages[0].content).toContain('"transcriptExcerpt":"这是主讲人的口播内容"');
+    expect(motionPayload.messages[0].content).toContain("不要按每条字幕机械切换动效");
     const scriptPayload = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     const matchPayload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
     expect(JSON.stringify(matchPayload)).toContain("office.mp4");

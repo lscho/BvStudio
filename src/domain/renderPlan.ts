@@ -1,9 +1,10 @@
 import { contentEndUs, type AudioClip, type EditorProject, type EffectBackdrop, type EffectClip, type GeneratedBlock, type ImageClip, type SceneClip, type VideoClip } from "@/domain/project";
 import type { ExportVideoFormat, RenderAudioClip, RenderFocusOverlay, RenderOverlay, RenderPlan, RenderSegment, VideoEncoder } from "@/services/media";
-import { effectById } from "@/domain/effects";
+import { clockControlledRecipe, effectById, effectiveEffectFontSize } from "@/domain/effects";
 import { DEFAULT_TRANSFORM } from "@/domain/transforms";
 import { videoFocus, videoMask, videoPresentationAt, videoTransition } from "@/domain/videoPresentation";
 import { displaySubtitleText, subtitleStyle } from "@/domain/videoDecorations";
+import { resolveEffectAppearance } from "@/domain/motionTheme";
 
 function activeAt<T extends { startUs: number; durationUs: number }>(clips: T[], timeUs: number): T | undefined {
   return clips.find((clip) => timeUs >= clip.startUs && timeUs < clip.startUs + clip.durationUs);
@@ -184,11 +185,18 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
     }
     if (clip.kind === "scene") {
       const recipe = scaleRecipe({ ...effectById(clip.effectId).recipe, sceneBackground: clip.background });
-      return [{ kind: "scene" as const, startUs: clip.startUs, durationUs: clip.durationUs, x: 50, y: 50, opacity: clip.opacity, scale: 1, rotation: 0, speed: 1, zIndex: -100, recipe }];
+      const dimAtUs = clip.dimAtUs === undefined ? undefined : Math.max(0, Math.min(clip.durationUs, clip.dimAtUs));
+      if (dimAtUs === undefined || dimAtUs >= clip.durationUs) return [{ kind: "scene" as const, startUs: clip.startUs, durationUs: clip.durationUs, x: 50, y: 50, opacity: clip.opacity, scale: 1, rotation: 0, speed: 1, zIndex: -100, recipe }];
+      return [
+        ...(dimAtUs > 0 ? [{ kind: "scene" as const, startUs: clip.startUs, durationUs: dimAtUs, x: 50, y: 50, opacity: clip.opacity, scale: 1, rotation: 0, speed: 1, zIndex: -100, recipe }] : []),
+        { kind: "scene" as const, startUs: clip.startUs + dimAtUs, durationUs: clip.durationUs - dimAtUs, x: 50, y: 50, opacity: clip.opacity * 0.35, scale: 1, rotation: 0, speed: 1, zIndex: -100, recipe }
+      ];
     }
     if (clip.kind === "effect") {
-      const recipe = scaleRecipe(clip.recipe ?? effectById(clip.effectId).recipe);
-      return [{ kind: "text" as const, startUs: clip.startUs, durationUs: clip.durationUs, text: clip.text, color: clip.color, accentColor: clip.accentColor, fontSize: clip.fontSize * outputScale, x: clip.transform.x, y: clip.transform.y, opacity: clip.transform.opacity, scale: clip.transform.scale, rotation: clip.transform.rotation, speed: clip.speed, zIndex: 200 + (clip.zIndex ?? 20), transformKeyframes: clip.transformKeyframes, recipe, backdrop: scaleBackdrop(clip.backdrop) }];
+      const recipe = scaleRecipe(clockControlledRecipe(clip.recipe ?? effectById(clip.effectId).recipe));
+      const fontSize = effectiveEffectFontSize(clip.fontSize, recipe, clip.text);
+      const appearance = resolveEffectAppearance(clip, project.motionTheme);
+      return [{ kind: "text" as const, effectId: clip.effectId, renderer: "react" as const, startUs: clip.startUs, durationUs: clip.durationUs, text: clip.text, color: appearance.color, accentColor: appearance.accentColor, fontSize: fontSize * outputScale, x: clip.transform.x, y: clip.transform.y, opacity: clip.transform.opacity, scale: clip.transform.scale, rotation: clip.transform.rotation, speed: clip.speed, zIndex: 200 + (clip.zIndex ?? 20), transformKeyframes: clip.transformKeyframes, recipe, backdrop: scaleBackdrop(clip.backdrop), motionTheme: project.motionTheme, dimAtUs: clip.dimAtUs }];
     }
     if (clip.kind === "subtitle") {
       const style = subtitleStyle(clip);
@@ -207,6 +215,7 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
         rotation: 0,
         speed: 1,
         zIndex: 400,
+        verticalAnchor: "bottom",
         subtitleStyle: {
           preset: style.stylePreset,
           highlightWords: style.highlightWords,
@@ -243,12 +252,34 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
       const chapterEndUs = Math.min(endUs, chapters[chapterIndex + 1]?.startUs ?? endUs);
       if (chapterEndUs <= startUs) return;
       const progressHeight = Math.max(28, project.chapterProgress.height * outputScale);
+      const progressThickness = Math.max(3, progressHeight * 0.08);
+      const itemWidth = width / chapters.length;
+      const stepLineThickness = Math.max(2, progressHeight * 0.025);
+      const animatedProgress = project.chapterProgress.style === "segments" || project.chapterProgress.style === "line"
+        ? {
+            xPx: itemWidth * chapterIndex,
+            yPx: project.chapterProgress.position === "top" ? progressHeight - progressThickness : 0,
+            widthPx: itemWidth,
+            heightPx: progressThickness,
+            color: project.chapterProgress.activeColor
+          }
+        : project.chapterProgress.style === "steps" && chapterIndex < chapters.length - 1
+          ? {
+              xPx: itemWidth * (chapterIndex + 0.5),
+              yPx: progressHeight * 0.64 - stepLineThickness / 2,
+              widthPx: itemWidth,
+              heightPx: stepLineThickness,
+              color: project.chapterProgress.activeColor
+            }
+        : undefined;
       visualOverlays.push({
         kind: "progress",
         startUs,
         durationUs: chapterEndUs - startUs,
         x: 50,
-        y: progressHeight / 2 / height * 100,
+        y: project.chapterProgress.position === "top"
+          ? progressHeight / 2 / height * 100
+          : 100 - progressHeight / 2 / height * 100,
         opacity: 1,
         scale: 1,
         rotation: 0,
@@ -257,10 +288,16 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
         recipe: frameRecipe,
         chapters,
         chapterIndex,
+        position: project.chapterProgress.position,
+        style: project.chapterProgress.style,
         backgroundColor: project.chapterProgress.backgroundColor,
+        backgroundOpacity: project.chapterProgress.backgroundOpacity,
         activeColor: project.chapterProgress.activeColor,
+        inactiveColor: project.chapterProgress.inactiveColor,
         textColor: project.chapterProgress.textColor,
-        heightPx: progressHeight
+        heightPx: progressHeight,
+        showTitles: project.chapterProgress.showTitles,
+        animatedProgress
       });
     });
   }

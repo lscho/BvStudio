@@ -1,4 +1,4 @@
-import { effectById, effectSelectionsForText, type EffectDefinition } from "@/domain/effects";
+import { effectById, effectSelectionsForText, recommendedEffectFontSize, type EffectDefinition } from "@/domain/effects";
 import type { GeneratedEffectLayer, GeneratedScene } from "@/domain/project";
 
 const AUTO_LAYOUT_SLOTS = {
@@ -111,7 +111,7 @@ export function createGeneratedEffectLayers(
         text: template?.text ?? (layers.length === 0 && index === 0 ? text : definition.defaultText),
         textColor: definition.defaultColor,
         accentColor: selected.kind === "scene" ? selected.defaultAccentColor : accentColor || definition.defaultAccentColor,
-        fontSize: template?.fontSize ?? 58,
+        fontSize: template?.fontSize ?? recommendedEffectFontSize(definition.recipe, template?.text ?? text),
         speed: 1,
         transform: {
           x: template?.x ?? suggestedTransform.x,

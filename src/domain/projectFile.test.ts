@@ -9,16 +9,127 @@ describe("project files", () => {
     const serialized = serializeProject(project);
     expect(serialized).not.toContain("blob:temporary");
     expect(serialized).not.toContain("missing");
-    expect(parseProject(serialized)).toMatchObject({ schemaVersion: 18, id: project.id, assets: [{ sourcePath: "/source.mp4" }] });
+    expect(parseProject(serialized)).toMatchObject({ schemaVersion: 20, id: project.id, assets: [{ sourcePath: "/source.mp4" }] });
   });
 
   it("creates separate scene and effect tracks", () => {
     const project = createEmptyProject();
-    expect(project.schemaVersion).toBe(18);
+    expect(project.schemaVersion).toBe(20);
     expect(project.tracks).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "scene-main", kind: "scene", name: "场景", clips: [] }),
       expect.objectContaining({ id: "effect-main", kind: "effect", name: "动效", clips: [] })
     ]));
+  });
+
+  it("migrates v19 projects with the default motion theme", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    raw.schemaVersion = 19;
+    delete raw.motionTheme;
+    expect(parseProject(JSON.stringify(raw))).toMatchObject({
+      schemaVersion: 20,
+      motionTheme: { skin: "dark", style: "minimal", font: "sans", colors: { text: "#ffffff", data: "#47d7ac" } }
+    });
+  });
+
+  it("normalizes motion theme and effect lint metadata", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    raw.motionTheme = { skin: "neon", style: "unknown", font: "remote", colors: { text: "white", data: "#123456" } };
+    const track = raw.tracks.find((candidate: { kind: string }) => candidate.kind === "effect");
+    track.clips.push({
+      id: "themed", trackId: track.id, kind: "effect", label: "主题动效", startUs: 0, durationUs: 1_000_000, locked: false,
+      effectId: "test-title-slide", text: "数据", color: "#ffffff", accentColor: "#47d7ac", fontSize: 48, speed: 1,
+      transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }, colorRole: "remote", dimAtUs: 9_000_000,
+      lintOff: ["unsafe-bounds", "not valid!", 1]
+    });
+    const restored = parseProject(JSON.stringify(raw));
+    expect(restored.motionTheme).toMatchObject({ skin: "dark", style: "minimal", font: "sans", colors: { text: "#ffffff", data: "#123456" } });
+    expect(restored.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "themed")).toMatchObject({ colorRole: "custom", dimAtUs: 1_000_000, lintOff: ["unsafe-bounds"] });
+  });
+
+  it("repairs a truncated generated voice clip when its asset matches the AI block duration", () => {
+    const project = createEmptyProject();
+    const generatedTrack = project.tracks.find((track) => track.kind === "generated")!;
+    const voiceTrack = project.tracks.find((track) => track.kind === "audio" && track.audioRole === "voice")!;
+    project.assets.push({ id: "voice-asset", name: "voice.wav", kind: "audio", durationUs: 4_000_000, hasAudio: true });
+    generatedTrack.clips.push({
+      id: "generated", trackId: generatedTrack.id, kind: "generated", label: "AI 内容", startUs: 1_000_000, durationUs: 4_000_000,
+      locked: false, article: "正文", narration: "口播", prompt: "主题", insertMode: "insert", scenes: []
+    });
+    voiceTrack.clips.push({
+      id: "voice", trackId: voiceTrack.id, kind: "audio", label: "voice.wav", startUs: 1_000_000, durationUs: 3_100_000,
+      locked: false, assetId: "voice-asset", sourceInUs: 0, playbackRate: 1, volume: 1, fadeInUs: 50_000, fadeOutUs: 50_000,
+      role: "voice", sourceBlockId: "generated"
+    });
+
+    const restored = parseProject(serializeProject(project));
+    expect(restored.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "voice")).toMatchObject({
+      startUs: 1_000_000,
+      durationUs: 4_000_000
+    });
+  });
+
+  it("migrates v18 chapter progress to the top dark preset", () => {
+    const legacy = JSON.parse(serializeProject(createEmptyProject()));
+    legacy.schemaVersion = 18;
+    legacy.chapterProgress = {
+      enabled: true,
+      backgroundColor: "#222222",
+      activeColor: "#ffaa00",
+      textColor: "#ffffff",
+      height: 60,
+      chapters: [{ id: "intro", title: "开场", startUs: 0 }]
+    };
+
+    expect(parseProject(JSON.stringify(legacy))).toMatchObject({
+      schemaVersion: 20,
+      chapterProgress: {
+        enabled: true,
+        preset: "top-dark",
+        position: "top",
+        style: "segments",
+        backgroundColor: "#222222",
+        backgroundOpacity: 0.9,
+        activeColor: "#ffaa00",
+        inactiveColor: "#7d8793",
+        showTitles: true
+      }
+    });
+  });
+
+  it("normalizes malformed chapter appearance fields", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    raw.chapterProgress = {
+      ...raw.chapterProgress,
+      preset: "remote-theme",
+      position: "left",
+      style: "unknown",
+      backgroundColor: "black",
+      backgroundOpacity: 12,
+      inactiveColor: null,
+      height: 500,
+      showTitles: "yes"
+    };
+
+    expect(parseProject(JSON.stringify(raw)).chapterProgress).toMatchObject({
+      preset: "custom",
+      position: "top",
+      style: "segments",
+      backgroundColor: "#111316",
+      backgroundOpacity: 1,
+      inactiveColor: "#7d8793",
+      height: 120,
+      showTitles: true
+    });
+  });
+
+  it("refreshes named chapter presets while preserving custom heights", () => {
+    const named = JSON.parse(serializeProject(createEmptyProject()));
+    named.chapterProgress = { ...named.chapterProgress, preset: "bottom-steps", height: 72 };
+    expect(parseProject(JSON.stringify(named)).chapterProgress.height).toBe(96);
+
+    const custom = JSON.parse(serializeProject(createEmptyProject()));
+    custom.chapterProgress = { ...custom.chapterProgress, preset: "custom", height: 72 };
+    expect(parseProject(JSON.stringify(custom)).chapterProgress.height).toBe(72);
   });
 
   it("migrates v17 scene background effects onto the scene track", () => {
@@ -35,7 +146,7 @@ describe("project files", () => {
     });
 
     const migrated = parseProject(JSON.stringify(raw));
-    expect(migrated.schemaVersion).toBe(18);
+    expect(migrated.schemaVersion).toBe(20);
     expect(migrated.tracks.find((track) => track.kind === "effect")?.clips).toHaveLength(0);
     expect(migrated.tracks.find((track) => track.kind === "scene")?.clips).toEqual([
       expect.objectContaining({
@@ -77,7 +188,7 @@ describe("project files", () => {
       transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }
     });
     expect(parseProject(JSON.stringify(legacy))).toMatchObject({
-      schemaVersion: 18,
+      schemaVersion: 20,
       chapterProgress: { enabled: false, chapters: [] },
       tracks: expect.arrayContaining([
         expect.objectContaining({ clips: expect.arrayContaining([expect.objectContaining({ id: "caption", stylePreset: "classic", highlightWords: [] })]) }),
@@ -141,7 +252,7 @@ describe("project files", () => {
     });
 
     const migrated = parseProject(JSON.stringify(raw));
-    expect(migrated.schemaVersion).toBe(18);
+    expect(migrated.schemaVersion).toBe(20);
     expect(migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "video-13")).toMatchObject({ mask: { shape: "circle", focusX: 50, focusY: 50 } });
   });
 
@@ -156,7 +267,7 @@ describe("project files", () => {
     });
 
     const migrated = parseProject(JSON.stringify(raw));
-    expect(migrated.schemaVersion).toBe(18);
+    expect(migrated.schemaVersion).toBe(20);
     expect(migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "video-14")).toMatchObject({ presentationCues: [] });
   });
 
@@ -171,7 +282,7 @@ describe("project files", () => {
       recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0, sceneBackground: { preset: "white-frame", primaryColor: "#ffffff", secondaryColor: "#f5f5f5", borderColor: "#111111", intensity: 0.7 } }
     });
     const migrated = parseProject(JSON.stringify(raw));
-    expect(migrated.schemaVersion).toBe(18);
+    expect(migrated.schemaVersion).toBe(20);
     expect(migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "scene")).toMatchObject({ kind: "scene", trackId: "scene-main", background: { preset: "white-frame" } });
   });
 
@@ -183,7 +294,7 @@ describe("project files", () => {
     raw.tracks.push({ id: "audio-main", kind: "audio", name: "音频", locked: false, muted: false, hidden: false, clips: [] });
 
     const migrated = parseProject(JSON.stringify(raw));
-    expect(migrated.schemaVersion).toBe(18);
+    expect(migrated.schemaVersion).toBe(20);
     expect(migrated.tracks.some((track) => track.kind === "image" && track.name === "贴图")).toBe(true);
     expect(migrated.tracks.filter((track) => track.kind === "audio").map((track) => [track.name, track.audioRole])).toEqual([
       ["配音", "voice"], ["背景音乐", "music"], ["音效", "sound"]
@@ -238,7 +349,7 @@ describe("project files", () => {
 
     const migrated = parseProject(JSON.stringify(raw));
     const clip = migrated.tracks.flatMap((track) => track.clips).find((item) => item.id === "generated-9");
-    expect(migrated.schemaVersion).toBe(18);
+    expect(migrated.schemaVersion).toBe(20);
     expect(clip?.kind === "generated" ? clip.scenes[0].additionalEffects : undefined).toEqual([]);
   });
 
@@ -255,7 +366,7 @@ describe("project files", () => {
     const migrated = parseProject(JSON.stringify(raw));
     const video = migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "legacy-video");
     const effect = migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "legacy-effect");
-    expect(migrated.schemaVersion).toBe(18);
+    expect(migrated.schemaVersion).toBe(20);
     expect(migrated.tracks.find((track) => track.kind === "video")?.name).toBe("视频");
     expect(video).toMatchObject({ kind: "video", role: "a-roll", cameraOffsetUs: 0, cameraDurationUs: 2_000_000, mask: { shape: "rectangle", focusX: 50, focusY: 50 }, transition: { preset: "none" } });
     expect(effect).toMatchObject({ kind: "effect", backdrop: { enabled: true, color: "#111316", opacity: 0.64 } });

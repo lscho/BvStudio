@@ -5,7 +5,7 @@ import { AudioLines, LoaderCircle, Mic, Square, Volume2, X } from "lucide-react"
 import { Select } from "@/components/Select";
 import { isDesktopRuntime } from "@/services/runtime";
 import { preferredRecordingMimeType, saveRecordedAudio } from "@/services/audio";
-import { MIMO_TTS_VOICES, synthesizeCloudSpeech } from "@/services/cloudSpeech";
+import { MIMO_TTS_VOICES, synthesizeCloudSpeechTrack } from "@/services/cloudSpeech";
 import type { CloudSpeechConfig } from "@/services/storage";
 import type { AudioRole } from "@/domain/project";
 
@@ -14,17 +14,25 @@ export interface CreatedAudioSource {
   blob?: Blob;
   name: string;
   role: AudioRole;
+  segmentDurationsUs?: number[];
+  sourceSubtitleIds?: string[];
+}
+
+export interface SpeechSegmentInput {
+  id: string;
+  text: string;
 }
 
 interface Props {
   open: boolean;
   defaultText: string;
+  speechSegments?: SpeechSegmentInput[];
   cloudSpeech: CloudSpeechConfig;
   onOpenChange: (open: boolean) => void;
   onCreated: (source: CreatedAudioSource) => Promise<void>;
 }
 
-export function AudioCreateDialog({ open, defaultText, cloudSpeech, onOpenChange, onCreated }: Props) {
+export function AudioCreateDialog({ open, defaultText, speechSegments = [], cloudSpeech, onOpenChange, onCreated }: Props) {
   const [text, setText] = useState(defaultText);
   const [voice, setVoice] = useState(cloudSpeech.ttsVoice);
   const [style, setStyle] = useState(cloudSpeech.ttsStyle);
@@ -32,17 +40,19 @@ export function AudioCreateDialog({ open, defaultText, cloudSpeech, onOpenChange
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState("");
+  const [progressMessage, setProgressMessage] = useState("");
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     if (!open) return;
-    setText(defaultText);
+    setText(speechSegments.length ? speechSegments.map((segment) => segment.text).join("\n") : defaultText);
     setVoice(cloudSpeech.ttsVoice);
     setStyle(cloudSpeech.ttsStyle);
     setError("");
-  }, [cloudSpeech.ttsStyle, cloudSpeech.ttsVoice, defaultText, open]);
+    setProgressMessage("");
+  }, [cloudSpeech.ttsStyle, cloudSpeech.ttsVoice, defaultText, open, speechSegments]);
 
   useEffect(() => {
     if (!recording) return;
@@ -61,8 +71,19 @@ export function AudioCreateDialog({ open, defaultText, cloudSpeech, onOpenChange
     setBusy(true);
     setError("");
     try {
-      const path = await synthesizeCloudSpeech({ ...cloudSpeech, ttsVoice: voice, ttsStyle: style }, text.trim());
-      await onCreated({ path, name: "MiMo 云端配音", role: "voice" });
+      const texts = speechSegments.length ? speechSegments.map((segment) => segment.text) : [text.trim()];
+      const result = await synthesizeCloudSpeechTrack(
+        { ...cloudSpeech, ttsVoice: voice, ttsStyle: style },
+        texts,
+        (progress) => setProgressMessage(progress.message)
+      );
+      await onCreated({
+        path: result.path,
+        name: "MiMo 云端配音",
+        role: "voice",
+        segmentDurationsUs: speechSegments.length ? result.segmentDurationsUs : undefined,
+        sourceSubtitleIds: speechSegments.length ? speechSegments.map((segment) => segment.id) : undefined
+      });
       onOpenChange(false);
     } catch (exception) {
       setError(exception instanceof Error ? exception.message : "配音生成失败");
@@ -131,10 +152,11 @@ export function AudioCreateDialog({ open, defaultText, cloudSpeech, onOpenChange
           <Tabs.Root defaultValue="tts" className="audio-tabs">
             <Tabs.List aria-label="音频创建方式"><Tabs.Trigger value="tts"><Volume2 size={15} />云端配音</Tabs.Trigger><Tabs.Trigger value="record"><Mic size={15} />麦克风</Tabs.Trigger></Tabs.List>
             <Tabs.Content value="tts" className="audio-tab-content">
-              <label><span>配音文字</span><textarea rows={7} value={text} onChange={(event) => setText(event.target.value)} /></label>
+              <label><span>{speechSegments.length ? "字幕配音文本" : "配音文字"}</span><textarea rows={7} value={text} readOnly={speechSegments.length > 0} onChange={(event) => setText(event.target.value)} /></label>
               <div className="two-column"><label><span>模型</span><input value={cloudSpeech.ttsModel} disabled /></label><label><span>音色</span><Select label="音色" value={voice} disabled={cloudSpeech.ttsModel === "mimo-v2.5-tts-voicedesign"} onChange={setVoice} options={[...MIMO_TTS_VOICES]} /></label></div>
               <label><span>{cloudSpeech.ttsModel === "mimo-v2.5-tts-voicedesign" ? "音色设计描述" : "发音风格指令"}</span><textarea rows={3} value={style} onChange={(event) => setStyle(event.target.value)} /></label>
-              <button className="button primary" type="button" disabled={busy || !isDesktopRuntime()} onClick={() => void createSpeech()}>{busy ? <LoaderCircle className="spin" size={15} /> : <AudioLines size={15} />}生成并加入</button>
+              {busy && progressMessage && <p className="provider-summary" role="status">{progressMessage}</p>}
+              <button className="button primary" type="button" disabled={busy || !isDesktopRuntime()} onClick={() => void createSpeech()}>{busy ? <LoaderCircle className="spin" size={15} /> : <AudioLines size={15} />}{speechSegments.length ? `按 ${speechSegments.length} 条字幕生成并加入` : "生成并加入"}</button>
             </Tabs.Content>
             <Tabs.Content value="record" className="audio-tab-content record-pane">
               <div className={`record-status ${recording ? "active" : ""}`}><span /><strong>{recording ? "正在录音" : "麦克风就绪"}</strong><time>{String(Math.floor(elapsed / 60)).padStart(2, "0")}:{String(elapsed % 60).padStart(2, "0")}</time></div>

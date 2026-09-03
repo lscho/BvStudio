@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AsrTranscript } from "@/services/asr";
 import { isDesktopRuntime } from "@/services/runtime";
 import type { CloudSpeechConfig } from "@/services/storage";
+import { probeMedia } from "@/services/media";
 
 export const MIMO_TTS_MODELS = [
   { value: "mimo-v2.5-tts", label: "MiMo V2.5 TTS · 预置音色" },
@@ -30,6 +31,18 @@ export interface CloudSpeechProgressEvent {
 export interface CloudSpeechJob<T> {
   jobId: string;
   result: Promise<T>;
+}
+
+export interface CloudSpeechTrackProgress {
+  completed: number;
+  total: number;
+  message: string;
+}
+
+export interface CloudSpeechTrackResult {
+  path: string;
+  durationUs: number;
+  segmentDurationsUs: number[];
 }
 
 const browserKeyName = "bvideo:speech-api-key";
@@ -89,6 +102,51 @@ export function synthesizeCloudSpeech(config: CloudSpeechConfig, text: string): 
 export function mergeCloudSpeechSegments(paths: string[]): Promise<string> {
   if (!isDesktopRuntime()) return Promise.reject(new Error("逐句配音合并需要在桌面客户端中运行"));
   return invoke("merge_cloud_speech_segments", { paths });
+}
+
+function reconcileSegmentDurations(durationsUs: readonly number[], totalDurationUs: number): number[] {
+  const normalized = durationsUs.map((durationUs) => Math.max(1, Math.round(durationUs)));
+  if (!normalized.length) return [];
+  const expectedDurationUs = normalized.reduce((sum, durationUs) => sum + durationUs, 0);
+  const deltaUs = Math.round(totalDurationUs) - expectedDurationUs;
+  const toleranceUs = Math.max(250_000, normalized.length * 20_000);
+  if (Math.abs(deltaUs) > toleranceUs) {
+    throw new Error("合并后的配音时长异常，部分字幕语音可能缺失，请重新生成");
+  }
+  normalized[normalized.length - 1] = Math.max(1, normalized[normalized.length - 1] + deltaUs);
+  return normalized;
+}
+
+export async function synthesizeCloudSpeechTrack(
+  config: CloudSpeechConfig,
+  segmentTexts: readonly string[],
+  onProgress?: (progress: CloudSpeechTrackProgress) => void
+): Promise<CloudSpeechTrackResult> {
+  const texts = segmentTexts.map((text) => text.trim());
+  if (!texts.length || texts.some((text) => !text)) throw new Error("字幕配音文本不能为空");
+  if (texts.length > 100) throw new Error("单次最多生成 100 条字幕配音");
+  const paths: string[] = [];
+  const durationsUs: number[] = [];
+  for (let index = 0; index < texts.length; index += 1) {
+    onProgress?.({ completed: index, total: texts.length, message: `正在生成第 ${index + 1}/${texts.length} 条字幕` });
+    const path = await synthesizeCloudSpeech(config, texts[index]);
+    const metadata = await probeMedia(path);
+    if (!metadata.hasAudio || metadata.durationUs <= 0) throw new Error(`第 ${index + 1} 条字幕没有生成有效音频`);
+    paths.push(path);
+    durationsUs.push(metadata.durationUs);
+  }
+  onProgress?.({ completed: texts.length, total: texts.length, message: texts.length > 1 ? "正在合并字幕配音" : "字幕配音已生成" });
+  if (paths.length === 1) {
+    return { path: paths[0], durationUs: durationsUs[0], segmentDurationsUs: durationsUs };
+  }
+  const path = await mergeCloudSpeechSegments(paths);
+  const metadata = await probeMedia(path);
+  if (!metadata.hasAudio || metadata.durationUs <= 0) throw new Error("合并后的字幕配音无效");
+  return {
+    path,
+    durationUs: metadata.durationUs,
+    segmentDurationsUs: reconcileSegmentDurations(durationsUs, metadata.durationUs)
+  };
 }
 
 export function startCloudMediaTranscription(

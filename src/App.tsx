@@ -13,7 +13,7 @@ import { UpdateModal } from "@/components/UpdateModal";
 import { WindowControls } from "@/components/WindowControls";
 import { useAppUpdater } from "@/hooks/useAppUpdater";
 import { useSettings } from "@/hooks/useSettings";
-import type { GeneratedBlock } from "@/domain/project";
+import type { GeneratedBlock, SubtitleClip } from "@/domain/project";
 import { buildRenderPlan } from "@/domain/renderPlan";
 import { parseProject, serializeProject } from "@/domain/projectFile";
 import {
@@ -56,6 +56,8 @@ import { browserApiKey, hasApiKey, matchTimelineMotion } from "@/services/ai/pro
 import { cancelCloudSpeechRequest, hasSpeechApiKey, startCloudMediaTranscription, type CloudSpeechProgressEvent } from "@/services/cloudSpeech";
 import { useEditorStore } from "@/stores/editorStore";
 import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
+import { rasterizeReactEffects } from "@/effects/exportRenderer";
+import { lintMotionProject } from "@/domain/motionLint";
 
 function loadVideoMetadata(url: string) {
   return new Promise<{ duration: number; width: number; height: number }>((resolve, reject) => {
@@ -130,6 +132,7 @@ export default function App() {
   const addSubtitles = useEditorStore((state) => state.addSubtitles);
   const applyMotionMatches = useEditorStore((state) => state.applyMotionMatches);
   const alignGeneratedBlockDuration = useEditorStore((state) => state.alignGeneratedBlockDuration);
+  const alignGeneratedSceneDurations = useEditorStore((state) => state.alignGeneratedSceneDurations);
   const undo = useEditorStore((state) => state.undo);
   const redo = useEditorStore((state) => state.redo);
   const removeSelected = useEditorStore((state) => state.removeSelected);
@@ -143,7 +146,13 @@ export default function App() {
   const selectedClipId = useEditorStore((state) => state.selectedClipId);
   const generatedClips = project.tracks.flatMap((track) => track.clips).filter((clip): clip is GeneratedBlock => clip.kind === "generated");
   const narrationBlock = generatedClips.find((clip) => clip.id === selectedClipId) ?? generatedClips[0];
-  const defaultNarration = narrationBlock?.narration ?? "";
+  const narrationSubtitles = narrationBlock ? project.tracks
+    .flatMap((track) => track.clips)
+    .filter((clip): clip is SubtitleClip => clip.kind === "subtitle" && clip.sourceBlockId === narrationBlock.id)
+    .sort((left, right) => left.startUs - right.startUs) : [];
+  const defaultNarration = narrationSubtitles.length
+    ? narrationSubtitles.map((subtitle) => subtitle.text).join("\n")
+    : narrationBlock?.narration ?? "";
   const loadEffectLibrary = useEffectLibraryStore((state) => state.load);
 
   useEffect(() => {
@@ -448,8 +457,14 @@ export default function App() {
     if (source.path) {
       const metadata = await probeMedia(source.path);
       const name = source.path.split(/[\\/]/).at(-1) ?? source.name;
-      addAudio({ id, name, kind: "audio", sourcePath: source.path, objectUrl: localMediaUrl(source.path), missing: false, ...metadata }, source.role, startUs);
-      if (generatedBlockId && source.role === "voice") alignGeneratedBlockDuration(generatedBlockId, metadata.durationUs);
+      addAudio({ id, name, kind: "audio", sourcePath: source.path, objectUrl: localMediaUrl(source.path), missing: false, ...metadata }, source.role, startUs, generatedBlockId);
+      if (generatedBlockId && source.role === "voice") {
+        if (source.segmentDurationsUs?.length && source.sourceSubtitleIds?.length === source.segmentDurationsUs.length) {
+          alignGeneratedSceneDurations(generatedBlockId, source.segmentDurationsUs, source.sourceSubtitleIds);
+        } else {
+          alignGeneratedBlockDuration(generatedBlockId, metadata.durationUs);
+        }
+      }
       try {
         const derivatives = await generateMediaDerivatives(source.path, id, false, true);
         updateAsset(id, derivatives);
@@ -462,7 +477,7 @@ export default function App() {
     if (source.blob) {
       const objectUrl = URL.createObjectURL(source.blob);
       const metadata = await loadAudioMetadata(objectUrl);
-      addAudio({ id, name: source.name, kind: "audio", durationUs: Math.round(metadata.duration * 1_000_000), objectUrl, hasAudio: true, missing: false }, source.role, startUs);
+      addAudio({ id, name: source.name, kind: "audio", durationUs: Math.round(metadata.duration * 1_000_000), objectUrl, hasAudio: true, missing: false }, source.role, startUs, generatedBlockId);
       if (generatedBlockId && source.role === "voice") alignGeneratedBlockDuration(generatedBlockId, Math.round(metadata.duration * 1_000_000));
       setNotice(`已加入 ${source.name}`);
     }
@@ -481,6 +496,7 @@ export default function App() {
       return;
     }
     const subtitles = subtitlesForMotionMatch(allSubtitles, useEditorStore.getState().selectedClipIds);
+    const videoClips = project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "video");
     const controller = new AbortController();
     setAiRequestController(controller);
     setNotice(null);
@@ -492,12 +508,29 @@ export default function App() {
         article: generatedClips.map((clip) => clip.article).filter(Boolean).join("\n").slice(0, 8_000),
         captions: subtitles.map((clip) => ({ startSeconds: clip.startUs / 1_000_000, endSeconds: (clip.startUs + clip.durationUs) / 1_000_000, text: clip.text })),
         timelineDurationSeconds: Math.max(0.1, project.durationUs / 1_000_000),
-        materials: project.assets.filter((asset) => asset.kind === "video" && !asset.missing).slice(0, 40).map((asset) => ({
-          id: asset.id, name: asset.name, durationSeconds: asset.durationUs / 1_000_000, width: asset.width, height: asset.height
-        }))
+        materials: project.assets.filter((asset) => asset.kind === "video" && !asset.missing).slice(0, 40).map((asset) => {
+          const sourceSubtitles = allSubtitles.filter((subtitle) => subtitle.sourceAssetId === asset.id);
+          const placedRole = videoClips.find((clip) => clip.assetId === asset.id)?.role;
+          return {
+            id: asset.id,
+            name: asset.name,
+            durationSeconds: asset.durationUs / 1_000_000,
+            width: asset.width,
+            height: asset.height,
+            roleHint: sourceSubtitles.length ? "a-roll" as const : placedRole ?? "unspecified" as const,
+            transcriptExcerpt: sourceSubtitles.map((subtitle) => subtitle.text).join(" ").slice(0, 500)
+          };
+        })
       }, browserApiKey(), controller.signal, (progress) => setBusyMessage(progress.message));
       applyMotionMatches(subtitles.map((clip) => clip.id), result.matches ?? []);
-      setNotice(`已为 ${subtitles.length} 条字幕匹配单条与组合动效、运镜和视频图层`);
+      const lintIssues = lintMotionProject(useEditorStore.getState().project);
+      const errors = lintIssues.filter((issue) => issue.severity === "error");
+      if (errors.length) {
+        undo();
+        throw new Error(`AI 编排未通过动效检查：${errors[0].message}`);
+      }
+      const warnings = lintIssues.filter((issue) => issue.severity === "warning");
+      setNotice(warnings.length ? `AI 编排已完成，动效检查有 ${warnings.length} 条提醒：${warnings[0].message}` : `已按连续场景为 ${subtitles.length} 条字幕匹配 A-roll、B-roll 与动效`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "动效匹配失败");
     } finally {
@@ -517,11 +550,19 @@ export default function App() {
       setNotice(`有 ${missing.length} 个素材已丢失，请先重新定位`);
       return;
     }
+    const lintIssues = lintMotionProject(project);
+    const lintErrors = lintIssues.filter((issue) => issue.severity === "error");
+    if (lintErrors.length) {
+      setNotice(`导出已阻止：${lintErrors[0].message}（共 ${lintErrors.length} 项错误）`);
+      return;
+    }
+    const lintWarnings = lintIssues.filter((issue) => issue.severity === "warning");
+    if (lintWarnings.length) setNotice(`动效检查有 ${lintWarnings.length} 条提醒，继续导出：${lintWarnings[0].message}`);
     const outputPath = await selectVideoDestination(project.name, options.format);
     if (!outputPath) return;
     setBusyMessage(`正在渲染 ${options.format.toUpperCase()}，请保持客户端开启`);
     try {
-      const plan = await rasterizeRenderPlan(buildRenderPlan(project, outputPath, options));
+      const plan = await rasterizeRenderPlan(await rasterizeReactEffects(buildRenderPlan(project, outputPath, options)));
       const job = startExportRenderPlan(plan, (event) => {
         setExportProgress(event);
         setBusyMessage(event.message);
@@ -647,13 +688,13 @@ export default function App() {
           </div>
           <WindowControls />
         </header>
-        <EditorWorkspace onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onMatchEffects={() => void matchSubtitleEffects()} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => setAudioOpen(true)} onManageEffects={() => setEffectLibraryOpen(true)} />
+        <EditorWorkspace aiProvider={settings.aiProvider} onNeedSettings={() => setSettingsOpen(true)} onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onMatchEffects={() => void matchSubtitleEffects()} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => setAudioOpen(true)} onManageEffects={() => setEffectLibraryOpen(true)} />
         <input ref={fileInput} className="visually-hidden" type="file" accept="video/*,audio/*,image/png,image/jpeg,image/webp,image/bmp" onChange={(event) => void importBrowserMedia(event)} />
       </div>
       {(busyMessage || notice) && <div className={`status-toast ${busyMessage ? "busy" : ""}`}>{busyMessage && <LoaderCircle className="spin" size={15} />}<span>{busyMessage ?? notice}{exportProgress ? <small>{Math.round(exportProgress.progress * 100)}% · {exportProgress.segmentIndex}/{exportProgress.segmentCount || "-"}</small> : proxyProgress ? <small>{Math.round(proxyProgress.progress * 100)}%</small> : asrProgress ? <small>{Math.round(asrProgress.progress * 100)}% · 云端处理</small> : null}</span>{(aiRequestController || exportJobId || proxyJobId || audioExtractionJobId || asrJobId) && <button type="button" aria-label={aiRequestController ? "取消 AI 匹配" : exportJobId ? "取消视频导出" : proxyJobId ? "取消代理生成" : audioExtractionJobId ? "取消音频分离" : "取消字幕识别"} title="取消任务" onClick={() => void cancelCurrentTask()}><Square size={12} fill="currentColor" /></button>}{notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button>}</div>}
       <AiSettingsDialog open={settingsOpen} settings={settings} onOpenChange={setSettingsOpen} onSave={setSettings} />
       <AiGenerateDialog open={generateOpen} settings={settings} onOpenChange={setGenerateOpen} onNeedSettings={() => { setGenerateOpen(false); setSettingsOpen(true); }} />
-      <AudioCreateDialog open={audioOpen} defaultText={defaultNarration} cloudSpeech={settings.cloudSpeech} onOpenChange={setAudioOpen} onCreated={(source) => addCreatedAudio(source, narrationBlock?.startUs, narrationBlock?.id)} />
+      <AudioCreateDialog open={audioOpen} defaultText={defaultNarration} speechSegments={narrationSubtitles.map((subtitle) => ({ id: subtitle.id, text: subtitle.text }))} cloudSpeech={settings.cloudSpeech} onOpenChange={setAudioOpen} onCreated={(source) => addCreatedAudio(source, narrationBlock?.startUs, narrationBlock?.id)} />
       <EffectLibraryDialog open={effectLibraryOpen} onOpenChange={setEffectLibraryOpen} />
       <ExportDialog open={exportOpen} canvas={project.canvas} defaultEncoder={settings.media.encoder} busy={Boolean(busyMessage)} onOpenChange={setExportOpen} onExport={(options) => void exportVideo(options)} />
       <ProjectRecoveryDialog snapshot={recoverySnapshot} restoring={restoringRecovery} error={recoveryError} onDiscard={() => void discardRecovery()} onRestore={() => void restoreProject()} />

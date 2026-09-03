@@ -1,6 +1,6 @@
 [package]
 name = "tauri-base"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tauri Base desktop template"
 authors = ["tauri-base"]
 edition = "2021"

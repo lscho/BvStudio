@@ -1,4 +1,4 @@
-import type { ChapterMarker, ChapterProgressSettings, SubtitleClip, SubtitleStyleSettings } from "@/domain/project";
+import type { ChapterMarker, ChapterProgressPreset, ChapterProgressSettings, SubtitleClip, SubtitleStyleSettings } from "@/domain/project";
 
 export const DEFAULT_SUBTITLE_STYLE: SubtitleStyleSettings = {
   stylePreset: "classic",
@@ -12,12 +12,32 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyleSettings = {
 
 export const DEFAULT_CHAPTER_PROGRESS: ChapterProgressSettings = {
   enabled: false,
+  preset: "top-dark",
+  position: "top",
+  style: "segments",
   backgroundColor: "#111316",
+  backgroundOpacity: 0.9,
   activeColor: "#ffb84d",
+  inactiveColor: "#7d8793",
   textColor: "#ffffff",
-  height: 52,
+  height: 80,
+  showTitles: true,
   chapters: []
 };
+
+export type ChapterProgressPresetDefinition = Omit<ChapterProgressSettings, "enabled" | "chapters" | "preset"> & {
+  id: Exclude<ChapterProgressPreset, "custom">;
+  name: string;
+  description: string;
+};
+
+export const CHAPTER_PROGRESS_PRESETS: readonly ChapterProgressPresetDefinition[] = [
+  { id: "top-dark", name: "顶部深色分段", description: "深色底栏，适合浅色和复杂画面", position: "top", style: "segments", backgroundColor: "#111316", backgroundOpacity: 0.9, activeColor: "#ffb84d", inactiveColor: "#7d8793", textColor: "#ffffff", height: 80, showTitles: true },
+  { id: "bottom-light", name: "底部浅色分段", description: "浅色底栏，适合深色画面", position: "bottom", style: "segments", backgroundColor: "#f5f7fa", backgroundOpacity: 0.92, activeColor: "#1677ff", inactiveColor: "#8a94a3", textColor: "#171a1f", height: 80, showTitles: true },
+  { id: "top-minimal", name: "顶部极简线", description: "低占用的细线进度，标题保持可见", position: "top", style: "line", backgroundColor: "#111316", backgroundOpacity: 0.56, activeColor: "#47d7ac", inactiveColor: "#8b949e", textColor: "#ffffff", height: 60, showTitles: true },
+  { id: "bottom-steps", name: "底部步骤点", description: "节点式章节状态，适合教程步骤", position: "bottom", style: "steps", backgroundColor: "#111316", backgroundOpacity: 0.76, activeColor: "#ffb84d", inactiveColor: "#89929e", textColor: "#ffffff", height: 96, showTitles: true },
+  { id: "bottom-labels", name: "底部章节标签", description: "突出当前章节，弱化其他章节", position: "bottom", style: "labels", backgroundColor: "#111316", backgroundOpacity: 0.72, activeColor: "#5fa8ff", inactiveColor: "#89929e", textColor: "#ffffff", height: 84, showTitles: true }
+] as const;
 
 export function subtitleStyle(clip: SubtitleClip): SubtitleStyleSettings {
   return {
@@ -75,14 +95,35 @@ export function chapterProgressAt(chapters: readonly ChapterMarker[], playheadUs
   return { activeIndex, localProgress: Math.max(0, Math.min(1, (timeUs - startUs) / Math.max(1, endUs - startUs))) };
 }
 
-export function motionKeywordsForSubtitle(subtitle: string, candidates: readonly (string | null | undefined)[]): string[] {
-  const compactSubtitle = subtitle.replace(/\s+/gu, "");
+const subtitleKeywordNoise = /^(?:这一步|下一步|首先|其次|然后|接下来|最后|目前|现在|未来(?:的)?|同时|因此|但是|从全球看|可以看到|这意味着|正在|正从|将看|将从|需要|通过|进入|转向|包括|已经|仍然|仍|也)+/u;
+const genericSubtitleKeywords = new Set(["内容", "问题", "结果", "结论", "行业", "市场", "竞争", "未来", "目前", "现在"]);
+
+function cleanSubtitleKeyword(value: string) {
+  return value
+    .trim()
+    .replace(/^[，。！？、；：,.!?;:\s]+|[，。！？、；：,.!?;:\s]+$/gu, "")
+    .replace(subtitleKeywordNoise, "")
+    .replace(/(?:正在|已经|仍然|仍|也|等)$/u, "")
+    .trim();
+}
+
+export function subtitleKeywordsForText(subtitle: string, candidates: readonly (string | null | undefined)[]): string[] {
   const result: string[] = [];
-  for (const candidate of candidates) {
-    const keyword = candidate?.trim().replace(/^[，。！？、；：,.!?;:\s]+|[，。！？、；：,.!?;:\s]+$/gu, "");
-    if (!keyword || keyword.length < 2 || keyword.length > 16 || !compactSubtitle.includes(keyword.replace(/\s+/gu, ""))) continue;
+  const accept = (value: string | null | undefined) => {
+    const keyword = cleanSubtitleKeyword(value ?? "");
+    if (!keyword || keyword.length < 2 || keyword.length > 16 || genericSubtitleKeywords.has(keyword) || !subtitle.includes(keyword)) return;
+    if (result.some((current) => current === keyword || current.includes(keyword) || keyword.includes(current))) return;
     if (!result.includes(keyword)) result.push(keyword);
-    if (result.length >= 3) break;
+  };
+  candidates.forEach(accept);
+  if (result.length < 3) {
+    subtitle
+      .split(/[，。！？、；：,.!?;:]|(?:以及|或者|并且|而且|和|与|及)/u)
+      .map(cleanSubtitleKeyword)
+      .filter((keyword) => keyword.length >= 2 && keyword.length <= 16)
+      .forEach((keyword) => {
+        if (result.length < 3) accept(keyword);
+      });
   }
   return result;
 }
