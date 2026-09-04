@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { moveEffectTransform, previewAudioGain, resizeEffectTransform, videoTargetPoint } from "@/components/PreviewCanvas";
+import { moveEffectTransform, previewAudioGain, previewNeedsWebAudioGain, resizeEffectTransform, videoTargetPoint } from "@/components/PreviewCanvas";
 
 const transform = { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 };
 
@@ -23,6 +23,12 @@ describe("PreviewCanvas effect manipulation", () => {
 });
 
 describe("previewAudioGain", () => {
+  it("keeps standard-volume sounds on native media playback", () => {
+    expect(previewNeedsWebAudioGain(1)).toBe(false);
+    expect(previewNeedsWebAudioGain(0.65)).toBe(false);
+    expect(previewNeedsWebAudioGain(1.5)).toBe(true);
+  });
+
   it("preserves voice gain above the HTML media element volume limit", () => {
     expect(previewAudioGain(1.5, 1, 1, false)).toBe(1.5);
   });

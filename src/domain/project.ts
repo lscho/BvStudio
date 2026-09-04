@@ -86,10 +86,10 @@ export const DEFAULT_MOTION_THEME: MotionTheme = {
   colors: {
     text: "#ffffff",
     surface: "#111316",
-    data: "#47d7ac",
+    data: "#5fa8ff",
     opinion: "#5fa8ff",
-    warning: "#ff6b6b",
-    auxiliary: "#ffd166"
+    warning: "#5fa8ff",
+    auxiliary: "#5fa8ff"
   }
 };
 

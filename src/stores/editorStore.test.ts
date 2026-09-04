@@ -91,7 +91,7 @@ describe("editorStore", () => {
   it("adds and edits a parameterized effect with undo support", () => {
     useEditorStore.getState().addEffect("title-highlight");
     const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0];
-    expect(effect).toMatchObject({ effectId: "title-highlight", text: "核心观点", backdrop: { enabled: true, color: "#111316", opacity: 0.64 } });
+    expect(effect).toMatchObject({ effectId: "title-highlight", text: "核心观点", colorRole: "opinion", backdrop: { enabled: true, color: "#111316", opacity: 0.64 } });
 
     useEditorStore.getState().updateEffect(effect.id, { text: "新的标题", speed: 1.5 });
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({ text: "新的标题", speed: 1.5 });
@@ -100,14 +100,26 @@ describe("editorStore", () => {
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({ text: "核心观点", speed: 1 });
   });
 
+  it("updates theme colors with undo and redo support", () => {
+    const original = useEditorStore.getState().project.motionTheme.colors.data;
+    useEditorStore.getState().updateMotionTheme({ colors: { data: "#123456" } });
+    expect(useEditorStore.getState().project.motionTheme.colors.data).toBe("#123456");
+
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project.motionTheme.colors.data).toBe(original);
+    useEditorStore.getState().redo();
+    expect(useEditorStore.getState().project.motionTheme.colors.data).toBe("#123456");
+  });
+
   it("adds scene backgrounds to the independent scene track", () => {
+    useEditorStore.getState().updateMotionTheme({ colors: { data: "#47d7ac", opinion: "#47d7ac", warning: "#47d7ac", auxiliary: "#47d7ac" } });
     useEditorStore.getState().addEffect("scene-black-stripes");
     let project = useEditorStore.getState().project;
     expect(project.tracks.find((track) => track.kind === "effect")!.clips).toHaveLength(0);
     expect(project.tracks.find((track) => track.kind === "scene")!.clips).toEqual([
       expect.objectContaining({
         kind: "scene", trackId: "scene-main", effectId: "scene-black-stripes", opacity: 1,
-        background: expect.objectContaining({ preset: "black-stripes" })
+        background: expect.objectContaining({ preset: "black-stripes", borderColor: "#47d7ac" })
       })
     ]);
 
@@ -424,6 +436,73 @@ describe("editorStore", () => {
     expect(effects).toHaveLength(0);
   });
 
+  it("uses the project accent color instead of the AI color for matched subtitles and effects", () => {
+    useEditorStore.getState().updateMotionTheme({ colors: { data: "#47d7ac", opinion: "#47d7ac", warning: "#47d7ac", auxiliary: "#47d7ac" } });
+    useEditorStore.getState().addVideo({ id: "asr-video", name: "speech.mp4", kind: "video", durationUs: 3_000_000, hasAudio: true });
+    useEditorStore.getState().addSubtitles("asr-video", [{ startSeconds: 0, endSeconds: 3, text: "核心增长达到百分之四十二。" }]);
+    const subtitle = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [{
+      ...motionMatch,
+      accentColor: "#ff0000",
+      backdropPreset: "accent",
+      subtitleKeywords: ["核心增长"]
+    }]);
+
+    const project = useEditorStore.getState().project;
+    expect(project.tracks.find((track) => track.kind === "subtitle")!.clips[0]).toMatchObject({
+      highlightWords: ["核心增长"],
+      highlightColor: "#47d7ac"
+    });
+    expect(project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({
+      accentColor: "#47d7ac",
+      backdrop: { color: "#47d7ac" }
+    });
+  });
+
+  it("uses the project accent color throughout generated plans", () => {
+    useEditorStore.getState().updateMotionTheme({ colors: { data: "#ffb84d", opinion: "#ffb84d", warning: "#ffb84d", auxiliary: "#ffb84d" } });
+    useEditorStore.getState().addGeneratedPlan({
+      ...plan,
+      captions: [{ startSeconds: 0, endSeconds: 2, text: "统一主题色" }],
+      matches: [{ ...motionMatch, accentColor: "#ff0000", backdropPreset: "accent", subtitleKeywords: ["主题色"] }]
+    }, "统一主题色", "overlay");
+
+    const project = useEditorStore.getState().project;
+    const generated = project.tracks.find((track) => track.kind === "generated")!.clips[0];
+    expect(generated).toMatchObject({ kind: "generated", scenes: [expect.objectContaining({ accentColor: "#ffb84d" })] });
+    expect(project.tracks.find((track) => track.kind === "subtitle")!.clips[0]).toMatchObject({ highlightColor: "#ffb84d" });
+    expect(project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({
+      accentColor: "#ffb84d",
+      backdrop: { color: "#ffb84d" }
+    });
+  });
+
+  it("adds replaceable AI-matched sounds to the unlocked sound track", () => {
+    useEditorStore.getState().addVideo({ id: "asr-video", name: "speech.mp4", kind: "video", durationUs: 4_000_000, hasAudio: true });
+    useEditorStore.getState().addSubtitles("asr-video", [{ startSeconds: 1, endSeconds: 4, text: "点击按钮完成操作。" }]);
+    const subtitle = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+    const clickAsset = { id: "builtin-sound:clean-click", name: "字幕弹出.wav", kind: "audio" as const, durationUs: 220_000, sourcePath: "/cache/click.wav", objectUrl: "asset://click", hasAudio: true, missing: false };
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, soundEffectId: "clean-click" }], [clickAsset]);
+
+    let soundTrack = useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")!;
+    expect(soundTrack.clips).toEqual([expect.objectContaining({
+      kind: "audio", label: "AI 音效 · 字幕弹出", startUs: 1_000_000, durationUs: 220_000,
+      assetId: clickAsset.id, role: "sound", sourceSubtitleId: subtitle.id
+    })]);
+    expect(useEditorStore.getState().project.assets).toContainEqual(expect.objectContaining({ id: clickAsset.id }));
+
+    const successAsset = { ...clickAsset, id: "builtin-sound:success-tone", name: "片尾收束.wav", durationUs: 1_050_000, sourcePath: "/cache/success.wav" };
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, soundEffectId: "success-tone" }], [successAsset]);
+    soundTrack = useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")!;
+    expect(soundTrack.clips).toHaveLength(1);
+    expect(soundTrack.clips[0]).toMatchObject({ label: "AI 音效 · 片尾收束", assetId: successAsset.id });
+
+    useEditorStore.getState().setTrackState(soundTrack.id, { locked: true });
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, soundEffectId: null }]);
+    expect(useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")!.clips).toHaveLength(1);
+  });
+
   it("uses only exact subtitle keywords for highlights and keeps divergent motion copy", () => {
     useEditorStore.getState().addVideo({ id: "asr-video", name: "speech.mp4", kind: "video", durationUs: 3_000_000, hasAudio: true });
     useEditorStore.getState().addSubtitles("asr-video", [{ startSeconds: 0, endSeconds: 3, text: "核心增长达到百分之四十二。" }]);
@@ -438,6 +517,7 @@ describe("editorStore", () => {
   });
 
   it("materializes a text-free scene background from subtitle motion matching", () => {
+    useEditorStore.getState().updateMotionTheme({ colors: { data: "#9b8cff", opinion: "#9b8cff", warning: "#9b8cff", auxiliary: "#9b8cff" } });
     useEditorStore.getState().addVideo({ id: "asr-video", name: "speech.mp4", kind: "video", durationUs: 3_000_000, hasAudio: true });
     useEditorStore.getState().addSubtitles("asr-video", [{ startSeconds: 0, endSeconds: 3, text: "行业进入精细化运营阶段。" }]);
     const subtitle = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
@@ -450,7 +530,7 @@ describe("editorStore", () => {
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "scene")!.clips[0]).toMatchObject({
       kind: "scene",
       effectId: "scene-dark-grid",
-      background: { preset: "dark-grid" }
+      background: { preset: "dark-grid", borderColor: "#9b8cff" }
     });
   });
 

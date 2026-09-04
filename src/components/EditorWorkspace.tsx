@@ -7,6 +7,7 @@ import { Timeline, formatTime } from "@/components/TimelineEditor";
 import { useEditorStore } from "@/stores/editorStore";
 import { previewFrameIntervalMs } from "@/domain/playback";
 import type { AiProviderConfig } from "@/services/ai/provider";
+import type { BuiltinSoundEffectId } from "@/domain/soundEffects";
 
 interface Props {
   aiProvider: AiProviderConfig;
@@ -20,6 +21,8 @@ interface Props {
   onRelink: (assetId: string) => void;
   onCreateAudio: () => void;
   onManageEffects: () => void;
+  onPreviewBuiltinSound: (soundId: BuiltinSoundEffectId) => void;
+  onAddBuiltinSound: (soundId: BuiltinSoundEffectId) => void;
 }
 
 const StableAssetPanel = memo(AssetPanel);
@@ -27,7 +30,7 @@ const StablePreviewCanvas = memo(PreviewCanvas);
 const StableInspectorPanel = memo(InspectorPanel);
 const StableTimeline = memo(Timeline);
 
-export function EditorWorkspace({ aiProvider, onNeedSettings, onGenerate, onMatchEffects, onImport, onTranscribe, onExtractAudio, onExportAudio, onRelink, onCreateAudio, onManageEffects }: Props) {
+export function EditorWorkspace({ aiProvider, onNeedSettings, onGenerate, onMatchEffects, onImport, onTranscribe, onExtractAudio, onExportAudio, onRelink, onCreateAudio, onManageEffects, onPreviewBuiltinSound, onAddBuiltinSound }: Props) {
   const [playing, setPlaying] = useState(false);
   const durationUs = useEditorStore((state) => state.project.durationUs);
   const setPlayhead = useEditorStore((state) => state.setPlayhead);
@@ -76,7 +79,7 @@ export function EditorWorkspace({ aiProvider, onNeedSettings, onGenerate, onMatc
 
   return (
     <main className="editor-workspace">
-      <div className="editor-main"><StableAssetPanel onImport={onImport} onGenerate={onGenerate} onMatchEffects={onMatchEffects} onTranscribe={onTranscribe} onExtractAudio={onExtractAudio} onExportAudio={onExportAudio} onRelink={onRelink} onCreateAudio={onCreateAudio} onManageEffects={onManageEffects} /><div className="preview-column"><StablePreviewCanvas aiProvider={aiProvider} onNeedSettings={onNeedSettings} onImport={onImport} onGenerate={onGenerate} playing={playing} /><div className="transport"><button type="button" aria-label="回到开头" onClick={() => { previewEndUs.current = null; setPlaying(false); setPlayhead(0); }}><SkipBack size={17} /></button><button className="play-button" type="button" aria-label={playing ? "暂停" : "播放"} onClick={togglePlayback}>{playing ? <Pause size={18} /> : <Play size={18} fill="currentColor" />}</button><TransportTimecode durationUs={durationUs} /></div></div><StableInspectorPanel /></div>
+      <div className="editor-main"><StableAssetPanel onImport={onImport} onGenerate={onGenerate} onMatchEffects={onMatchEffects} onTranscribe={onTranscribe} onExtractAudio={onExtractAudio} onExportAudio={onExportAudio} onRelink={onRelink} onCreateAudio={onCreateAudio} onManageEffects={onManageEffects} onPreviewBuiltinSound={onPreviewBuiltinSound} onAddBuiltinSound={onAddBuiltinSound} /><div className="preview-column"><StablePreviewCanvas aiProvider={aiProvider} onNeedSettings={onNeedSettings} onImport={onImport} onGenerate={onGenerate} playing={playing} /><div className="transport"><button type="button" aria-label="回到开头" onClick={() => { previewEndUs.current = null; setPlaying(false); setPlayhead(0); }}><SkipBack size={17} /></button><button className="play-button" type="button" aria-label={playing ? "暂停" : "播放"} onClick={togglePlayback}>{playing ? <Pause size={18} /> : <Play size={18} fill="currentColor" />}</button><TransportTimecode durationUs={durationUs} /></div></div><StableInspectorPanel /></div>
       <StableTimeline />
     </main>
   );

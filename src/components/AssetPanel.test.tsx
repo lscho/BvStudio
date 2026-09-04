@@ -7,6 +7,25 @@ import { BUILTIN_EFFECTS } from "@/domain/effects";
 import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
 
 describe("AssetPanel video audio actions", () => {
+  it("previews and manually adds a built-in sound effect", () => {
+    const project = createEmptyProject();
+    useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
+    const onPreviewBuiltinSound = vi.fn();
+    const onAddBuiltinSound = vi.fn();
+    render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} onPreviewBuiltinSound={onPreviewBuiltinSound} onAddBuiltinSound={onAddBuiltinSound} />);
+
+    const soundsTab = screen.getByRole("tab", { name: "音效" });
+    fireEvent.mouseDown(soundsTab, { button: 0, ctrlKey: false });
+    fireEvent.click(soundsTab);
+    expect(screen.getByText("丝滑转场")).toBeInTheDocument();
+    expect(screen.getByText("片头冲击")).toBeInTheDocument();
+    expect(screen.getByText("字幕弹出")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "试听 字幕弹出" }));
+    fireEvent.click(screen.getByRole("button", { name: "添加 字幕弹出" }));
+    expect(onPreviewBuiltinSound).toHaveBeenCalledWith("clean-click");
+    expect(onAddBuiltinSound).toHaveBeenCalledWith("clean-click");
+  });
+
   it("offers cloud subtitle extraction, aligned audio separation and audio export", () => {
     const project = createEmptyProject();
     project.assets.push({ id: "video", name: "source.mp4", kind: "video", durationUs: 5_000_000, sourcePath: "/source.mp4", hasAudio: true, missing: false });
@@ -43,6 +62,31 @@ describe("AssetPanel video audio actions", () => {
     expect(dataGroup?.querySelectorAll(".chart-swatch")).toHaveLength(4);
     expect(container.querySelectorAll(".effect-swatch")).toHaveLength(BUILTIN_EFFECTS.length);
     expect(container.querySelectorAll(".effect-swatch i")).toHaveLength(BUILTIN_EFFECTS.length);
+  });
+
+  it("selects one project accent color for new effects with undo support", () => {
+    const project = createEmptyProject();
+    useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
+    useEffectLibraryStore.setState({ effects: [...BUILTIN_EFFECTS] });
+    render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} />);
+
+    expect(screen.getByRole("radio", { name: "天蓝" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("radio", { name: "青绿" }));
+    expect(useEditorStore.getState().project.motionTheme.colors).toMatchObject({
+      data: "#47d7ac",
+      opinion: "#47d7ac",
+      warning: "#47d7ac",
+      auxiliary: "#47d7ac"
+    });
+
+    fireEvent.click(screen.getByText("开场 · 高亮条").closest("button")!);
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({
+      accentColor: "#47d7ac",
+      colorRole: "auxiliary"
+    });
+    useEditorStore.getState().undo();
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project.motionTheme.colors.opinion).toBe("#5fa8ff");
   });
 
   it("filters the production effect library by name, description and tags", () => {

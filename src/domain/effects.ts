@@ -438,6 +438,34 @@ const SCENE_EFFECTS: readonly EffectDefinition[] = [
 
 const LEGACY_EFFECTS: readonly EffectDefinition[] = [...CORE_EFFECTS, ...CHART_EFFECTS, ...FAMILY_EFFECTS, ...SCENE_EFFECTS];
 
+const KNOWLEDGE_EFFECTS: readonly EffectDefinition[] = [
+  {
+    id: "knowledge-concept-map", name: "概念图谱", category: "卡片", description: "拆解核心概念与最多三个关联要点；文案格式：概念｜要点一｜要点二｜要点三", tags: ["知识", "科普", "概念", "定义", "原理", "拆解", "是什么"],
+    defaultDurationUs: 4_200_000, defaultText: "核心概念｜关键机制｜实际影响｜应用场景", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    recipe: { layout: "frame", entrance: "none", paddingX: 26, paddingY: 22, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.84 }
+  },
+  {
+    id: "knowledge-causal-chain", name: "因果链", category: "布局", description: "按顺序呈现起因、机制和结果；文案格式：起因｜机制｜结果", tags: ["知识", "科普", "因果", "原因", "机制", "结果", "为什么", "原理"],
+    defaultDurationUs: 4_000_000, defaultText: "现象出现｜机制作用｜产生结果", defaultColor: "#ffffff", defaultAccentColor: "#47d7ac",
+    recipe: { layout: "panel", entrance: "none", paddingX: 26, paddingY: 20, borderWidth: 3, borderRadius: 4, backgroundOpacity: 0.84 }
+  },
+  {
+    id: "knowledge-argument-board", name: "论点证据板", category: "卡片", description: "突出一个核心观点并逐条给出最多三个依据；文案格式：观点｜依据一｜依据二｜依据三", tags: ["观点", "论据", "证据", "结论", "分析", "评论", "判断", "总结"],
+    defaultDurationUs: 4_500_000, defaultText: "真正重要的是长期价值｜短期指标会波动｜结构优势更稳定", defaultColor: "#ffffff", defaultAccentColor: "#ffb84d",
+    recipe: { layout: "panel", entrance: "none", paddingX: 28, paddingY: 22, borderWidth: 3, borderRadius: 4, backgroundOpacity: 0.86 }
+  },
+  {
+    id: "knowledge-myth-fact", name: "误区纠偏", category: "强调", description: "左右对照常见误区与正确认知；文案格式：常见误区｜正确结论", tags: ["科普", "观点", "误区", "辟谣", "纠正", "真相", "不是", "其实"],
+    defaultDurationUs: 4_000_000, defaultText: "信息越多越专业｜结构清楚更重要", defaultColor: "#ffffff", defaultAccentColor: "#ff7b72",
+    recipe: { layout: "frame", entrance: "none", paddingX: 26, paddingY: 22, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.86 }
+  },
+  {
+    id: "knowledge-quote-lines", name: "金句逐行", category: "卡片", description: "先显示标题，再将金句内容逐行揭示；文案格式：标题｜金句第一行｜金句第二行｜金句第三行", tags: ["金句", "观点", "引用", "逐行", "多行", "总结", "结论", "价值观"],
+    defaultDurationUs: 4_800_000, defaultText: "关于长期主义｜真正重要的不是走得多快｜而是始终走在正确的方向", defaultColor: "#ffffff", defaultAccentColor: "#ffb84d",
+    recipe: { layout: "frame", entrance: "none", paddingX: 30, paddingY: 24, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.88 }
+  }
+] as const;
+
 const TEST_EFFECTS: readonly EffectDefinition[] = [
   {
     id: "test-title-slide", name: "标题滑入", category: "标题", description: "简洁标题从左侧进入", tags: ["标题", "开场", "主题"],
@@ -515,7 +543,7 @@ const TEST_EFFECTS: readonly EffectDefinition[] = [
   }))
 ] as const;
 
-export const BUILTIN_EFFECTS: readonly EffectDefinition[] = [...TEST_EFFECTS, ...FAMILY_EFFECTS, ...SCENE_EFFECTS];
+export const BUILTIN_EFFECTS: readonly EffectDefinition[] = [...TEST_EFFECTS, ...KNOWLEDGE_EFFECTS, ...FAMILY_EFFECTS, ...SCENE_EFFECTS];
 
 let installedEffects: EffectDefinition[] = [];
 

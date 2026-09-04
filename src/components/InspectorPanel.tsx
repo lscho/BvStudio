@@ -2,7 +2,8 @@ import { CircleUserRound, Clock3, Columns2, DiamondPlus, Expand, Focus, PictureI
 import { Select } from "@/components/Select";
 import { EASING_LABELS, EASING_NAMES } from "@/domain/easing";
 import type { ChartSpec } from "@/domain/effects";
-import type { AudioClip, EffectClip, GeneratedBlock, ImageClip, SceneClip, SubtitleClip, TransformProps, VideoClip, VisualTransformKeyframe } from "@/domain/project";
+import { effectBackdropUsesTheme, effectColorRolePatch, MOTION_COLOR_ROLE_OPTIONS, resolveEffectAppearance, resolveEffectBackdropColor } from "@/domain/motionTheme";
+import type { AudioClip, EffectClip, GeneratedBlock, ImageClip, MotionColorRole, MotionTheme, SceneClip, SubtitleClip, TransformProps, VideoClip, VisualTransformKeyframe } from "@/domain/project";
 import { selectedClip, useEditorStore } from "@/stores/editorStore";
 import { upsertVisualKeyframe, visualTransformAt } from "@/domain/transforms";
 import { activeVideoPresentationCue, DEFAULT_EFFECT_BACKDROP, VIDEO_MOTION_PRESETS, videoMotionPresetUsesFocusPoint, videoPresentationAt, type VideoMotionPresetId } from "@/domain/videoPresentation";
@@ -28,14 +29,6 @@ const SUBTITLE_STYLE_OPTIONS = [
   { value: "classic", label: "经典字幕" },
   { value: "bold", label: "重点强调" },
   { value: "minimal", label: "简洁无底" }
-];
-
-const MOTION_COLOR_ROLE_OPTIONS = [
-  { value: "data", label: "数据色" },
-  { value: "opinion", label: "观点色" },
-  { value: "warning", label: "警示色" },
-  { value: "auxiliary", label: "辅助色" },
-  { value: "custom", label: "自定义颜色" }
 ];
 
 const VIDEO_MOTION_ICONS = {
@@ -116,7 +109,8 @@ function SubtitleInspector({ clip, onPatch }: { clip: SubtitleClip; onPatch: (pa
 function EffectInspectorAtPlayhead({ clip, onPatch }: { clip: EffectClip; onPatch: (patch: Partial<EffectClip>) => void }) {
   const playheadUs = useEditorStore((state) => state.playheadUs);
   const setPlayhead = useEditorStore((state) => state.setPlayhead);
-  return <EffectInspector clip={clip} playheadUs={playheadUs} onSeek={setPlayhead} onPatch={onPatch} />;
+  const motionTheme = useEditorStore((state) => state.project.motionTheme);
+  return <EffectInspector clip={clip} motionTheme={motionTheme} playheadUs={playheadUs} onSeek={setPlayhead} onPatch={onPatch} />;
 }
 
 function SceneInspector({ clip, onPatch }: { clip: SceneClip; onPatch: (patch: Partial<SceneClip>) => void }) {
@@ -147,20 +141,29 @@ function keyframeTransformPatch(base: TransformProps, keyframes: readonly Visual
     : { transform, transformKeyframes: [...(keyframes ?? [])] };
 }
 
-function EffectInspector({ clip, playheadUs, onSeek, onPatch }: { clip: EffectClip; playheadUs: number; onSeek: (timeUs: number) => void; onPatch: (patch: Partial<EffectClip>) => void }) {
+function EffectInspector({ clip, motionTheme, playheadUs, onSeek, onPatch }: { clip: EffectClip; motionTheme: MotionTheme; playheadUs: number; onSeek: (timeUs: number) => void; onPatch: (patch: Partial<EffectClip>) => void }) {
   const localUs = Math.max(0, Math.min(clip.durationUs, playheadUs - clip.startUs));
   const current = visualTransformAt(clip.transform, clip.transformKeyframes, localUs);
   const patchTransform = (patch: Partial<TransformProps>) => onPatch(keyframeTransformPatch(clip.transform, clip.transformKeyframes, localUs, patch));
   const recipe = clip.recipe;
   const backdrop = { ...DEFAULT_EFFECT_BACKDROP, ...clip.backdrop };
+  const appearance = resolveEffectAppearance(clip, motionTheme);
+  const backdropFollowsTheme = effectBackdropUsesTheme(clip.backdrop);
+  const backdropColor = resolveEffectBackdropColor(clip.backdrop, motionTheme);
+  const colorRole = clip.colorRole ?? "custom";
   return <div className="inspector-content">
     <div className="selection-heading"><span className="type-dot effect" /><div><strong>{clip.label}</strong><small>动效片段 · 视频上层</small></div></div>
     <div className="two-column"><NumberField label="开始时间" value={clip.startUs / 1_000_000} min={0} step={0.1} suffix="s" onChange={(value) => onPatch({ startUs: Math.round(value * 1_000_000) })} /><NumberField label="持续时间" value={clip.durationUs / 1_000_000} min={0.1} step={0.1} suffix="s" onChange={(value) => onPatch({ durationUs: Math.round(value * 1_000_000) })} /></div>
     <NumberField label="动效层级" value={clip.zIndex ?? 20} min={0} max={200} step={1} suffix="" onChange={(zIndex) => onPatch({ zIndex })} />
-    <label><span>语义配色</span><Select label="动效语义配色" value={clip.colorRole ?? "custom"} onChange={(value) => onPatch({ colorRole: value as EffectClip["colorRole"] })} options={MOTION_COLOR_ROLE_OPTIONS} /></label>
+    <label><span>颜色来源</span><Select label="动效颜色来源" value={colorRole} onChange={(value) => onPatch(effectColorRolePatch(clip, motionTheme, value as MotionColorRole))} options={MOTION_COLOR_ROLE_OPTIONS} /></label>
+    <div className="effect-color-summary" aria-label="当前动效配色">
+      <span><i style={{ backgroundColor: appearance.color }} />文字</span>
+      <span><i style={{ backgroundColor: appearance.accentColor }} />强调</span>
+      <small>{colorRole === "custom" ? "单独设置" : "跟随主题"}</small>
+    </div>
     <EffectRegistryControls clip={clip} onPatch={onPatch} />
     {recipe?.chart && <ChartFields spec={recipe.chart} onChange={(chart) => { if (recipe) onPatch({ recipe: { ...structuredClone(recipe), chart } }); }} />}
-    <section className="camera-fields"><span>整体背景</span><label className="check-row"><input type="checkbox" checked={backdrop.enabled} onChange={(event) => onPatch({ backdrop: { ...backdrop, enabled: event.target.checked } })} /><span>启用动效背景</span></label>{backdrop.enabled && <><div className="two-column"><label><span>背景颜色</span><input type="color" value={backdrop.color} onChange={(event) => onPatch({ backdrop: { ...backdrop, color: event.target.value } })} /></label><NumberField label="背景模糊" value={backdrop.blur} min={0} max={30} step={1} suffix="px" onChange={(blur) => onPatch({ backdrop: { ...backdrop, blur } })} /></div><RangeField label="背景透明度" value={backdrop.opacity} min={0} max={1} step={0.05} suffix="" onChange={(opacity) => onPatch({ backdrop: { ...backdrop, opacity } })} /><div className="two-column"><NumberField label="横向留白" value={backdrop.paddingX} min={0} max={100} step={1} suffix="px" onChange={(paddingX) => onPatch({ backdrop: { ...backdrop, paddingX } })} /><NumberField label="纵向留白" value={backdrop.paddingY} min={0} max={60} step={1} suffix="px" onChange={(paddingY) => onPatch({ backdrop: { ...backdrop, paddingY } })} /></div><RangeField label="背景圆角" value={backdrop.radius} min={0} max={40} step={1} suffix="px" onChange={(radius) => onPatch({ backdrop: { ...backdrop, radius } })} /></>}</section>
+    <section className="camera-fields"><span>整体背景</span><label className="check-row"><input type="checkbox" checked={backdrop.enabled} onChange={(event) => onPatch({ backdrop: { ...backdrop, enabled: event.target.checked } })} /><span>启用动效背景</span></label>{backdrop.enabled && <><div className="two-column"><label><span>背景颜色{backdropFollowsTheme ? " · 跟随主题" : ""}</span><input type="color" value={backdropColor} onChange={(event) => onPatch({ backdrop: { ...backdrop, color: event.target.value } })} /></label><NumberField label="背景模糊" value={backdrop.blur} min={0} max={30} step={1} suffix="px" onChange={(blur) => onPatch({ backdrop: { ...backdrop, blur } })} /></div>{!backdropFollowsTheme && <button className="inline-reset-button" type="button" onClick={() => onPatch({ backdrop: { ...backdrop, color: DEFAULT_EFFECT_BACKDROP.color } })}>恢复跟随主题底色</button>}<RangeField label="背景透明度" value={backdrop.opacity} min={0} max={1} step={0.05} suffix="" onChange={(opacity) => onPatch({ backdrop: { ...backdrop, opacity } })} /><div className="two-column"><NumberField label="横向留白" value={backdrop.paddingX} min={0} max={100} step={1} suffix="px" onChange={(paddingX) => onPatch({ backdrop: { ...backdrop, paddingX } })} /><NumberField label="纵向留白" value={backdrop.paddingY} min={0} max={60} step={1} suffix="px" onChange={(paddingY) => onPatch({ backdrop: { ...backdrop, paddingY } })} /></div><RangeField label="背景圆角" value={backdrop.radius} min={0} max={40} step={1} suffix="px" onChange={(radius) => onPatch({ backdrop: { ...backdrop, radius } })} /></>}</section>
     <NumberField label="弱化时间" value={(clip.dimAtUs ?? clip.durationUs) / 1_000_000} min={0} max={clip.durationUs / 1_000_000} step={0.1} suffix="s" onChange={(value) => onPatch({ dimAtUs: Math.round(value * 1_000_000) })} />
     <label><span>忽略检查规则</span><input value={(clip.lintOff ?? []).join(", ")} placeholder="例如 unsafe-bounds" onChange={(event) => onPatch({ lintOff: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></label>
     <RangeField label="大小" value={current.scale} min={0.3} max={3} step={0.05} suffix="×" onChange={(scale) => patchTransform({ scale })} />

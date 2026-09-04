@@ -3,7 +3,8 @@ import { EffectChartCanvas } from "@/components/EffectChartCanvas";
 import { measureChartBox } from "@/domain/chartEffects";
 import { allEffects, effectById, type EffectDefinition, type EffectRecipe } from "@/domain/effects";
 import type { EffectBackdrop, EffectClip, MotionTheme } from "@/domain/project";
-import { motionFontFamily } from "@/domain/motionTheme";
+import { motionFontFamily, resolveEffectBackdropColor } from "@/domain/motionTheme";
+import { ArgumentBoardCard, CausalChainCard, ConceptMapCard, MythFactCard, QuoteLinesCard } from "@/effects/knowledgeCards";
 
 export type EffectControl =
   | { kind: "text"; field: "text"; label: string; rows: number }
@@ -26,6 +27,7 @@ export interface ReactEffectDefinition {
   definition: EffectDefinition;
   component: ComponentType<EffectRenderProps>;
   controls: readonly EffectControl[];
+  motionDurationUs: number;
 }
 
 const commonControls: readonly EffectControl[] = [
@@ -35,6 +37,24 @@ const commonControls: readonly EffectControl[] = [
   { kind: "range", field: "fontSize", label: "字号", min: 18, max: 120, step: 1, suffix: "px" },
   { kind: "range", field: "speed", label: "速度", min: 0.25, max: 3, step: 0.05, suffix: "x" }
 ];
+
+const structuredTextControls: readonly EffectControl[] = commonControls.map((control) => (
+  control.kind === "text" ? { ...control, label: "内容（用｜分隔）", rows: 4 } : control
+));
+
+interface ComponentRegistration {
+  component: ComponentType<EffectRenderProps>;
+  controls: readonly EffectControl[];
+  motionDurationUs: number;
+}
+
+const componentRegistrations: Readonly<Record<string, ComponentRegistration>> = {
+  "knowledge-concept-map": { component: ConceptMapCard, controls: structuredTextControls, motionDurationUs: 1_050_000 },
+  "knowledge-causal-chain": { component: CausalChainCard, controls: structuredTextControls, motionDurationUs: 1_200_000 },
+  "knowledge-argument-board": { component: ArgumentBoardCard, controls: structuredTextControls, motionDurationUs: 1_150_000 },
+  "knowledge-myth-fact": { component: MythFactCard, controls: structuredTextControls, motionDurationUs: 950_000 },
+  "knowledge-quote-lines": { component: QuoteLinesCard, controls: structuredTextControls, motionDurationUs: 1_550_000 }
+};
 
 function revealProgress(timeUs: number, speed: number, durationSeconds = 0.45) {
   return Math.max(0, Math.min(1, timeUs / Math.max(1, durationSeconds * 1_000_000 / Math.max(0.1, speed))));
@@ -77,15 +97,17 @@ function GenericEffectCard(props: EffectRenderProps) {
 }
 
 export function reactEffectDefinition(effectId: string): ReactEffectDefinition {
+  const registration = componentRegistrations[effectId];
   return {
     definition: effectById(effectId),
-    component: GenericEffectCard,
-    controls: commonControls
+    component: registration?.component ?? GenericEffectCard,
+    controls: registration?.controls ?? commonControls,
+    motionDurationUs: registration?.motionDurationUs ?? 0
   };
 }
 
 export function activeReactEffectDefinitions(): ReactEffectDefinition[] {
-  return allEffects().map((definition) => ({ definition, component: GenericEffectCard, controls: commonControls }));
+  return allEffects().map((definition) => reactEffectDefinition(definition.id));
 }
 
 export function EffectCardContent(props: EffectRenderProps) {
@@ -97,6 +119,10 @@ export function effectControlsFor(clip: EffectClip): readonly EffectControl[] {
   return reactEffectDefinition(clip.effectId).controls.map((control) => (
     control.kind === "text" && clip.recipe?.chart ? { ...control, label: "说明文字（可留空）" } : control
   ));
+}
+
+export function reactEffectMotionDurationUs(effectId: string) {
+  return reactEffectDefinition(effectId).motionDurationUs;
 }
 
 export function effectCardChromeStyle(clip: Pick<EffectClip, "color" | "accentColor" | "backdrop">, recipe: EffectRecipe, length: (pixels: number, minimum?: number) => string, theme?: MotionTheme): CSSProperties {
@@ -111,7 +137,7 @@ export function effectCardChromeStyle(clip: Pick<EffectClip, "color" | "accentCo
     borderLeftWidth: recipe.layout === "panel" ? length(Math.max(2, recipe.borderWidth), 1) : frameBorderWidth,
     borderColor: clip.accentColor,
     borderRadius: theme?.style === "editorial" ? length(Math.min(4, backdrop?.enabled ? backdrop.radius : recipe.borderRadius)) : backdrop?.enabled ? length(backdrop.radius) : length(recipe.borderRadius),
-    backgroundColor: backdrop?.enabled ? colorWithOpacity(theme && clip.backdrop?.color === "#111316" ? theme.colors.surface : backdrop.color, backdrop.opacity) : recipe.backgroundOpacity > 0 ? colorWithOpacity(theme?.colors.surface ?? "#111316", recipe.backgroundOpacity) : undefined,
+    backgroundColor: backdrop?.enabled ? colorWithOpacity(theme ? resolveEffectBackdropColor(clip.backdrop, theme) : backdrop.color, backdrop.opacity) : recipe.backgroundOpacity > 0 ? colorWithOpacity(theme?.colors.surface ?? "#111316", recipe.backgroundOpacity) : undefined,
     backdropFilter: backdrop?.enabled && backdrop.blur > 0 ? `blur(${length(backdrop.blur)})` : undefined,
     fontFamily: theme ? motionFontFamily(theme) : undefined,
     boxShadow: theme?.skin === "light" && backdrop?.enabled ? `0 ${length(10)} ${length(28)} rgb(0 0 0 / 0.16)` : undefined,

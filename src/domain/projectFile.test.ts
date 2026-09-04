@@ -27,7 +27,7 @@ describe("project files", () => {
     delete raw.motionTheme;
     expect(parseProject(JSON.stringify(raw))).toMatchObject({
       schemaVersion: 20,
-      motionTheme: { skin: "dark", style: "minimal", font: "sans", colors: { text: "#ffffff", data: "#47d7ac" } }
+      motionTheme: { skin: "dark", style: "minimal", font: "sans", colors: { text: "#ffffff", data: "#5fa8ff" } }
     });
   });
 

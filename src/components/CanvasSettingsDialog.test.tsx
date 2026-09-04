@@ -42,4 +42,18 @@ describe("CanvasSettingsDialog", () => {
 
     expect(useEditorStore.getState().project.canvas).toMatchObject({ fpsNumerator: 60_000, fpsDenominator: 1_000 });
   });
+
+  it("applies a theme palette and keeps every semantic color individually editable", () => {
+    const project = useEditorStore.getState().project;
+    render(<CanvasSettingsDialog open onOpenChange={vi.fn()} canvas={project.canvas} assets={project.assets} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /浅色主题/ }));
+    fireEvent.change(screen.getByLabelText("动效观点颜色"), { target: { value: "#3456d1" } });
+    fireEvent.click(screen.getByRole("button", { name: "应用画布" }));
+
+    expect(useEditorStore.getState().project.motionTheme).toMatchObject({
+      skin: "light",
+      colors: { text: "#1b1d21", surface: "#f7f8fa", data: "#2563eb", opinion: "#3456d1", warning: "#2563eb", auxiliary: "#2563eb" }
+    });
+  });
 });

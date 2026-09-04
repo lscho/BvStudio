@@ -27,14 +27,21 @@ describe("retrieveEffects", () => {
     expect(retrieveEffects("做一个简洁的开篇引入", 1)[0].tags).toContain("开场");
     expect(retrieveEffects("把操作方法按流程讲清楚", 1)[0].tags).toContain("流程");
     expect(retrieveEffects("展示销售额上涨与占比", 1)[0].tags).toContain("数据");
+    expect(retrieveEffects("解释为什么会产生这个结果", 1)[0].id).toBe("knowledge-causal-chain");
+    expect(retrieveEffects("纠正常见误区并给出真相", 1)[0].id).toBe("knowledge-myth-fact");
   });
 
   it("ships a production-sized uniquely addressable library with animated families and scenes", () => {
-    expect(BUILTIN_EFFECTS).toHaveLength(76);
+    expect(BUILTIN_EFFECTS).toHaveLength(81);
     expect(new Set(BUILTIN_EFFECTS.map((effect) => effect.id)).size).toBe(BUILTIN_EFFECTS.length);
     expect(BUILTIN_EFFECTS).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "intro-highlight" }),
       expect.objectContaining({ id: "warning-panel" }),
+      expect.objectContaining({ id: "knowledge-concept-map" }),
+      expect.objectContaining({ id: "knowledge-causal-chain" }),
+      expect.objectContaining({ id: "knowledge-argument-board" }),
+      expect.objectContaining({ id: "knowledge-myth-fact" }),
+      expect.objectContaining({ id: "knowledge-quote-lines" }),
       expect.objectContaining({ id: "scene-focus-stack", kind: "scene" })
     ]));
     const backgroundScenes = BUILTIN_EFFECTS.filter((effect) => effect.recipe.sceneBackground);

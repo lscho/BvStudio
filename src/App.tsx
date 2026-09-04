@@ -58,6 +58,8 @@ import { useEditorStore } from "@/stores/editorStore";
 import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
 import { rasterizeReactEffects } from "@/effects/exportRenderer";
 import { lintMotionProject } from "@/domain/motionLint";
+import { builtinSoundAssetId, builtinSoundEffectById, type BuiltinSoundEffectId } from "@/domain/soundEffects";
+import { createBuiltinSoundAsset, previewBuiltinSound } from "@/services/builtinSounds";
 
 function loadVideoMetadata(url: string) {
   return new Promise<{ duration: number; width: number; height: number }>((resolve, reject) => {
@@ -500,7 +502,7 @@ export default function App() {
     const controller = new AbortController();
     setAiRequestController(controller);
     setNotice(null);
-    setBusyMessage(`正在分析 ${subtitles.length} 条字幕的单条与组合动效`);
+    setBusyMessage(`正在为 ${subtitles.length} 条字幕匹配场景、动效与音效`);
     try {
       const result = await matchTimelineMotion(settings.aiProvider, {
         topic: project.name,
@@ -522,7 +524,13 @@ export default function App() {
           };
         })
       }, browserApiKey(), controller.signal, (progress) => setBusyMessage(progress.message));
-      applyMotionMatches(subtitles.map((clip) => clip.id), result.matches ?? []);
+      const soundIds = [...new Set((result.matches ?? []).flatMap((match) => match.soundEffectId ? [match.soundEffectId] : []))];
+      const soundAssets = await Promise.all(soundIds.map(async (soundId) => {
+        const expectedName = `${builtinSoundEffectById(soundId)?.name}.wav`;
+        const existing = useEditorStore.getState().project.assets.find((asset) => asset.id === builtinSoundAssetId(soundId) && !asset.missing && asset.name === expectedName);
+        return existing ?? createBuiltinSoundAsset(soundId, { refresh: true });
+      }));
+      applyMotionMatches(subtitles.map((clip) => clip.id), result.matches ?? [], soundAssets);
       const lintIssues = lintMotionProject(useEditorStore.getState().project);
       const errors = lintIssues.filter((issue) => issue.severity === "error");
       if (errors.length) {
@@ -530,13 +538,29 @@ export default function App() {
         throw new Error(`AI 编排未通过动效检查：${errors[0].message}`);
       }
       const warnings = lintIssues.filter((issue) => issue.severity === "warning");
-      setNotice(warnings.length ? `AI 编排已完成，动效检查有 ${warnings.length} 条提醒：${warnings[0].message}` : `已按连续场景为 ${subtitles.length} 条字幕匹配 A-roll、B-roll 与动效`);
+      setNotice(warnings.length ? `AI 编排已完成，动效检查有 ${warnings.length} 条提醒：${warnings[0].message}` : `已按连续场景为 ${subtitles.length} 条字幕匹配 A-roll、B-roll、动效与音效`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "动效匹配失败");
     } finally {
       setAiRequestController(null);
       setBusyMessage(null);
     }
+  }
+
+  async function addBuiltinSound(soundId: BuiltinSoundEffectId) {
+    try {
+      const expectedName = `${builtinSoundEffectById(soundId)?.name}.wav`;
+      const current = useEditorStore.getState().project.assets.find((asset) => asset.id === builtinSoundAssetId(soundId) && !asset.missing && asset.name === expectedName);
+      const asset = current ?? await createBuiltinSoundAsset(soundId, { refresh: true });
+      addAudio(asset, "sound");
+      setNotice(`已在播放头添加“${builtinSoundEffectById(soundId)?.name ?? "内置音效"}”`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "内置音效添加失败");
+    }
+  }
+
+  function playBuiltinSound(soundId: BuiltinSoundEffectId) {
+    void previewBuiltinSound(soundId).catch(() => setNotice("浏览器阻止了音效试听，请再次点击试听"));
   }
 
   async function exportVideo(options: VideoExportOptions) {
@@ -688,7 +712,7 @@ export default function App() {
           </div>
           <WindowControls />
         </header>
-        <EditorWorkspace aiProvider={settings.aiProvider} onNeedSettings={() => setSettingsOpen(true)} onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onMatchEffects={() => void matchSubtitleEffects()} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => setAudioOpen(true)} onManageEffects={() => setEffectLibraryOpen(true)} />
+        <EditorWorkspace aiProvider={settings.aiProvider} onNeedSettings={() => setSettingsOpen(true)} onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onMatchEffects={() => void matchSubtitleEffects()} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => setAudioOpen(true)} onManageEffects={() => setEffectLibraryOpen(true)} onPreviewBuiltinSound={playBuiltinSound} onAddBuiltinSound={(soundId) => void addBuiltinSound(soundId)} />
         <input ref={fileInput} className="visually-hidden" type="file" accept="video/*,audio/*,image/png,image/jpeg,image/webp,image/bmp" onChange={(event) => void importBrowserMedia(event)} />
       </div>
       {(busyMessage || notice) && <div className={`status-toast ${busyMessage ? "busy" : ""}`}>{busyMessage && <LoaderCircle className="spin" size={15} />}<span>{busyMessage ?? notice}{exportProgress ? <small>{Math.round(exportProgress.progress * 100)}% · {exportProgress.segmentIndex}/{exportProgress.segmentCount || "-"}</small> : proxyProgress ? <small>{Math.round(proxyProgress.progress * 100)}%</small> : asrProgress ? <small>{Math.round(asrProgress.progress * 100)}% · 云端处理</small> : null}</span>{(aiRequestController || exportJobId || proxyJobId || audioExtractionJobId || asrJobId) && <button type="button" aria-label={aiRequestController ? "取消 AI 匹配" : exportJobId ? "取消视频导出" : proxyJobId ? "取消代理生成" : audioExtractionJobId ? "取消音频分离" : "取消字幕识别"} title="取消任务" onClick={() => void cancelCurrentTask()}><Square size={12} fill="currentColor" /></button>}{notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button>}</div>}

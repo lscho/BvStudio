@@ -40,6 +40,10 @@ export function previewAudioGain(volume: number, fadeInGain: number, fadeOutGain
   return clamp(volume, 0, 2) * clamp(Math.min(fadeInGain, fadeOutGain), 0, 1) * (ducked ? 0.28 : 1);
 }
 
+export function previewNeedsWebAudioGain(volume: number) {
+  return volume > 1;
+}
+
 function colorWithOpacity(color: string, opacity: number) {
   const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/iu.exec(color);
   if (!match) return color;
@@ -432,6 +436,11 @@ function SyncedVideo({ src, sourceInUs, localUs, playbackRate, volume, muted, fi
 }
 
 function AudioPreview({ clip, src, playheadUs, playing, ducked }: { clip: AudioClip; src: string; playheadUs: number; playing: boolean; ducked: boolean }) {
+  const useWebAudioGain = previewNeedsWebAudioGain(clip.volume);
+  return <AudioPreviewElement key={useWebAudioGain ? "boosted" : "native"} clip={clip} src={src} playheadUs={playheadUs} playing={playing} ducked={ducked} useWebAudioGain={useWebAudioGain} />;
+}
+
+function AudioPreviewElement({ clip, src, playheadUs, playing, ducked, useWebAudioGain }: { clip: AudioClip; src: string; playheadUs: number; playing: boolean; ducked: boolean; useWebAudioGain: boolean }) {
   const ref = useRef<HTMLAudioElement>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -459,7 +468,7 @@ function AudioPreview({ clip, src, playheadUs, playing, ducked }: { clip: AudioC
   };
   useEffect(() => {
     const audio = ref.current;
-    if (!audio || typeof window.AudioContext === "undefined") return;
+    if (!useWebAudioGain || !audio || typeof window.AudioContext === "undefined") return;
     try {
       previewAudioContext ??= new window.AudioContext();
       const sourceNode = previewAudioContext.createMediaElementSource(audio);
@@ -478,7 +487,7 @@ function AudioPreview({ clip, src, playheadUs, playing, ducked }: { clip: AudioC
       gainNodeRef.current = null;
       audioContextRef.current = null;
     }
-  }, []);
+  }, [useWebAudioGain]);
   useEffect(() => {
     const justStarted = playing && !wasPlaying.current;
     wasPlaying.current = playing;

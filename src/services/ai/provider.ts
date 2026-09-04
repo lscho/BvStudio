@@ -17,6 +17,7 @@ import type { EffectDefinition } from "@/domain/effects";
 import { CAMERA_PRESETS } from "@/domain/camera";
 import { mergeLeadingCaptionFragments } from "@/domain/captions";
 import { subtitleKeywordsForText } from "@/domain/videoDecorations";
+import { BUILTIN_SOUND_EFFECTS } from "@/domain/soundEffects";
 
 export type AiProtocol = "openai-responses" | "openai-chat" | "anthropic";
 
@@ -176,14 +177,16 @@ function modelsEndpoint(config: AiProviderConfig) {
 }
 
 function motionSystemPrompt(candidates: EffectDefinition[], materials: AiMaterialCandidate[]) {
-  const effects = candidates.map(({ id, name, description, tags, recipe, soundCues }) => ({ id, name, description, tags, chartKind: recipe.chart?.kind ?? null, has3d: Boolean(recipe.animation?.keyframes.some((frame) => frame.rotateX || frame.rotateY)), sceneBackground: recipe.sceneBackground?.preset ?? null, hasSound: Boolean(soundCues?.length) }));
+  const effects = candidates.map(({ id, name, description, tags, defaultText, recipe, soundCues }) => ({ id, name, description, tags, textFormat: defaultText.includes("｜") ? defaultText : null, chartKind: recipe.chart?.kind ?? null, has3d: Boolean(recipe.animation?.keyframes.some((frame) => frame.rotateX || frame.rotateY)), sceneBackground: recipe.sceneBackground?.preset ?? null, hasSound: Boolean(soundCues?.length) }));
   const media = materials.map(({ id, name, durationSeconds, width, height, roleHint, transcriptExcerpt }) => ({ id, name, durationSeconds, width, height, roleHint: roleHint ?? "unspecified", transcriptExcerpt: transcriptExcerpt?.slice(0, 500) ?? "" }));
   const cameras = CAMERA_PRESETS.map(({ id, name, description }) => ({ id, name, description }));
-  return `你是视频场景、A-roll/B-roll 与多图层动效编排器。输入已经包含最终逐条时间字幕、绝对时间和所处阶段。先在内部按语义将连续字幕规划为约 6 到 15 秒的场景，再为每个场景选择统一的视觉方案；不要按每条字幕机械切换动效。只能使用这些动效：${JSON.stringify(effects)}。可用运镜：${JSON.stringify(cameras)}。可用本地视频素材：${JSON.stringify(media)}。
+  const sounds = BUILTIN_SOUND_EFFECTS.map(({ id, name, description, tags, durationUs }) => ({ id, name, description, tags, durationSeconds: durationUs / 1_000_000 }));
+  return `你是视频场景、A-roll/B-roll、多图层动效与音效编排器。输入已经包含最终逐条时间字幕、绝对时间和所处阶段。先在内部按语义将连续字幕规划为约 6 到 15 秒的场景，再为每个场景选择统一的视听方案；不要按每条字幕机械切换动效。只能使用这些动效：${JSON.stringify(effects)}。可用内置音效：${JSON.stringify(sounds)}。可用运镜：${JSON.stringify(cameras)}。可用本地视频素材：${JSON.stringify(media)}。
 场景连续性规则：同一主题、对比、流程或递进关系的连续 2 到 8 条字幕必须使用相同 motionGroupId（只能用小写字母、数字、横线），组内每条 persistUntilCaptionIndex 指向场景最后一条字幕。一个场景最多逐步加入 4 个文字或图表层；第一层保持到场景结束，后续只在出现新的关键信息时增加，不能清空旧层再换一套。普通过渡字幕应返回 primaryEffectId=null、secondaryEffectId=null，只保留字幕高亮，不需要每条字幕都有动效。相邻场景避免连续使用强冲击、3D 或有声音的动效。
 A-roll/B-roll 规则：roleHint=a-roll 表示当前口播主叙事素材，通常继续播放，不要在 videoLayers 中重复插入；需要强调时使用 cameraPreset 做克制运镜。B-roll 用于例证、产品画面、操作画面或信息密集段落，每个场景最多选择一段主要 B-roll，通常持续 3 到 8 秒并覆盖多条字幕，volume=0 以保留口播。场景有 3 个以上独立文字要点时，优先选择语义相关的 B-roll，以 full+rectangle+fade 呈现，再在其上逐步叠加 2 到 4 个短文字层；不要让多个小文字卡在每条字幕间闪烁。roleHint、文件名和 transcriptExcerpt 都是素材判断依据。讲解人适合 presenter-bottom-right+circle；教程操作画面适合 screen 全屏并启用 focus，没有准确鼠标坐标时焦点必须用 50/50，等待用户手动调整。多个视频同屏时使用分屏或画中画，避免完全遮挡。
-文字规则：每条字幕默认最多一个主动效；只有辅助动效承载不同且必要的信息时才使用，否则 secondaryEffectId=null。subtitleKeywords 返回 0 到 3 个逐字存在于当前字幕原文的关键词，只用于字幕高亮。primaryText/secondaryText 是简洁且有信息增量的画面文案，中文通常 2 到 14 个字，不照抄完整字幕，不虚构数字、品牌、事实或因果。禁止模板示例和占位文字。只有字幕或同场景字幕包含明确数字时才用图表；单值只用 counter，line/bar 至少两个真实数据点，donut 至少两个真实占比。
-时间轴规则：opening 用于主题建立；middle 用于稳定的信息累积、B-roll 和克制运镜；ending 用于总结收束。场景背景仅用于建立整段环境或章节切换，作为主动效时文字留空。hasSound 动效只用于章节切换、警告或关键结论，不能连续使用且不能作为辅助动效。3D 动效只用于场景转场或一个真正的重点。x/y 应避开底部字幕并避让同场景仍在显示的图层。videoLayers 最多 6 层，不要使用旧的 primary/secondary 素材字段。所有文字默认使用客户端半透明自适应背景。captionIndex 必须与输入字幕索引一致。`;
+文字规则：每条字幕默认最多一个主动效；只有辅助动效承载不同且必要的信息时才使用，否则 secondaryEffectId=null。subtitleKeywords 返回 0 到 3 个逐字存在于当前字幕原文的关键词，只用于字幕高亮。primaryText/secondaryText 是简洁且有信息增量的画面文案，中文通常 2 到 14 个字，不照抄完整字幕，不虚构数字、品牌、事实或因果。候选动效带有 textFormat 时，使用“｜”按相同结构组织精简文案，普通结构总长度可以放宽到 32 个汉字；knowledge-quote-lines 可使用一个标题加最多 5 行金句，总长度不超过 64 个汉字。每一段都必须有字幕依据，不要照抄 textFormat 的示例内容。禁止模板示例和占位文字。只有字幕或同场景字幕包含明确数字时才用图表；单值只用 counter，line/bar 至少两个真实数据点，donut 至少两个真实占比。
+音效规则：opening 的主标题落版可用 intro-impact；B-roll、章节或画面切换用 soft-whoosh，快切、甩镜或快速缩放用 quick-swish；字幕关键词、贴纸出现用 clean-click；明确数字、结论和重点卡片用 soft-pop；种草推荐、惊喜或高光时刻用 notice-chime；答案揭晓或反转前用 suspense-rise；只有内容语气明确轻松、吐槽或趣味时才用 comic-bounce；ending 的总结、关注引导或片尾用 success-tone。不要用音效替代内容，也不要给普通叙述、每条字幕或同一动作重复配音效。
+时间轴规则：opening 用于主题建立；middle 用于稳定的信息累积、B-roll 和克制运镜；ending 用于总结收束。场景背景仅用于建立整段环境或章节切换，作为主动效时文字留空。soundEffectId 只用于上述明确剪辑点；其他情况必须为 null，同一连续场景最多一个，任意两个音效至少间隔 2.5 秒。3D 动效只用于场景转场或一个真正的重点。x/y 应避开底部字幕并避让同场景仍在显示的图层。videoLayers 最多 6 层，不要使用旧的 primary/secondary 素材字段。所有文字默认使用客户端半透明自适应背景。captionIndex 必须与输入字幕索引一致。`;
 }
 
 function scriptSystemPrompt() {
@@ -623,7 +626,7 @@ function compactWords(value: string, maximum: number) {
   return value.trim().split(/\s+/u).filter(Boolean).slice(0, maximum).join(" ");
 }
 
-export function compactMotionText(candidate: string | null | undefined, caption: string): string {
+export function compactMotionText(candidate: string | null | undefined, caption: string, extendedStructure = false): string {
   const source = (candidate?.trim() || caption.trim()).replace(/^[，。！？、；：,.!?;:\s]+|[，。！？、；：,.!?;:\s]+$/gu, "");
   const normalizedCaption = caption.trim().replace(/[，。！？、；：,.!?;:\s]/gu, "");
   const normalizedSource = source.replace(/[，。！？、；：,.!?;:\s]/gu, "");
@@ -631,7 +634,12 @@ export function compactMotionText(candidate: string | null | undefined, caption:
   const candidateFacts = captionNumericData(source);
   const captionFacts = captionNumericData(caption);
   const usesSupportedNumbers = candidateFacts.every((fact) => captionFacts.some((candidateFact) => candidateFact.value === fact.value && (!fact.unit || !candidateFact.unit || fact.unit === candidateFact.unit)));
-  const concise = containsCjk ? source.length <= 16 : source.split(/\s+/u).length <= 8;
+  const structuredParts = source.split("｜").map((part) => part.trim()).filter(Boolean);
+  const conciseStructure = structuredParts.length >= 2
+    && structuredParts.length <= (extendedStructure ? 6 : 4)
+    && structuredParts.every((part) => Array.from(part).length <= (extendedStructure ? 16 : 12))
+    && Array.from(source.replaceAll("｜", "")).length <= (extendedStructure ? 64 : 32);
+  const concise = containsCjk ? source.length <= 16 || conciseStructure : source.split(/\s+/u).length <= 8;
   if (candidate?.trim() && normalizedSource !== normalizedCaption && concise && usesSupportedNumbers) return source;
   const quoted = caption.match(/[“「『"]([^”」』"]{2,16})[”」』"]/u)?.[1];
   if (quoted) return quoted.slice(0, 12);
@@ -888,6 +896,24 @@ function normalizeGroupedMotionContinuity(matches: readonly AiMotionMatch[]) {
   return matches.map((match) => replacements.get(match.captionIndex) ?? match);
 }
 
+function normalizeMatchedSoundContinuity(matches: readonly AiMotionMatch[], captions: readonly AiTimedScript["captions"][number][]) {
+  const groupStarts = new Map<string, number>();
+  for (const match of matches) {
+    if (!match.motionGroupId) continue;
+    groupStarts.set(match.motionGroupId, Math.min(groupStarts.get(match.motionGroupId) ?? match.captionIndex, match.captionIndex));
+  }
+  let previousSoundAtSeconds = Number.NEGATIVE_INFINITY;
+  return matches.map((match) => {
+    const caption = captions[match.captionIndex];
+    const atGroupStart = !match.motionGroupId || groupStarts.get(match.motionGroupId) === match.captionIndex;
+    const soundEffectId = match.soundEffectId && caption && atGroupStart && caption.startSeconds - previousSoundAtSeconds >= 2.5
+      ? match.soundEffectId
+      : null;
+    if (soundEffectId && caption) previousSoundAtSeconds = caption.startSeconds;
+    return { ...match, soundEffectId };
+  });
+}
+
 export function normalizeMotionMatches(
   matches: readonly AiMotionMatch[],
   captions: readonly AiTimedScript["captions"][number][],
@@ -932,10 +958,10 @@ export function normalizeMotionMatches(
     let primaryEffectId = match.primaryEffectId;
     let secondaryEffectId = match.secondaryEffectId;
     let primaryText = primaryEffectId && !effectById(primaryEffectId).recipe.sceneBackground
-      ? compactMotionText(match.primaryText, evidenceText)
+      ? compactMotionText(match.primaryText, evidenceText, primaryEffectId === "knowledge-quote-lines")
       : "";
     let secondaryText = secondaryEffectId && !effectById(secondaryEffectId).recipe.sceneBackground
-      ? compactMotionText(match.secondaryText, evidenceText)
+      ? compactMotionText(match.secondaryText, evidenceText, secondaryEffectId === "knowledge-quote-lines")
       : null;
 
     if (primaryEffectId && effectById(primaryEffectId).category === "标题"
@@ -976,7 +1002,8 @@ export function normalizeMotionMatches(
   });
   const aRollAssetIds = new Set(materials.filter((material) => material.roleHint === "a-roll").map((material) => material.id));
   const grouped = addFallbackMotionSceneGroups(normalized, captions);
-  return normalizeGroupedMotionContinuity(normalizeExistingARollLayers(grouped, aRollAssetIds));
+  const continuous = normalizeGroupedMotionContinuity(normalizeExistingARollLayers(grouped, aRollAssetIds));
+  return normalizeMatchedSoundContinuity(continuous, captions);
 }
 
 export async function generateTimedScript(
@@ -1048,7 +1075,7 @@ export async function matchTimelineMotion(
   const ranked = activeEffects
     .map((effect) => ({ effect, score: effect.tags.reduce((score, tag) => score + (candidateText.includes(tag) ? 2 : 0), 0) + (candidateText.includes(effect.name) ? 4 : 0) }))
     .sort((left, right) => right.score - left.score || left.effect.name.localeCompare(right.effect.name, "zh-CN"));
-  const required = activeEffects.filter((effect) => effect.kind === "scene" || Boolean(effect.recipe.chart) || effect.id.startsWith("test-"));
+  const required = activeEffects.filter((effect) => effect.kind === "scene" || Boolean(effect.recipe.chart) || effect.id.startsWith("test-") || effect.id.startsWith("knowledge-"));
   const candidates = [...new Map([...required, ...ranked.slice(0, 24).map((item) => item.effect)].map((effect) => [effect.id, effect])).values()];
   const mediaIds = input.materials.map((material) => material.id);
   const schema = createMotionMatchesJsonSchema(candidates.map((effect) => effect.id), mediaIds);

@@ -16,6 +16,56 @@ beforeEach(() => {
 });
 
 describe("InspectorPanel generated metadata", () => {
+  it("can detach one effect from theme colors without changing its appearance", () => {
+    const state = useEditorStore.getState();
+    const project = createEmptyProject();
+    project.motionTheme.colors = { ...project.motionTheme.colors, text: "#121212", data: "#0099cc", surface: "#eef0f2" };
+    const track = project.tracks.find((candidate) => candidate.kind === "effect")!;
+    track.clips.push({
+      id: "effect", trackId: track.id, kind: "effect", label: "数据", startUs: 0, durationUs: 2_000_000,
+      locked: false, effectId: "number-pop", text: "42%", color: "#ffffff", accentColor: "#ff0000",
+      colorRole: "data", fontSize: 72, speed: 1, transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }
+    });
+    useEditorStore.setState({ ...state, project, selectedClipId: "effect", selectedClipIds: ["effect"] });
+    render(<InspectorPanel />);
+
+    expect(screen.getByText("跟随主题")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "动效颜色来源" }), { key: "Enter" });
+    fireEvent.click(screen.getByRole("option", { name: "单独设置" }));
+
+    const effect = useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "effect");
+    expect(effect).toMatchObject({ colorRole: "custom", color: "#121212", accentColor: "#0099cc" });
+    expect(screen.getByLabelText("文字颜色")).toHaveValue("#121212");
+    expect(screen.getByLabelText("强调色")).toHaveValue("#0099cc");
+
+    useEditorStore.getState().updateMotionTheme({ colors: { text: "#eeeeee", data: "#112233" } });
+    expect(useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "effect")).toMatchObject({
+      colorRole: "custom", color: "#121212", accentColor: "#0099cc"
+    });
+  });
+
+  it("lets one effect override its theme backdrop and restore inheritance", () => {
+    const state = useEditorStore.getState();
+    const project = createEmptyProject();
+    project.motionTheme.colors.surface = "#eef0f2";
+    const track = project.tracks.find((candidate) => candidate.kind === "effect")!;
+    track.clips.push({
+      id: "effect", trackId: track.id, kind: "effect", label: "观点", startUs: 0, durationUs: 2_000_000,
+      locked: false, effectId: "title-highlight", text: "核心观点", color: "#ffffff", accentColor: "#ffb84d",
+      colorRole: "opinion", fontSize: 56, speed: 1, transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }
+    });
+    useEditorStore.setState({ ...state, project, selectedClipId: "effect", selectedClipIds: ["effect"] });
+    render(<InspectorPanel />);
+
+    const background = screen.getByLabelText("背景颜色 · 跟随主题");
+    expect(background).toHaveValue("#eef0f2");
+    fireEvent.change(background, { target: { value: "#223344" } });
+    expect(useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "effect")).toMatchObject({ backdrop: { color: "#223344" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "恢复跟随主题底色" }));
+    expect(screen.getByLabelText("背景颜色 · 跟随主题")).toHaveValue("#eef0f2");
+  });
+
   it("shows script metadata without a storyboard editor", () => {
     render(<InspectorPanel />);
     expect(screen.getByText("AI 脚本 · 1 条时间字幕")).toBeInTheDocument();

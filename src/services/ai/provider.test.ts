@@ -175,6 +175,11 @@ describe("provider requests", () => {
     const payload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
     expect(payload.messages.at(-1)?.content).toContain('"stage":"opening"');
     expect(payload.messages.at(-1)?.content).toContain('"stage":"ending"');
+    expect(payload.messages[0]?.content).toContain('"id":"knowledge-concept-map"');
+    expect(payload.messages[0]?.content).toContain('"id":"knowledge-causal-chain"');
+    expect(payload.messages[0]?.content).toContain('"id":"knowledge-argument-board"');
+    expect(payload.messages[0]?.content).toContain('"id":"knowledge-myth-fact"');
+    expect(payload.messages[0]?.content).toContain('"id":"knowledge-quote-lines"');
   });
 
   it("keeps useful divergent motion copy while shortening full-caption repetition", () => {
@@ -182,6 +187,10 @@ describe("provider requests", () => {
     expect(compactMotionText("最后给出明确结论。", "最后给出明确结论。")).toBe("明确结论");
     expect(compactMotionText("增长逻辑正在切换", "行业正在进入精细化运营阶段。")).toBe("增长逻辑正在切换");
     expect(compactMotionText("增长达到99%", "市场份额增长达到42%。")).toBe("份额增长达到42%");
+    expect(compactMotionText("空气受热｜密度降低｜形成对流", "因为空气受热上升，密度降低，最终形成对流。")).toBe("空气受热｜密度降低｜形成对流");
+    expect(compactMotionText("旧数据42%｜新数据99%", "旧数据为42%，随后发生变化。")).not.toBe("旧数据42%｜新数据99%");
+    expect(compactMotionText("标题｜第一行内容｜第二行内容｜第三行内容｜第四行内容", "第一行内容，第二行内容，第三行内容，第四行内容。")).not.toContain("｜");
+    expect(compactMotionText("标题｜第一行内容｜第二行内容｜第三行内容｜第四行内容", "第一行内容，第二行内容，第三行内容，第四行内容。", true)).toContain("第四行内容");
   });
 
   it("separates exact subtitle highlights from divergent motion copy", () => {
@@ -384,6 +393,25 @@ describe("provider requests", () => {
 
     expect(matches.every((match) => match.motionGroupId === "auto-scene-0" && match.persistUntilCaptionIndex === 4)).toBe(true);
     expect(matches.filter((match) => match.primaryEffectId || match.secondaryEffectId)).toHaveLength(4);
+  });
+
+  it("keeps AI sound effects sparse and only at the start of a continuous scene", () => {
+    const captions = ["章节开始。", "继续说明。", "操作完成。"].map((text, index) => ({ startSeconds: index * 3, endSeconds: index * 3 + 3, text }));
+    const base = {
+      ...{
+        captionIndex: 0, primaryEffectId: null, primaryText: "", secondaryEffectId: null, secondaryText: null,
+        accentColor: "#5fa8ff", x: 50, y: 35, scale: 1, secondaryX: 70, secondaryY: 58,
+        cameraPreset: "none" as const, videoLayers: [], backdropPreset: "none" as const,
+        primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null,
+        secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" as const, chart: null
+      }
+    };
+    const matches = normalizeMotionMatches([
+      { ...base, captionIndex: 0, motionGroupId: "chapter", persistUntilCaptionIndex: 1, soundEffectId: "soft-whoosh" as const },
+      { ...base, captionIndex: 1, motionGroupId: "chapter", persistUntilCaptionIndex: 1, soundEffectId: "notice-chime" as const },
+      { ...base, captionIndex: 2, soundEffectId: "success-tone" as const }
+    ], captions, 9);
+    expect(matches.map((match) => match.soundEffectId)).toEqual(["soft-whoosh", null, "success-tone"]);
   });
 
   it("keeps an imported A-roll on its existing track while preserving the requested camera move", () => {

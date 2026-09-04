@@ -1,10 +1,10 @@
 import { create } from "zustand";
-import { effectById, recommendedEffectFontSize } from "@/domain/effects";
+import { BUILTIN_EFFECTS, effectById, recommendedEffectFontSize } from "@/domain/effects";
 import { cameraMotionForPreset } from "@/domain/camera";
 import { timedTextSegments } from "@/domain/captions";
 import { createGeneratedEffectLayers } from "@/domain/sceneEffects";
 import { resolveMotionLayout, type MotionLayoutLayer } from "@/domain/motionLayout";
-import { motionColorRoleForEffect } from "@/domain/motionTheme";
+import { motionColorRoleForEffect, motionThemeAccentColor } from "@/domain/motionTheme";
 import { DEFAULT_TRANSFORM, videoLayoutForPreset, visualTransformAt } from "@/domain/transforms";
 import {
   createEmptyProject,
@@ -30,6 +30,7 @@ import {
 import type { AiMotionMatch, AiVideoPlan } from "@/services/ai/schema";
 import { createVideoPresentationCue, DEFAULT_EFFECT_BACKDROP, DEFAULT_VIDEO_FOCUS, DEFAULT_VIDEO_MASK, DEFAULT_VIDEO_TRANSITION, videoPresentationAt } from "@/domain/videoPresentation";
 import { DEFAULT_SUBTITLE_STYLE, subtitleKeywordsForText } from "@/domain/videoDecorations";
+import { builtinSoundAssetId, builtinSoundEffectById } from "@/domain/soundEffects";
 
 export type SubtitleAppearancePatch = Partial<Pick<
   SubtitleClip,
@@ -205,7 +206,7 @@ interface EditorState {
   updateAsset: (assetId: string, patch: Partial<MediaAsset>) => void;
   replaceProject: (project: EditorProject) => void;
   addGeneratedPlan: (plan: AiVideoPlan, prompt: string, mode: InsertMode, target?: { startUs: number; durationUs?: number }) => string;
-  applyMotionMatches: (subtitleIds: string[], matches: AiMotionMatch[]) => void;
+  applyMotionMatches: (subtitleIds: string[], matches: AiMotionMatch[], soundAssets?: MediaAsset[]) => void;
   alignGeneratedBlockDuration: (blockId: string, durationUs: number) => void;
   alignGeneratedSceneDurations: (blockId: string, durationsUs: number[], subtitleIds?: string[]) => void;
   updateEffect: (clipId: string, patch: Partial<EffectClip>) => void;
@@ -603,12 +604,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => ({
       ...commit(state, (project) => {
         const track = project.tracks.find((candidate) => candidate.kind === "effect")!;
+        const themeAccentColor = motionThemeAccentColor(project.motionTheme);
         if (definition.kind === "scene") {
           for (const layer of layers) {
             const clip: EffectClip = {
               id: layer.id, trackId: track.id, kind: "effect", label: `${definition.name} · ${effectById(layer.effectId).name}`,
               startUs: state.playheadUs + layer.startOffsetUs, durationUs: layer.durationUs, locked: false,
-              effectId: layer.effectId, text: layer.text, color: layer.textColor, accentColor: layer.accentColor,
+              effectId: layer.effectId, text: layer.text, color: layer.textColor, accentColor: themeAccentColor,
               fontSize: layer.fontSize, speed: layer.speed, transform: layer.transform, recipe: layer.recipe,
               soundCues: layer.soundCues,
               zIndex: layer.zIndex, sceneGroupId: groupId, sceneTemplateId: definition.id, matchQuery: layer.matchQuery,
@@ -619,10 +621,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           }
         } else if (definition.recipe.sceneBackground) {
           const sceneTrack = project.tracks.find((candidate) => candidate.kind === "scene")!;
+          const background = structuredClone(definition.recipe.sceneBackground);
+          if (BUILTIN_EFFECTS.some((effect) => effect.id === definition.id)) background.borderColor = themeAccentColor;
           const clip: SceneClip = {
             id, trackId: sceneTrack.id, kind: "scene", label: definition.name, startUs: state.playheadUs,
             durationUs: definition.defaultDurationUs, locked: false, effectId,
-            background: structuredClone(definition.recipe.sceneBackground), opacity: 1,
+            background, opacity: 1,
             soundCues: structuredClone(definition.soundCues ?? [])
           };
           sceneTrack.clips.push(clip);
@@ -630,7 +634,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           const clip: EffectClip = {
             id, trackId: track.id, kind: "effect", label: definition.name, startUs: state.playheadUs,
             durationUs: definition.defaultDurationUs, locked: false, effectId, text: definition.defaultText,
-            color: definition.defaultColor, accentColor: definition.defaultAccentColor,
+            color: definition.defaultColor, accentColor: themeAccentColor,
             fontSize: recommendedEffectFontSize(definition.recipe, definition.defaultText), speed: 1,
             transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }, recipe: structuredClone(definition.recipe), zIndex: 20,
             soundCues: structuredClone(definition.soundCues ?? []),
@@ -717,7 +721,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           const referencedAssetIds = new Set(project.tracks.flatMap((candidate) => candidate.clips).flatMap((clip) => "assetId" in clip ? [clip.assetId] : []));
           project.assets = project.assets.filter((candidate) => !replacedAssetIds.has(candidate.id) || referencedAssetIds.has(candidate.id));
         }
-        project.assets.push(asset);
+        const existingAsset = project.assets.find((candidate) => candidate.id === asset.id);
+        if (existingAsset) Object.assign(existingAsset, asset);
+        else project.assets.push(asset);
         track.clips.push({
           id,
           trackId: track.id,
@@ -816,6 +822,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const matchByCaption = new Map((plan.matches ?? []).map((match) => [match.captionIndex, match]));
     set((state) => ({
       ...commit(state, (project) => {
+        const themeAccentColor = motionThemeAccentColor(project.motionTheme);
         if (mode === "insert") shiftForInsert(project, startUs, durationUs);
         if (mode === "replace") {
           replaceVideoRange(project, startUs, durationUs);
@@ -840,7 +847,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             return {
               id: crypto.randomUUID(), title: caption.text.slice(0, 80), narration: caption.text,
               durationUs: Math.max(100_000, caption.endUs - caption.startUs), effectId: definition.id,
-              textColor: definition.defaultColor, accentColor: match?.accentColor ?? definition.defaultAccentColor,
+              textColor: definition.defaultColor, accentColor: themeAccentColor,
               fontSize: recommendedEffectFontSize(definition.recipe, caption.text), speed: 1, transform: { x: match?.x ?? 50, y: match?.y ?? 30, scale: aiEffectScale(match?.scale ?? 1, Boolean(definition.recipe.chart)), rotation: 0, opacity: 1 },
               mediaSourceInUs: 0, mediaFit: "cover", mediaVolume: 0, camera: cameraMotionForPreset(match?.cameraPreset ?? "none")
             };
@@ -884,7 +891,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             sourceAssetId: id, sourceBlockId: id, color: "#ffffff", backgroundColor: "#000000", fontSize: 44, positionY: 88,
             ...DEFAULT_SUBTITLE_STYLE,
             highlightWords: subtitleKeywordsForText(caption.text, matchByCaption.get(captionIndex)?.subtitleKeywords ?? []),
-            highlightColor: matchByCaption.get(captionIndex)?.accentColor ?? DEFAULT_SUBTITLE_STYLE.highlightColor
+            highlightColor: themeAccentColor
           });
           const effectEntries = match ? aiMotionEntries(match, caption.text, true) : [];
           for (const entry of effectEntries.slice(0, 2)) {
@@ -899,7 +906,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               sceneTrack.clips.push({
                 id: crypto.randomUUID(), trackId: sceneTrack.id, kind: "scene", label: `AI 场景 · ${definition.name}`,
                 startUs: cueStartUs, durationUs: cueDurationUs, locked: false, effectId: definition.id,
-                background: structuredClone(recipe.sceneBackground), opacity: 1, soundCues, sceneGroupId, matchQuery: caption.text,
+                background: { ...structuredClone(recipe.sceneBackground), borderColor: themeAccentColor }, opacity: 1, soundCues, sceneGroupId, matchQuery: caption.text,
                 sourceBlockId: id, sourceSubtitleId: subtitleId
               });
             } else {
@@ -907,13 +914,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               effectTrack.clips.push({
                 id: crypto.randomUUID(), trackId: effectTrack.id, kind: "effect", label: `AI 动效 · ${definition.name}`,
                 startUs: cueStartUs, durationUs: cueDurationUs, locked: false, effectId: definition.id, text: entry.text,
-                color: definition.defaultColor, accentColor: match?.accentColor ?? definition.defaultAccentColor,
+                color: definition.defaultColor, accentColor: themeAccentColor,
                 fontSize: recommendedEffectFontSize(recipe, entry.text), speed: 1,
                 transform: { x: placement.x, y: placement.y, scale: placement.scale, rotation: 0, opacity: 1 },
                 recipe, soundCues, zIndex: entry.zIndex, sceneGroupId, matchQuery: caption.text,
                 colorRole: motionColorRoleForEffect(definition.id),
                 sourceBlockId: id, sourceSubtitleId: subtitleId,
-                backdrop: effectBackdropForPreset(match?.backdropPreset ?? "none", match?.accentColor ?? definition.defaultAccentColor)
+                backdrop: effectBackdropForPreset(match?.backdropPreset ?? "none", themeAccentColor)
               });
             }
           }
@@ -948,9 +955,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }));
     return id;
   },
-  applyMotionMatches: (subtitleIds, matches) => {
+  applyMotionMatches: (subtitleIds, matches, soundAssets = []) => {
     if (!subtitleIds.length) return;
     set((state) => commit(state, (project) => {
+      const themeAccentColor = motionThemeAccentColor(project.motionTheme);
       const selectedIds = new Set(subtitleIds);
       const subtitles = project.tracks
         .flatMap((track) => track.clips)
@@ -964,8 +972,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
       const effectTrack = project.tracks.find((track) => track.kind === "effect")!;
       const sceneTrack = project.tracks.find((track) => track.kind === "scene")!;
+      const soundTrack = project.tracks.find((track) => track.kind === "audio" && track.audioRole === "sound")
+        ?? project.tracks.find((track) => track.kind === "audio")!;
       effectTrack.clips = effectTrack.clips.filter((clip) => clip.kind !== "effect" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
       sceneTrack.clips = sceneTrack.clips.filter((clip) => clip.kind !== "scene" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
+      if (!soundTrack.locked) {
+        soundTrack.clips = soundTrack.clips.filter((clip) => clip.kind !== "audio" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
+        for (const asset of soundAssets) {
+          const existingAsset = project.assets.find((candidate) => candidate.id === asset.id);
+          if (existingAsset) Object.assign(existingAsset, asset);
+          else project.assets.push(asset);
+        }
+      }
       for (const track of project.tracks.filter((candidate) => candidate.kind === "video")) {
         track.clips = track.clips.filter((clip) => clip.kind !== "video" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
       }
@@ -1019,7 +1037,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const endSubtitle = subtitles[persistUntilCaptionIndex] ?? subtitle;
         const matchDurationUs = Math.max(100_000, endSubtitle.startUs + endSubtitle.durationUs - subtitle.startUs);
         subtitle.highlightWords = subtitleKeywordsForText(subtitle.text, match.subtitleKeywords ?? []);
-        subtitle.highlightColor = match.accentColor;
+        subtitle.highlightColor = themeAccentColor;
+        const soundEffectId = match.soundEffectId;
+        if (soundEffectId && !soundTrack.locked) {
+          const definition = builtinSoundEffectById(soundEffectId);
+          const asset = project.assets.find((candidate) => candidate.id === builtinSoundAssetId(soundEffectId) && candidate.kind === "audio" && !candidate.missing);
+          if (definition && asset) {
+            soundTrack.clips.push({
+              id: crypto.randomUUID(), trackId: soundTrack.id, kind: "audio", label: `AI 音效 · ${definition.name}`,
+              startUs: subtitle.startUs, durationUs: asset.durationUs, locked: false, assetId: asset.id,
+              sourceInUs: 0, playbackRate: 1, volume: 1, fadeInUs: 0, fadeOutUs: Math.min(50_000, asset.durationUs), role: "sound",
+              sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id
+            });
+          }
+        }
         const entries = aiMotionEntries(match, subtitle.text, false);
         for (const entry of entries.slice(0, 2)) {
           const definition = effectById(entry.effectId);
@@ -1032,7 +1063,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             sceneTrack.clips.push({
               id: crypto.randomUUID(), trackId: sceneTrack.id, kind: "scene", label: `AI 场景 · ${definition.name}`,
               startUs: subtitle.startUs, durationUs: matchDurationUs, locked: false, effectId: definition.id,
-              background: structuredClone(recipe.sceneBackground), opacity: 1, soundCues, sceneGroupId, matchQuery: subtitle.text,
+              background: { ...structuredClone(recipe.sceneBackground), borderColor: themeAccentColor }, opacity: 1, soundCues, sceneGroupId, matchQuery: subtitle.text,
               sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id
             });
           } else {
@@ -1040,13 +1071,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             effectTrack.clips.push({
               id: crypto.randomUUID(), trackId: effectTrack.id, kind: "effect", label: `AI 动效 · ${definition.name}`,
               startUs: subtitle.startUs, durationUs: matchDurationUs, locked: false, effectId: definition.id, text: entry.text.trim(),
-              color: definition.defaultColor, accentColor: match.accentColor,
+              color: definition.defaultColor, accentColor: themeAccentColor,
               fontSize: recommendedEffectFontSize(recipe, entry.text.trim()), speed: 1,
               transform: { x: placement.x, y: placement.y, scale: placement.scale, rotation: 0, opacity: 1 }, recipe,
               soundCues, zIndex: entry.zIndex, sceneGroupId, matchQuery: subtitle.text,
               colorRole: motionColorRoleForEffect(definition.id),
               sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id,
-              backdrop: effectBackdropForPreset(match.backdropPreset ?? "none", match.accentColor)
+              backdrop: effectBackdropForPreset(match.backdropPreset ?? "none", themeAccentColor)
             });
           }
         }

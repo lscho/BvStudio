@@ -20,12 +20,13 @@ describe("two-stage AI schemas", () => {
       cameraPreset: "push-in", primaryMediaAssetId: "local-video", primaryMediaSourceInSeconds: 2,
       secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full",
       videoLayers: [{ assetId: "local-video", role: "screen", sourceInSeconds: 2, layoutPreset: "full", shapePreset: "rectangle", transitionPreset: "fade", cameraPreset: "push-in", volume: 0, focus: { enabled: true, x: 50, y: 50, zoom: 1.8, startOffsetSeconds: 0.2, durationSeconds: 1.5 } }],
-      backdropPreset: "dark", chart: null
+      backdropPreset: "dark", soundEffectId: "clean-click", chart: null
     };
     expect(schema.parse({ matches: [valid] }).matches[0]).toEqual(valid);
     expect(() => schema.parse({ matches: [{ ...valid, primaryEffectId: "made-up-effect" }] })).toThrow("未知动效");
     expect(() => schema.parse({ matches: [{ ...valid, primaryMediaAssetId: "invented-video" }] })).toThrow("未知素材");
     expect(() => schema.parse({ matches: [{ ...valid, videoLayers: [{ ...valid.videoLayers[0], assetId: "invented-video" }] }] })).toThrow("未知素材");
+    expect(() => schema.parse({ matches: [{ ...valid, soundEffectId: "invented-sound" }] })).toThrow("未知音效");
     expect(schema.parse({ matches: [{ ...valid, scale: 0.3 }] }).matches[0].scale).toBe(0.65);
   });
 
@@ -61,6 +62,7 @@ describe("two-stage AI schemas", () => {
     const videoLayers = schema.properties.matches.items.properties.videoLayers;
     expect(videoLayers.maxItems).toBe(0);
     expect(videoLayers.items.properties.assetId).toEqual({ type: "string" });
-    expect(schema.properties.matches.items.required).toEqual(expect.arrayContaining(["subtitleKeywords", "motionGroupId", "persistUntilCaptionIndex"]));
+    expect(schema.properties.matches.items.required).toEqual(expect.arrayContaining(["subtitleKeywords", "motionGroupId", "persistUntilCaptionIndex", "soundEffectId"]));
+    expect(schema.properties.matches.items.properties.soundEffectId).toEqual(expect.objectContaining({ anyOf: expect.arrayContaining([{ type: "null" }]) }));
   });
 });

@@ -2,6 +2,8 @@ import { Store } from "@tauri-apps/plugin-store";
 import type { EditorProject } from "@/domain/project";
 import { parseProject, serializeProject } from "@/domain/projectFile";
 import { isDesktopRuntime } from "@/services/runtime";
+import { builtinSoundEffectById, builtinSoundIdFromAssetId } from "@/domain/soundEffects";
+import { createBuiltinSoundAsset } from "@/services/builtinSounds";
 
 export interface RecoverySnapshot {
   projectJson: string;
@@ -84,6 +86,17 @@ export async function hydrateProjectAssets(project: EditorProject, options: Proj
   for (const asset of project.assets) {
     asset.objectUrl = undefined;
     asset.proxyObjectUrl = undefined;
+    const builtinSoundId = builtinSoundIdFromAssetId(asset.id);
+    const outdatedBuiltinSound = builtinSoundId && asset.name !== `${builtinSoundEffectById(builtinSoundId)?.name}.wav`;
+    if (builtinSoundId && (outdatedBuiltinSound || !asset.sourcePath || !options.desktop)) {
+      try {
+        Object.assign(asset, await createBuiltinSoundAsset(builtinSoundId, { refresh: Boolean(outdatedBuiltinSound) }));
+        continue;
+      } catch {
+        asset.missing = true;
+        continue;
+      }
+    }
     if (!asset.sourcePath || !options.desktop) {
       asset.missing = true;
       continue;
@@ -96,7 +109,16 @@ export async function hydrateProjectAssets(project: EditorProject, options: Proj
       sourceExists = false;
     }
     asset.missing = !sourceExists;
-    if (!sourceExists) continue;
+    if (!sourceExists) {
+      if (builtinSoundId) {
+        try {
+          Object.assign(asset, await createBuiltinSoundAsset(builtinSoundId));
+        } catch {
+          asset.missing = true;
+        }
+      }
+      continue;
+    }
     asset.objectUrl = options.mediaUrl(asset.sourcePath);
 
     if (asset.proxyPath) {

@@ -15,4 +15,10 @@ describe("React effect export timing", () => {
     expect(dynamicDurationUs({ ...overlay, dimAtUs: 1_500_000 })).toBe(1_500_000);
     expect(dynamicDurationUs({ ...overlay, dimAtUs: 4_000_000 })).toBe(3_000_000);
   });
+
+  it("captures the full registered motion of a dedicated React card", () => {
+    expect(dynamicDurationUs({ ...overlay, effectId: "knowledge-causal-chain" })).toBe(1_200_000);
+    expect(dynamicDurationUs({ ...overlay, effectId: "knowledge-causal-chain", speed: 2 })).toBe(600_000);
+    expect(dynamicDurationUs({ ...overlay, effectId: "knowledge-quote-lines" })).toBe(1_550_000);
+  });
 });

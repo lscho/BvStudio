@@ -106,7 +106,7 @@ export function AiGenerateDialog({ open, settings, onOpenChange, onNeedSettings 
           <Dialog.Close className="icon-button dialog-close" aria-label="关闭"><X size={18} /></Dialog.Close>
           <span className="dialog-icon ai"><Sparkles size={21} /></span>
           <Dialog.Title>生成 AI 内容片段</Dialog.Title>
-          <Dialog.Description id="generate-description">只生成文章、口播与时间字幕。完成后可在字幕列表中独立匹配动效。</Dialog.Description>
+          <Dialog.Description id="generate-description">只生成文章、口播与时间字幕。完成后可在字幕列表中匹配画面与音效。</Dialog.Description>
           <form className="settings-form" aria-busy={working} onSubmit={submit}>
             <label><span>主题与要求</span><textarea rows={5} value={topic} disabled={working} onChange={(event) => setTopic(event.target.value)} placeholder="例如：用 45 秒介绍为什么团队需要设计系统" /></label>
             <div className="form-grid"><label><span>目标时长</span><span className="number-input-suffix"><input type="number" min={1} max={600} step={0.5} value={range && mode !== "insert" ? Number((range.durationUs / 1_000_000).toFixed(3)) : duration} disabled={working || Boolean(range && mode !== "insert")} onChange={(event) => setDuration(Number(event.target.value))} /><i>秒</i></span></label><label><span>表达风格</span><Select label="表达风格" value={style} disabled={working} onChange={setStyle} options={STYLE_OPTIONS} /></label></div>

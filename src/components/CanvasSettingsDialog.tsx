@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Check, MonitorUp, X } from "lucide-react";
 import { Select } from "@/components/Select";
+import { MOTION_THEME_COLOR_PRESETS, motionThemeWithColorPreset } from "@/domain/motionTheme";
 import { normalizeOutputFps, OUTPUT_FPS_OPTIONS } from "@/domain/outputSettings";
 import type { EditorProject, MediaAsset, MotionFont, MotionSkin, MotionStyle, MotionTheme } from "@/domain/project";
 import { useEditorStore } from "@/stores/editorStore";
@@ -20,9 +21,9 @@ const PRESETS = [
   { id: "classic", label: "经典 4:3", width: 1440, height: 1080 }
 ] as const;
 
-const SKIN_OPTIONS = [{ value: "dark", label: "深色画面" }, { value: "light", label: "浅色画面" }];
 const STYLE_OPTIONS = [{ value: "minimal", label: "极简" }, { value: "editorial", label: "编辑感" }];
 const FONT_OPTIONS = [{ value: "sans", label: "现代无衬线" }, { value: "display", label: "展示粗体" }];
+const THEME_PRESETS: readonly { skin: MotionSkin; label: string }[] = [{ skin: "dark", label: "深色主题" }, { skin: "light", label: "浅色主题" }];
 
 function evenDimension(value: number) {
   return Math.max(64, Math.min(7680, Math.round(value / 2) * 2));
@@ -81,8 +82,8 @@ export function CanvasSettingsDialog({ open, onOpenChange, canvas, assets }: Pro
           <div className="form-grid"><label><span>宽度</span><input type="number" min={64} max={7680} step={2} value={width} onChange={(event) => setWidth(Number(event.target.value))} /></label><label><span>高度</span><input type="number" min={64} max={7680} step={2} value={height} onChange={(event) => setHeight(Number(event.target.value))} /></label></div>
           <label><span>帧率</span><Select label="帧率" value={String(fps)} onChange={(value) => setFps(Number(value))} options={OUTPUT_FPS_OPTIONS.map((value) => ({ value: String(value), label: `${value} fps` }))} /></label>
           <fieldset><legend>动效主题</legend>
-            <div className="form-grid"><label><span>底色倾向</span><Select label="动效底色倾向" value={theme.skin} onChange={(value) => setTheme({ ...theme, skin: value as MotionSkin })} options={SKIN_OPTIONS} /></label><label><span>视觉骨架</span><Select label="动效视觉骨架" value={theme.style} onChange={(value) => setTheme({ ...theme, style: value as MotionStyle })} options={STYLE_OPTIONS} /></label></div>
-            <label><span>字体</span><Select label="动效字体" value={theme.font} onChange={(value) => setTheme({ ...theme, font: value as MotionFont })} options={FONT_OPTIONS} /></label>
+            <div className="motion-theme-presets">{THEME_PRESETS.map((preset) => <button key={preset.skin} type="button" className={theme.skin === preset.skin ? "active" : ""} aria-pressed={theme.skin === preset.skin} onClick={() => setTheme(motionThemeWithColorPreset(theme, preset.skin))}><span className="motion-theme-preset-swatches" aria-hidden>{Object.entries(MOTION_THEME_COLOR_PRESETS[preset.skin]).slice(0, 5).map(([role, color]) => <i key={role} style={{ backgroundColor: color }} />)}</span><strong>{preset.label}</strong><small>应用默认配色</small></button>)}</div>
+            <div className="form-grid"><label><span>视觉骨架</span><Select label="动效视觉骨架" value={theme.style} onChange={(value) => setTheme({ ...theme, style: value as MotionStyle })} options={STYLE_OPTIONS} /></label><label><span>字体</span><Select label="动效字体" value={theme.font} onChange={(value) => setTheme({ ...theme, font: value as MotionFont })} options={FONT_OPTIONS} /></label></div>
             <div className="motion-theme-colors">
               <ThemeColor label="文字" value={theme.colors.text} onChange={(text) => setTheme({ ...theme, colors: { ...theme.colors, text } })} />
               <ThemeColor label="卡片底色" value={theme.colors.surface} onChange={(surface) => setTheme({ ...theme, colors: { ...theme.colors, surface } })} />

@@ -78,6 +78,21 @@ describe("project session persistence", () => {
     expect(hydrated.assets[1]).toMatchObject({ missing: false, objectUrl: "asset:///ready.mp4" });
   });
 
+  it("recreates a built-in sound URL in browser preview instead of marking it missing", async () => {
+    vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:builtin-click") });
+    const project = createEmptyProject();
+    project.assets.push({ id: "builtin-sound:clean-click", name: "清脆点击.wav", kind: "audio", durationUs: 160_000, hasAudio: true });
+    const hydrated = await hydrateProjectAssets(project, {
+      desktop: false,
+      proxyEnabled: false,
+      proxyHeight: 720,
+      pathExists: async () => false,
+      mediaUrl: (path) => path
+    });
+
+    expect(hydrated.assets[0]).toMatchObject({ missing: false, objectUrl: "blob:builtin-click", sourcePath: undefined });
+  });
+
   it("parses and hydrates a complete recovery snapshot", async () => {
     const project = createEmptyProject();
     project.name = "Recovered";

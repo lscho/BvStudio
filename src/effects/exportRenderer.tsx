@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { toPng } from "html-to-image";
 import { clockControlledRecipe, effectAnimationState } from "@/domain/effects";
 import { visualTransformAt } from "@/domain/transforms";
-import { EffectCardContent, effectCardChromeStyle } from "@/effects/registry";
+import { EffectCardContent, effectCardChromeStyle, reactEffectMotionDurationUs } from "@/effects/registry";
 import type { RenderPlan, RenderTextOverlay } from "@/services/media";
 
 const neutralRecipe = {
@@ -29,7 +29,11 @@ function dataUrlPayload(value: string) {
 export function dynamicDurationUs(overlay: RenderTextOverlay) {
   const recipe = clockControlledRecipe(overlay.recipe);
   const entranceUs = (recipe.animation?.durationSeconds ?? 0) * 1_000_000 / Math.max(0.1, overlay.speed);
-  const contentUs = (recipe.chart?.durationSeconds ?? (overlay.effectId?.includes("bullet") || overlay.effectId?.includes("quote") ? 0.75 : 0)) * 1_000_000 / Math.max(0.1, overlay.speed);
+  const registeredUs = overlay.effectId ? reactEffectMotionDurationUs(overlay.effectId) : 0;
+  const contentUs = Math.max(
+    (recipe.chart?.durationSeconds ?? (overlay.effectId?.includes("bullet") || overlay.effectId?.includes("quote") ? 0.75 : 0)) * 1_000_000,
+    registeredUs
+  ) / Math.max(0.1, overlay.speed);
   return Math.min(overlay.durationUs, Math.max(entranceUs, contentUs, overlay.dimAtUs ?? 0));
 }
 

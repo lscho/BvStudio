@@ -2,6 +2,7 @@ import { z } from "zod";
 import { BUILTIN_EFFECTS } from "@/domain/effects";
 import { CAMERA_PRESETS } from "@/domain/camera";
 import { VIDEO_LAYOUT_PRESETS } from "@/domain/transforms";
+import { BUILTIN_SOUND_EFFECT_IDS } from "@/domain/soundEffects";
 
 const effectIds = BUILTIN_EFFECTS.map((effect) => effect.id);
 const cameraPresetIds = CAMERA_PRESETS.map((preset) => preset.id);
@@ -85,6 +86,7 @@ export function createAiMotionMatchesSchema(allowedEffectIds: readonly string[],
       secondaryX: z.number().min(5).max(95),
       secondaryY: z.number().min(5).max(95),
       cameraPreset: z.enum(cameraPresetEnum),
+      soundEffectId: z.enum(BUILTIN_SOUND_EFFECT_IDS, { error: "未知音效" }).nullable().optional(),
       videoLayers: z.array(videoLayerMatchSchema.extend({ assetId: mediaId })).max(6).default([]),
       backdropPreset: backdropPresetSchema.default("none"),
       primaryMediaAssetId: mediaId.nullable().optional().default(null),
@@ -166,9 +168,9 @@ export function createMotionMatchesJsonSchema(allowedEffectIds: readonly string[
     properties: {
       matches: { type: "array", minItems: 1, maxItems: 80, items: {
         type: "object", additionalProperties: false,
-        required: ["captionIndex", "subtitleKeywords", "motionGroupId", "persistUntilCaptionIndex", "primaryEffectId", "primaryText", "secondaryEffectId", "secondaryText", "accentColor", "x", "y", "scale", "secondaryX", "secondaryY", "cameraPreset", "videoLayers", "backdropPreset", "chart"],
+        required: ["captionIndex", "subtitleKeywords", "motionGroupId", "persistUntilCaptionIndex", "primaryEffectId", "primaryText", "secondaryEffectId", "secondaryText", "accentColor", "x", "y", "scale", "secondaryX", "secondaryY", "cameraPreset", "soundEffectId", "videoLayers", "backdropPreset", "chart"],
         properties: {
-          captionIndex: { type: "integer", minimum: 0, maximum: 79 }, subtitleKeywords: { type: "array", maxItems: 3, items: { type: "string", minLength: 2, maxLength: 16 } }, motionGroupId: { anyOf: [{ type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, { type: "null" }] }, persistUntilCaptionIndex: { anyOf: [{ type: "integer", minimum: 0, maximum: 79 }, { type: "null" }] }, primaryEffectId: nullableEnum(allowedEffectIds), primaryText: { type: "string" }, secondaryEffectId: nullableEnum(allowedEffectIds), secondaryText: { anyOf: [{ type: "string" }, { type: "null" }] }, accentColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }, x: { type: "number", minimum: 5, maximum: 95 }, y: { type: "number", minimum: 5, maximum: 95 }, scale: { type: "number", minimum: 0.65, maximum: 2.5 }, secondaryX: { type: "number", minimum: 5, maximum: 95 }, secondaryY: { type: "number", minimum: 5, maximum: 95 }, cameraPreset: { type: "string", enum: [...cameraPresetIds] },
+          captionIndex: { type: "integer", minimum: 0, maximum: 79 }, subtitleKeywords: { type: "array", maxItems: 3, items: { type: "string", minLength: 2, maxLength: 16 } }, motionGroupId: { anyOf: [{ type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, { type: "null" }] }, persistUntilCaptionIndex: { anyOf: [{ type: "integer", minimum: 0, maximum: 79 }, { type: "null" }] }, primaryEffectId: nullableEnum(allowedEffectIds), primaryText: { type: "string" }, secondaryEffectId: nullableEnum(allowedEffectIds), secondaryText: { anyOf: [{ type: "string" }, { type: "null" }] }, accentColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }, x: { type: "number", minimum: 5, maximum: 95 }, y: { type: "number", minimum: 5, maximum: 95 }, scale: { type: "number", minimum: 0.65, maximum: 2.5 }, secondaryX: { type: "number", minimum: 5, maximum: 95 }, secondaryY: { type: "number", minimum: 5, maximum: 95 }, cameraPreset: { type: "string", enum: [...cameraPresetIds] }, soundEffectId: nullableEnum(BUILTIN_SOUND_EFFECT_IDS),
           videoLayers: { type: "array", maxItems: allowedMediaAssetIds.length ? 6 : 0, items: { type: "object", additionalProperties: false, required: ["assetId", "role", "sourceInSeconds", "layoutPreset", "shapePreset", "transitionPreset", "cameraPreset", "volume", "focus"], properties: {
             assetId: allowedMediaAssetIds.length ? { type: "string", enum: [...allowedMediaAssetIds] } : { type: "string" }, role: { type: "string", enum: videoRoleSchema.options }, sourceInSeconds: { type: "number", minimum: 0, maximum: 86_400 }, layoutPreset: { type: "string", enum: [...videoLayoutPresetIds] }, shapePreset: { type: "string", enum: videoShapeSchema.options }, transitionPreset: { type: "string", enum: videoTransitionSchema.options }, cameraPreset: { type: "string", enum: [...cameraPresetIds] }, volume: { type: "number", minimum: 0, maximum: 1 }, focus: { anyOf: [{ type: "object", additionalProperties: false, required: ["enabled", "x", "y", "zoom", "startOffsetSeconds", "durationSeconds"], properties: { enabled: { type: "boolean" }, x: { type: "number", minimum: 0, maximum: 100 }, y: { type: "number", minimum: 0, maximum: 100 }, zoom: { type: "number", minimum: 1, maximum: 4 }, startOffsetSeconds: { type: "number", minimum: 0, maximum: 86_400 }, durationSeconds: { type: "number", minimum: 0.1, maximum: 86_400 } } }, { type: "null" }] }
           } } }, backdropPreset: { type: "string", enum: backdropPresetSchema.options },
