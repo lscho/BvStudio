@@ -4,7 +4,7 @@ import { Check, MonitorUp, X } from "lucide-react";
 import { Select } from "@/components/Select";
 import { MOTION_THEME_COLOR_PRESETS, motionThemeWithColorPreset } from "@/domain/motionTheme";
 import { normalizeOutputFps, OUTPUT_FPS_OPTIONS } from "@/domain/outputSettings";
-import type { EditorProject, MediaAsset, MotionFont, MotionSkin, MotionStyle, MotionTheme } from "@/domain/project";
+import type { EditorProject, MediaAsset, MotionFont, MotionSkin, MotionStyle, MotionTheme, PresenterSafeAreaPosition, PresenterSafeAreaSettings } from "@/domain/project";
 import { useEditorStore } from "@/stores/editorStore";
 
 interface Props {
@@ -24,6 +24,12 @@ const PRESETS = [
 const STYLE_OPTIONS = [{ value: "minimal", label: "极简" }, { value: "editorial", label: "编辑感" }];
 const FONT_OPTIONS = [{ value: "sans", label: "现代无衬线" }, { value: "display", label: "展示粗体" }];
 const THEME_PRESETS: readonly { skin: MotionSkin; label: string }[] = [{ skin: "dark", label: "深色主题" }, { skin: "light", label: "浅色主题" }];
+const PRESENTER_POSITION_OPTIONS: readonly { value: PresenterSafeAreaPosition; label: string }[] = [
+  { value: "none", label: "不避让" },
+  { value: "left", label: "人物在左侧" },
+  { value: "center", label: "人物在中间" },
+  { value: "right", label: "人物在右侧" }
+];
 
 function evenDimension(value: number) {
   return Math.max(64, Math.min(7680, Math.round(value / 2) * 2));
@@ -32,11 +38,14 @@ function evenDimension(value: number) {
 export function CanvasSettingsDialog({ open, onOpenChange, canvas, assets }: Props) {
   const updateCanvas = useEditorStore((state) => state.updateCanvas);
   const motionTheme = useEditorStore((state) => state.project.motionTheme);
+  const presenterSafeArea = useEditorStore((state) => state.project.presenterSafeArea);
+  const updatePresenterSafeArea = useEditorStore((state) => state.updatePresenterSafeArea);
   const updateMotionTheme = useEditorStore((state) => state.updateMotionTheme);
   const [width, setWidth] = useState(canvas.width);
   const [height, setHeight] = useState(canvas.height);
   const [fps, setFps] = useState<number>(normalizeOutputFps(canvas.fpsNumerator / canvas.fpsDenominator));
   const [theme, setTheme] = useState<MotionTheme>(() => structuredClone(motionTheme));
+  const [presenterArea, setPresenterArea] = useState<PresenterSafeAreaSettings>(() => ({ ...presenterSafeArea }));
   const sourceSizes = useMemo(() => {
     const seen = new Set<string>();
     return assets.filter((asset) => asset.kind === "video" && asset.width && asset.height).flatMap((asset) => {
@@ -53,7 +62,8 @@ export function CanvasSettingsDialog({ open, onOpenChange, canvas, assets }: Pro
     setHeight(canvas.height);
     setFps(normalizeOutputFps(canvas.fpsNumerator / canvas.fpsDenominator));
     setTheme(structuredClone(motionTheme));
-  }, [canvas, motionTheme, open]);
+    setPresenterArea({ ...presenterSafeArea });
+  }, [canvas, motionTheme, open, presenterSafeArea]);
 
   function choose(widthValue: number, heightValue: number, fpsValue?: number) {
     setWidth(widthValue);
@@ -64,6 +74,7 @@ export function CanvasSettingsDialog({ open, onOpenChange, canvas, assets }: Pro
   function submit(event: React.FormEvent) {
     event.preventDefault();
     updateCanvas({ width: evenDimension(width), height: evenDimension(height), fpsNumerator: Math.round(fps * 1_000), fpsDenominator: 1_000 });
+    updatePresenterSafeArea(presenterArea);
     updateMotionTheme(theme);
     onOpenChange(false);
   }
@@ -81,6 +92,7 @@ export function CanvasSettingsDialog({ open, onOpenChange, canvas, assets }: Pro
           {sourceSizes.length > 0 && <label><span>跟随素材</span><Select label="跟随素材" value="" placeholder="选择已导入视频规格" onChange={(value) => { const source = sourceSizes.find((item) => item.id === value); if (source) choose(source.width, source.height, source.fps); }} options={sourceSizes.map((source) => ({ value: source.id, label: `${source.name} · ${source.width} × ${source.height}` }))} /></label>}
           <div className="form-grid"><label><span>宽度</span><input type="number" min={64} max={7680} step={2} value={width} onChange={(event) => setWidth(Number(event.target.value))} /></label><label><span>高度</span><input type="number" min={64} max={7680} step={2} value={height} onChange={(event) => setHeight(Number(event.target.value))} /></label></div>
           <label><span>帧率</span><Select label="帧率" value={String(fps)} onChange={(value) => setFps(Number(value))} options={OUTPUT_FPS_OPTIONS.map((value) => ({ value: String(value), label: `${value} fps` }))} /></label>
+          <fieldset><legend>人物避让</legend><div className="form-grid presenter-safe-area-settings"><label><span>人物位置</span><Select label="人物位置" value={presenterArea.position} onChange={(value) => setPresenterArea({ ...presenterArea, position: value as PresenterSafeAreaPosition })} options={PRESENTER_POSITION_OPTIONS} /></label><label className="range-field"><span>人物区域宽度 <output>{Math.round(presenterArea.widthPercent)}%</output></span><input aria-label="人物区域宽度" type="range" min={18} max={60} step={1} disabled={presenterArea.position === "none"} value={presenterArea.widthPercent} onChange={(event) => setPresenterArea({ ...presenterArea, widthPercent: Number(event.target.value) })} /></label></div></fieldset>
           <fieldset><legend>动效主题</legend>
             <div className="motion-theme-presets">{THEME_PRESETS.map((preset) => <button key={preset.skin} type="button" className={theme.skin === preset.skin ? "active" : ""} aria-pressed={theme.skin === preset.skin} onClick={() => setTheme(motionThemeWithColorPreset(theme, preset.skin))}><span className="motion-theme-preset-swatches" aria-hidden>{Object.entries(MOTION_THEME_COLOR_PRESETS[preset.skin]).slice(0, 5).map(([role, color]) => <i key={role} style={{ backgroundColor: color }} />)}</span><strong>{preset.label}</strong><small>应用默认配色</small></button>)}</div>
             <div className="form-grid"><label><span>视觉骨架</span><Select label="动效视觉骨架" value={theme.style} onChange={(value) => setTheme({ ...theme, style: value as MotionStyle })} options={STYLE_OPTIONS} /></label><label><span>字体</span><Select label="动效字体" value={theme.font} onChange={(value) => setTheme({ ...theme, font: value as MotionFont })} options={FONT_OPTIONS} /></label></div>

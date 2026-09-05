@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BUILTIN_EFFECTS, clockControlledRecipe, effectAnimationState, effectById, effectiveEffectFontSize, recommendedEffectFontSize, retrieveEffects, type EffectRecipe } from "@/domain/effects";
+import { BUILTIN_EFFECTS, OVERLAY_STUDIO_EFFECT_IDS, clockControlledRecipe, effectAnimationState, effectById, effectParamsForText, effectiveEffectFontSize, recommendedEffectFontSize, recommendedEffectFontSizeForId, remapEffectTextParams, retrieveEffects, type EffectRecipe } from "@/domain/effects";
 
 describe("effect font sizing", () => {
   it("uses a readable display size for short impact text and tapers long copy", () => {
@@ -15,6 +15,11 @@ describe("effect font sizing", () => {
     expect(effectiveEffectFontSize(40, impact, "42%")).toBe(40);
     expect(effectiveEffectFontSize(56, effectById("warning-panel").recipe, "注意风险")).toBe(56);
   });
+
+  it("uses the reference component's shared 48px sizing baseline", () => {
+    expect(recommendedEffectFontSizeForId("term-card", effectById("term-card").recipe, "术语")).toBe(48);
+    expect(recommendedEffectFontSizeForId("growth-curve", effectById("growth-curve").recipe, "增长趋势")).toBe(48);
+  });
 });
 
 describe("retrieveEffects", () => {
@@ -27,31 +32,44 @@ describe("retrieveEffects", () => {
     expect(retrieveEffects("做一个简洁的开篇引入", 1)[0].tags).toContain("开场");
     expect(retrieveEffects("把操作方法按流程讲清楚", 1)[0].tags).toContain("流程");
     expect(retrieveEffects("展示销售额上涨与占比", 1)[0].tags).toContain("数据");
-    expect(retrieveEffects("解释为什么会产生这个结果", 1)[0].id).toBe("knowledge-causal-chain");
-    expect(retrieveEffects("纠正常见误区并给出真相", 1)[0].id).toBe("knowledge-myth-fact");
+    expect(retrieveEffects("解释为什么会产生这个结果", 1)[0].id).toBe("term-card");
+    expect(retrieveEffects("纠正常见误区并给出真相", 1)[0].id).toBe("versus-card");
   });
 
-  it("ships a production-sized uniquely addressable library with animated families and scenes", () => {
-    expect(BUILTIN_EFFECTS).toHaveLength(81);
+  it("exposes only the migrated Overlay Studio effects as built-ins", () => {
+    expect(BUILTIN_EFFECTS).toHaveLength(20);
     expect(new Set(BUILTIN_EFFECTS.map((effect) => effect.id)).size).toBe(BUILTIN_EFFECTS.length);
-    expect(BUILTIN_EFFECTS).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "intro-highlight" }),
-      expect.objectContaining({ id: "warning-panel" }),
-      expect.objectContaining({ id: "knowledge-concept-map" }),
-      expect.objectContaining({ id: "knowledge-causal-chain" }),
-      expect.objectContaining({ id: "knowledge-argument-board" }),
-      expect.objectContaining({ id: "knowledge-myth-fact" }),
-      expect.objectContaining({ id: "knowledge-quote-lines" }),
-      expect.objectContaining({ id: "scene-focus-stack", kind: "scene" })
-    ]));
-    const backgroundScenes = BUILTIN_EFFECTS.filter((effect) => effect.recipe.sceneBackground);
-    const composedScenes = BUILTIN_EFFECTS.filter((effect) => effect.kind === "scene");
-    expect(backgroundScenes).toHaveLength(8);
-    expect(composedScenes).toHaveLength(6);
-    expect(composedScenes.every((effect) => effect.sceneLayers && effect.sceneLayers.length >= 2)).toBe(true);
-    expect(BUILTIN_EFFECTS.filter((effect) => effect.recipe.animation)).toHaveLength(53);
-    expect(BUILTIN_EFFECTS.filter((effect) => effect.recipe.animation?.keyframes.some((frame) => frame.rotateX || frame.rotateY))).toHaveLength(3);
-    expect(retrieveEffects("警示风险和常见误区", 1)[0].tags).toContain("风险");
+    expect(new Set(BUILTIN_EFFECTS.map((effect) => effect.id))).toEqual(new Set(OVERLAY_STUDIO_EFFECT_IDS));
+    expect(BUILTIN_EFFECTS.every((effect) => !effect.kind && !effect.recipe.sceneBackground)).toBe(true);
+  });
+
+  it("keeps removed definitions available only for old project compatibility", () => {
+    expect(BUILTIN_EFFECTS.some((effect) => effect.id === "test-title-slide")).toBe(false);
+    expect(BUILTIN_EFFECTS.some((effect) => effect.id === "warning-panel")).toBe(false);
+    expect(BUILTIN_EFFECTS.some((effect) => effect.id === "scene-focus-stack")).toBe(false);
+    expect(effectById("test-title-slide").id).toBe("test-title-slide");
+    expect(effectById("warning-panel").id).toBe("warning-panel");
+    expect(effectById("scene-focus-stack").id).toBe("scene-focus-stack");
+  });
+
+  it("maps generated copy into the reference effect parameter structure", () => {
+    expect(effectParamsForText("pin-board", "主题｜结论｜证据")).toMatchObject({ title: "主题", subtitle: "", items: "结论|证据" });
+    expect(effectParamsForText("checklist", "清单｜第一步｜第二步")).toMatchObject({ title: "清单", items: "第一步|第二步", checked: 2 });
+    expect(effectParamsForText("versus-card", "旧方案｜新方案｜结构更清晰")).toMatchObject({ aKicker: "", aSub: "", aTitle: "旧方案", bKicker: "", bTitle: "新方案", bSub: "结构更清晰" });
+    expect(effectParamsForText("stat-proof", "+42%｜同比增长｜来源：公开数据")).toMatchObject({ value: 42, prefix: "+", suffix: "%", kicker: "", kickerZh: "同比增长", footEn: "", footZh: "来源：公开数据" });
+    expect(effectParamsForText("term-card", "复利")).toMatchObject({ en: "", term: "复利", definition: "" });
+    expect(effectParamsForText("pin-board", "单一结论")).toMatchObject({ title: "单一结论", subtitle: "", items: "" });
+    expect(effectParamsForText("versus-card", "单一方案")).toMatchObject({ aTitle: "单一方案", bTitle: "", aSub: "", bSub: "" });
+  });
+
+  it("rebuilds only content fields when migrating generated effect params", () => {
+    expect(remapEffectTextParams("term-card", "复利", {
+      theme: "light",
+      position: "right",
+      en: "TERM CARD",
+      term: "旧术语",
+      definition: "视频里出现新名词时，用一句话给它下定义。"
+    })).toEqual({ theme: "light", position: "right", en: "", term: "复利", definition: "" });
   });
 
   it("interpolates declarative package keyframes with easing", () => {

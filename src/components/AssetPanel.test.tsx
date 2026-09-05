@@ -44,7 +44,7 @@ describe("AssetPanel video audio actions", () => {
     expect(onExportAudio).toHaveBeenCalledWith("video");
   });
 
-  it("groups the complete effect library and renders a recipe thumbnail for every effect", () => {
+  it("groups the migrated effect library and renders a thumbnail for every effect", () => {
     const project = createEmptyProject();
     useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
     useEffectLibraryStore.setState({ effects: [...BUILTIN_EFFECTS] });
@@ -55,11 +55,12 @@ describe("AssetPanel video audio actions", () => {
     }
     expect(container.querySelectorAll(".effect-group")).toHaveLength(7);
     const dataGroup = screen.getByText("数据", { selector: "summary span" }).closest("details");
-    expect(dataGroup).toHaveTextContent("数字结论");
-    expect(dataGroup).toHaveTextContent("横向数据对比");
-    expect(dataGroup).toHaveTextContent("重点占比");
-    expect(dataGroup).toHaveTextContent("趋势变化");
-    expect(dataGroup?.querySelectorAll(".chart-swatch")).toHaveLength(4);
+    expect(dataGroup).toHaveTextContent("数据排名条");
+    expect(dataGroup).toHaveTextContent("环形指标");
+    expect(dataGroup).toHaveTextContent("翻牌计数器");
+    expect(dataGroup).toHaveTextContent("数字实证");
+    expect(dataGroup).toHaveTextContent("增长曲线");
+    expect(dataGroup).not.toHaveTextContent("数字结论");
     expect(container.querySelectorAll(".effect-swatch")).toHaveLength(BUILTIN_EFFECTS.length);
     expect(container.querySelectorAll(".effect-swatch i")).toHaveLength(BUILTIN_EFFECTS.length);
   });
@@ -79,10 +80,10 @@ describe("AssetPanel video audio actions", () => {
       auxiliary: "#47d7ac"
     });
 
-    fireEvent.click(screen.getByText("开场 · 高亮条").closest("button")!);
+    fireEvent.click(screen.getByText("金句强调条").closest("button")!);
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({
       accentColor: "#47d7ac",
-      colorRole: "auxiliary"
+      colorRole: "opinion"
     });
     useEditorStore.getState().undo();
     useEditorStore.getState().undo();
@@ -99,10 +100,10 @@ describe("AssetPanel video audio actions", () => {
     fireEvent.mouseDown(effectsTab, { button: 0, ctrlKey: false });
     fireEvent.click(effectsTab);
     const search = screen.getByRole("searchbox", { name: "搜索动效" });
-    fireEvent.change(search, { target: { value: "风险" } });
+    fireEvent.change(search, { target: { value: "误区" } });
 
-    expect(screen.getByText("警示 · 侧栏卡")).toBeInTheDocument();
-    expect(screen.queryByText("开场 · 高亮条")).not.toBeInTheDocument();
+    expect(screen.getByText("双栏对比")).toBeInTheDocument();
+    expect(screen.queryByText("金句强调条")).not.toBeInTheDocument();
     expect(screen.getByText(/个匹配/)).toBeInTheDocument();
   });
 

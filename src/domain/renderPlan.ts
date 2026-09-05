@@ -196,7 +196,7 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
       const recipe = scaleRecipe(clockControlledRecipe(clip.recipe ?? effectById(clip.effectId).recipe));
       const fontSize = effectiveEffectFontSize(clip.fontSize, recipe, clip.text);
       const appearance = resolveEffectAppearance(clip, project.motionTheme);
-      return [{ kind: "text" as const, effectId: clip.effectId, renderer: "react" as const, startUs: clip.startUs, durationUs: clip.durationUs, text: clip.text, color: appearance.color, accentColor: appearance.accentColor, fontSize: fontSize * outputScale, x: clip.transform.x, y: clip.transform.y, opacity: clip.transform.opacity, scale: clip.transform.scale, rotation: clip.transform.rotation, speed: clip.speed, zIndex: 200 + (clip.zIndex ?? 20), transformKeyframes: clip.transformKeyframes, recipe, backdrop: scaleBackdrop(clip.backdrop), motionTheme: project.motionTheme, dimAtUs: clip.dimAtUs }];
+      return [{ kind: "text" as const, effectId: clip.effectId, renderer: "react" as const, startUs: clip.startUs, durationUs: clip.durationUs, text: clip.text, color: appearance.color, accentColor: appearance.accentColor, fontSize: fontSize * outputScale, x: clip.transform.x, y: clip.transform.y, opacity: clip.transform.opacity, scale: clip.transform.scale, rotation: clip.transform.rotation, speed: clip.speed, zIndex: 200 + (clip.zIndex ?? 20), transformKeyframes: clip.transformKeyframes, recipe, params: clip.params, backdrop: scaleBackdrop(clip.backdrop), motionTheme: project.motionTheme, dimAtUs: clip.dimAtUs }];
     }
     if (clip.kind === "subtitle") {
       const style = subtitleStyle(clip);

@@ -33,11 +33,11 @@ describe("buildRenderPlan", () => {
     project.tracks.find((track) => track.kind === "effect")!.clips.push({
       id: "themed", trackId: "effect-main", kind: "effect", label: "数据", startUs: 0, durationUs: 3_000_000, locked: false,
       effectId: "test-number-counter", text: "42%", color: "#ffffff", accentColor: "#ff0000", colorRole: "data", fontSize: 80,
-      speed: 1, dimAtUs: 2_000_000, transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }
+      speed: 1, dimAtUs: 2_000_000, params: { value: 42, showLabel: true }, transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }
     });
     expect(buildRenderPlan(project, "/output.mp4").overlays[0]).toMatchObject({
       renderer: "react", effectId: "test-number-counter", color: "#121212", accentColor: "#0099cc", dimAtUs: 2_000_000,
-      motionTheme: { skin: "light", style: "editorial", font: "display" }
+      motionTheme: { skin: "light", style: "editorial", font: "display" }, params: { value: 42, showLabel: true }
     });
   });
 

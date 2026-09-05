@@ -3,14 +3,14 @@ import { allEffects, effectById } from "@/domain/effects";
 import { createGeneratedEffectLayers, effectIdsForSubtitle, suggestedEffectTransform } from "@/domain/sceneEffects";
 
 describe("scene effect matching", () => {
-  it("returns stable active effect ids including production scene templates", () => {
+  it("returns stable ids from the active migrated effect library", () => {
     const first = effectIdsForSubtitle("开场介绍：今天讲三个核心步骤", 4);
     const second = effectIdsForSubtitle("开场介绍：今天讲三个核心步骤", 4);
 
     expect(first).toEqual(second);
     expect(first).toHaveLength(4);
     expect(first.every((id) => allEffects().some((effect) => effect.id === id))).toBe(true);
-    expect(first.some((id) => effectById(id).kind === "scene")).toBe(true);
+    expect(first.every((id) => effectById(id).kind !== "scene")).toBe(true);
   });
 
   it("expands scene selections into atomic editable layers with matching metadata", () => {

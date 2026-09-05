@@ -1,5 +1,6 @@
-import { createEmptyProject, DEFAULT_MOTION_THEME, projectEndUs, type ChapterProgressPosition, type ChapterProgressPreset, type ChapterProgressStyle, type EditorProject, type MotionColorRole, type MotionFont, type MotionSkin, type MotionStyle, type MotionTheme, type SceneClip } from "@/domain/project";
-import { effectById, type EffectSoundCue, type SceneBackgroundSpec } from "@/domain/effects";
+import { createEmptyProject, DEFAULT_MOTION_THEME, DEFAULT_PRESENTER_SAFE_AREA, projectEndUs, type ChapterProgressPosition, type ChapterProgressPreset, type ChapterProgressStyle, type EditorProject, type EffectClip, type MotionColorRole, type MotionFont, type MotionSkin, type MotionStyle, type MotionTheme, type PresenterSafeAreaPosition, type SceneClip } from "@/domain/project";
+import { OVERLAY_STUDIO_BASE_FONT_SIZE, OVERLAY_STUDIO_EFFECT_IDS, allEffects, effectById, remapEffectTextParams, type EffectParams, type EffectSoundCue, type SceneBackgroundSpec } from "@/domain/effects";
+import { presenterMotionSafeArea, resolveMotionLayout, type MotionLayoutLayer, type OccupiedMotionLayoutLayer } from "@/domain/motionLayout";
 import { cameraMotionForPreset } from "@/domain/camera";
 import { DEFAULT_TRANSFORM } from "@/domain/transforms";
 import { migrateLegacyGeneratedEffectLayout } from "@/domain/sceneEffects";
@@ -23,6 +24,22 @@ function normalizeEffectSoundCues(value: unknown): EffectSoundCue[] {
   });
 }
 
+function normalizeEffectParams(value: unknown, defaults: EffectParams = {}): EffectParams {
+  const normalized: EffectParams = { ...defaults };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return normalized;
+  for (const [key, candidate] of Object.entries(value).slice(0, 64)) {
+    if (!/^[a-z][a-z0-9_-]{0,63}$/iu.test(key)) continue;
+    if (typeof candidate === "string") normalized[key] = candidate.slice(0, 20_000);
+    else if (typeof candidate === "boolean") normalized[key] = candidate;
+    else if (typeof candidate === "number" && Number.isFinite(candidate)) normalized[key] = Math.max(-1_000_000_000, Math.min(1_000_000_000, candidate));
+  }
+  return normalized;
+}
+
+function defaultEffectParams(effectId: string): EffectParams {
+  return structuredClone(allEffects().find((effect) => effect.id === effectId)?.defaultParams ?? {});
+}
+
 const scenePresets: readonly SceneBackgroundSpec["preset"][] = [
   "black-stripes", "white-frame", "dark-grid", "clean-white", "spotlight", "blueprint", "paper-lines", "contrast-side"
 ];
@@ -34,6 +51,56 @@ const motionSkins: readonly MotionSkin[] = ["dark", "light"];
 const motionStyles: readonly MotionStyle[] = ["minimal", "editorial"];
 const motionFonts: readonly MotionFont[] = ["sans", "display"];
 const motionColorRoles: readonly MotionColorRole[] = ["data", "opinion", "warning", "auxiliary", "custom"];
+const presenterSafeAreaPositions: readonly PresenterSafeAreaPosition[] = ["none", "left", "center", "right"];
+const supportedProjectSchemaVersions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22] as const;
+
+function isGeneratedOverlayStudioEffect(clip: EffectClip) {
+  return OVERLAY_STUDIO_EFFECT_IDS.includes(clip.effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number])
+    && Boolean(clip.sourceSubtitleId || clip.sourceBlockId || clip.label.startsWith("AI 动效"));
+}
+
+function effectMotionLayoutLayer(effect: EffectClip): MotionLayoutLayer {
+  return {
+    id: effect.id,
+    effectId: effect.effectId,
+    startUs: effect.startUs,
+    durationUs: effect.durationUs,
+    desiredX: effect.transform.x,
+    desiredY: effect.transform.y,
+    scale: effect.transform.scale,
+    fontSize: effect.fontSize,
+    text: effect.text,
+    recipe: effect.recipe ?? effectById(effect.effectId).recipe,
+    priority: "primary"
+  };
+}
+
+function migrateGeneratedOverlayStudioLayout(project: EditorProject, sourceSchemaVersion: number) {
+  if (sourceSchemaVersion >= 22) return;
+  const effects = project.tracks.flatMap((track) => track.clips).filter((clip): clip is EffectClip => clip.kind === "effect");
+  const movable = effects.filter((effect) => isGeneratedOverlayStudioEffect(effect) && !effect.transformKeyframes?.length);
+  if (!movable.length) return;
+  const movableIds = new Set(movable.map((effect) => effect.id));
+  const occupiedLayers: OccupiedMotionLayoutLayer[] = effects
+    .filter((effect) => !movableIds.has(effect.id))
+    .map((effect) => ({
+      layer: effectMotionLayoutLayer(effect),
+      placement: { x: effect.transform.x, y: effect.transform.y, scale: effect.transform.scale }
+    }));
+  const firstStartUs = Math.min(...movable.map((effect) => effect.startUs));
+  const lastEndUs = Math.max(...movable.map((effect) => effect.startUs + effect.durationUs));
+  const presenterArea = presenterMotionSafeArea(project.presenterSafeArea, firstStartUs, lastEndUs - firstStartUs);
+  const placements = resolveMotionLayout({
+    canvas: project.canvas,
+    layers: movable.map(effectMotionLayoutLayer),
+    safeAreas: presenterArea ? [presenterArea] : [],
+    occupiedLayers
+  });
+  for (const effect of movable) {
+    const placement = placements.get(effect.id);
+    if (placement) effect.transform = { ...effect.transform, ...placement };
+  }
+}
 
 function normalizeStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -110,7 +177,8 @@ export function parseProject(contents: string): EditorProject {
   }
   if (!raw || typeof raw !== "object") throw new Error("工程文件结构无效");
   const candidate = raw as Omit<Partial<EditorProject>, "schemaVersion"> & { schemaVersion?: number };
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].includes(candidate.schemaVersion ?? -1)) throw new Error("不支持此工程文件版本");
+  const sourceSchemaVersion = candidate.schemaVersion;
+  if (typeof sourceSchemaVersion !== "number" || !supportedProjectSchemaVersions.includes(sourceSchemaVersion as (typeof supportedProjectSchemaVersions)[number])) throw new Error("不支持此工程文件版本");
   if (!Array.isArray(candidate.assets) || !Array.isArray(candidate.tracks) || !candidate.canvas) throw new Error("工程文件缺少素材、轨道或画布信息");
   const fallback = createEmptyProject();
   const tracks = candidate.tracks.map((track) => ({
@@ -162,10 +230,17 @@ export function parseProject(contents: string): EditorProject {
             lintOff: normalizeStringList(clip.lintOff)
           } satisfies SceneClip;
         }
+        const generatedOverlayStudioEffect = sourceSchemaVersion < 22 && isGeneratedOverlayStudioEffect(clip);
+        const params = normalizeEffectParams(clip.params, defaultEffectParams(clip.effectId));
         return {
           ...clip,
           zIndex: clip.zIndex ?? 20,
           recipe,
+          fontSize: generatedOverlayStudioEffect ? OVERLAY_STUDIO_BASE_FONT_SIZE : clip.fontSize,
+          transform: generatedOverlayStudioEffect && !clip.transformKeyframes?.length
+            ? { ...clip.transform, scale: 1 }
+            : clip.transform,
+          params: generatedOverlayStudioEffect ? remapEffectTextParams(clip.effectId, clip.text, params) : params,
           soundCues: normalizeEffectSoundCues(clip.soundCues),
           backdrop: { ...DEFAULT_EFFECT_BACKDROP, ...clip.backdrop },
           colorRole: typeof clip.colorRole === "string" && motionColorRoles.includes(clip.colorRole as MotionColorRole) ? clip.colorRole as MotionColorRole : "custom",
@@ -243,8 +318,16 @@ export function parseProject(contents: string): EditorProject {
   const project = {
     ...fallback,
     ...candidate,
-    schemaVersion: 20 as const,
+    schemaVersion: 22 as const,
     canvas: { ...fallback.canvas, ...candidate.canvas },
+    presenterSafeArea: {
+      position: typeof candidate.presenterSafeArea?.position === "string" && presenterSafeAreaPositions.includes(candidate.presenterSafeArea.position as PresenterSafeAreaPosition)
+        ? candidate.presenterSafeArea.position as PresenterSafeAreaPosition
+        : DEFAULT_PRESENTER_SAFE_AREA.position,
+      widthPercent: typeof candidate.presenterSafeArea?.widthPercent === "number" && Number.isFinite(candidate.presenterSafeArea.widthPercent)
+        ? Math.max(18, Math.min(60, candidate.presenterSafeArea.widthPercent))
+        : DEFAULT_PRESENTER_SAFE_AREA.widthPercent
+    },
     motionTheme: normalizeMotionTheme(candidate.motionTheme),
     chapterProgress: {
       ...DEFAULT_CHAPTER_PROGRESS,
@@ -274,6 +357,7 @@ export function parseProject(contents: string): EditorProject {
     assets: candidate.assets,
     tracks
   } as EditorProject;
+  migrateGeneratedOverlayStudioLayout(project, sourceSchemaVersion);
   const assetById = new Map(project.assets.map((asset) => [asset.id, asset]));
   const generatedById = new Map(project.tracks
     .flatMap((track) => track.clips)

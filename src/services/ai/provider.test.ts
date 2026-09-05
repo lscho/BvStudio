@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { captionNumericData, compactMotionText, extractTokenUsage, generateSubtitleChapters, generateTimedScript, generateVideoPlan, listProviderModels, matchTimelineMotion, normalizeMotionChart, normalizeMotionMatches, normalizeTimedScript, providerEndpoint, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
+import { OVERLAY_STUDIO_EFFECT_IDS } from "@/domain/effects";
 
 const pricing = { inputCostPerMillion: 2.5, outputCostPerMillion: 10 };
 const config: AiProviderConfig = {
@@ -163,8 +164,8 @@ describe("provider requests", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
 
     const matches = [
-      { captionIndex: 0, primaryEffectId: "test-number-counter", primaryText: "市场份额增长达到42%。", secondaryEffectId: null, secondaryText: null, accentColor: "#47d7ac", x: 50, y: 30, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "push-in", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: { categories: ["市场份额"], series: [42], unit: "%" } },
-      { captionIndex: 1, primaryEffectId: "test-quote-card", primaryText: "最后给出明确结论。", secondaryEffectId: null, secondaryText: null, accentColor: "#5fa8ff", x: 50, y: 35, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "pull-out", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null }
+      { captionIndex: 0, primaryEffectId: "stat-proof", primaryText: "市场份额增长达到42%。", secondaryEffectId: null, secondaryText: null, accentColor: "#47d7ac", x: 50, y: 30, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "push-in", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null },
+      { captionIndex: 1, primaryEffectId: "quote-lockup", primaryText: "最后给出明确结论。", secondaryEffectId: null, secondaryText: null, accentColor: "#5fa8ff", x: 50, y: 35, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "pull-out", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null }
     ];
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ matches }) } }], usage: { prompt_tokens: 12, completion_tokens: 18, total_tokens: 30 } }), { status: 200 }));
     const result = await matchTimelineMotion(config, {
@@ -175,11 +176,9 @@ describe("provider requests", () => {
     const payload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
     expect(payload.messages.at(-1)?.content).toContain('"stage":"opening"');
     expect(payload.messages.at(-1)?.content).toContain('"stage":"ending"');
-    expect(payload.messages[0]?.content).toContain('"id":"knowledge-concept-map"');
-    expect(payload.messages[0]?.content).toContain('"id":"knowledge-causal-chain"');
-    expect(payload.messages[0]?.content).toContain('"id":"knowledge-argument-board"');
-    expect(payload.messages[0]?.content).toContain('"id":"knowledge-myth-fact"');
-    expect(payload.messages[0]?.content).toContain('"id":"knowledge-quote-lines"');
+    expect(payload.messages[0]?.content).not.toContain('"id":"knowledge-concept-map"');
+    expect(payload.messages[0]?.content).not.toContain('"id":"test-title-slide"');
+    for (const id of OVERLAY_STUDIO_EFFECT_IDS) expect(payload.messages[0]?.content).toContain(`"id":"${id}"`);
   });
 
   it("keeps useful divergent motion copy while shortening full-caption repetition", () => {
@@ -238,7 +237,7 @@ describe("provider requests", () => {
 
   it("downgrades middle titles and removes consecutive or duplicate motion layers", () => {
     const base = {
-      captionIndex: 0, primaryEffectId: "test-title-slide", primaryText: "开场主题", secondaryEffectId: "test-title-slide", secondaryText: "开场主题",
+      captionIndex: 0, primaryEffectId: "type-shift", primaryText: "开场主题", secondaryEffectId: "type-shift", secondaryText: "开场主题",
       accentColor: "#5fa8ff", x: 50, y: 28, scale: 1, secondaryX: 75, secondaryY: 60,
       cameraPreset: "none" as const, videoLayers: [], backdropPreset: "none" as const,
       primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null,
@@ -252,10 +251,10 @@ describe("provider requests", () => {
     const matches = normalizeMotionMatches([
       base,
       { ...base, captionIndex: 1, primaryText: "精细化运营" },
-      { ...base, captionIndex: 2, primaryEffectId: "test-keyword-underline", primaryText: "运营效率", secondaryEffectId: null, secondaryText: null }
+      { ...base, captionIndex: 2, primaryEffectId: "punch-pill", primaryText: "运营效率", secondaryEffectId: null, secondaryText: null }
     ], captions, 10);
-    expect(matches[0]).toMatchObject({ primaryEffectId: "test-title-slide", secondaryEffectId: null, secondaryText: null });
-    expect(matches[1]).toMatchObject({ primaryEffectId: "test-keyword-underline", primaryText: "精细化运营" });
+    expect(matches[0]).toMatchObject({ primaryEffectId: "type-shift", secondaryEffectId: null, secondaryText: null });
+    expect(matches[1]).toMatchObject({ primaryEffectId: "punch-pill", primaryText: "精细化运营" });
     expect(matches[2]).toMatchObject({ primaryEffectId: null, primaryText: "" });
   });
 
@@ -483,7 +482,7 @@ describe("provider requests", () => {
       chart: { categories: ["2023", "2025"], series: [100, 200], unit: "亿元" }
     };
     expect(normalizeMotionChart(match, "预计2025年市场规模将超过两千亿元。")).toMatchObject({
-      primaryEffectId: "test-number-counter",
+      primaryEffectId: "stat-proof",
       chart: { series: [2_000], unit: "亿元" }
     });
   });
@@ -496,7 +495,7 @@ describe("provider requests", () => {
       secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" as const,
       chart: null
     };
-    expect(normalizeMotionChart(match, "充电桩已经成为稳定可持续的优质资产。")).toMatchObject({ primaryEffectId: "test-keyword-underline", chart: null });
+    expect(normalizeMotionChart(match, "充电桩已经成为稳定可持续的优质资产。")).toMatchObject({ primaryEffectId: "punch-pill", chart: null });
   });
 
   it("normalizes service roots, v1 roots, and full compatible endpoints", () => {
@@ -537,7 +536,7 @@ describe("provider requests", () => {
 
   it("sends only local material metadata and accepts a matched material id", async () => {
     const script = { title: "开篇", article: "文章", narration: "口播", captions: [{ startSeconds: 0, endSeconds: 3, text: "口播" }] };
-    const match = { captionIndex: 0, primaryEffectId: "test-title-slide", primaryText: "口播", secondaryEffectId: null, secondaryText: null, accentColor: "#ffb84d", x: 50, y: 28, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "push-in", primaryMediaAssetId: "local-video", primaryMediaSourceInSeconds: 2, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null };
+    const match = { captionIndex: 0, primaryEffectId: "type-shift", primaryText: "口播", secondaryEffectId: null, secondaryText: null, accentColor: "#ffb84d", x: 50, y: 28, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "push-in", primaryMediaAssetId: "local-video", primaryMediaSourceInSeconds: 2, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(script) } }], usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } }), { status: 200, headers: { "content-type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ matches: [match] }) } }], usage: { prompt_tokens: 15, completion_tokens: 25, total_tokens: 40 } }), { status: 200, headers: { "content-type": "application/json" } }));
@@ -548,7 +547,7 @@ describe("provider requests", () => {
       durationSeconds: 3,
       style: "简洁",
       materials: [{ id: "local-video", name: "office.mp4", durationSeconds: 12, width: 1920, height: 1080, roleHint: "a-roll", transcriptExcerpt: "这是主讲人的口播内容" }]
-    }, "secret")).resolves.toMatchObject({ plan: { title: "开篇", captions: [{ text: "口播" }], matches: [expect.objectContaining({ primaryEffectId: "test-title-slide", primaryMediaAssetId: "local-video" })] }, usage: { totalTokens: 70 } });
+    }, "secret")).resolves.toMatchObject({ plan: { title: "开篇", captions: [{ text: "口播" }], matches: [expect.objectContaining({ primaryEffectId: "type-shift", primaryMediaAssetId: "local-video" })] }, usage: { totalTokens: 70 } });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const motionPayload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
     expect(motionPayload.messages[0].content).toContain('"roleHint":"a-roll"');

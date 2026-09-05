@@ -56,4 +56,16 @@ describe("CanvasSettingsDialog", () => {
       colors: { text: "#1b1d21", surface: "#f7f8fa", data: "#2563eb", opinion: "#3456d1", warning: "#2563eb", auxiliary: "#2563eb" }
     });
   });
+
+  it("updates the presenter safe area used by automatic motion layout", () => {
+    const project = useEditorStore.getState().project;
+    render(<CanvasSettingsDialog open onOpenChange={vi.fn()} canvas={project.canvas} assets={project.assets} />);
+
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "人物位置" }), { key: "Enter" });
+    fireEvent.click(screen.getByRole("option", { name: "人物在右侧" }));
+    fireEvent.change(screen.getByRole("slider", { name: "人物区域宽度" }), { target: { value: "40" } });
+    fireEvent.click(screen.getByRole("button", { name: "应用画布" }));
+
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual({ position: "right", widthPercent: 40 });
+  });
 });

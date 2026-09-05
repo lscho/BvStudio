@@ -100,6 +100,45 @@ describe("editorStore", () => {
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({ text: "核心观点", speed: 1 });
   });
 
+  it("snapshots and edits component effect params with undo support", () => {
+    useEditorStore.getState().addEffect("ring-metric");
+    const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0];
+    expect(effect).toMatchObject({ effectId: "ring-metric", params: { value: 92.4, max: 100, unit: "%" }, backdrop: { enabled: false }, transform: { scale: 1 } });
+
+    useEditorStore.getState().updateEffect(effect.id, { params: { ...(effect.kind === "effect" ? effect.params : {}), value: 64 } });
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({ params: { value: 64 } });
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({ params: { value: 92.4 } });
+  });
+
+  it("places manually added component effects outside the presenter area and each other", () => {
+    useEditorStore.getState().updatePresenterSafeArea({ position: "center", widthPercent: 32 });
+    useEditorStore.getState().addEffect("ring-metric");
+    useEditorStore.getState().addEffect("ring-metric");
+
+    const project = useEditorStore.getState().project;
+    const effects = project.tracks.find((track) => track.kind === "effect")!.clips.filter((clip): clip is EffectClip => clip.kind === "effect");
+    const layers = effects.map((effect) => ({
+      id: effect.id,
+      effectId: effect.effectId,
+      startUs: effect.startUs,
+      durationUs: effect.durationUs,
+      desiredX: effect.transform.x,
+      desiredY: effect.transform.y,
+      scale: effect.transform.scale,
+      fontSize: effect.fontSize,
+      text: effect.text,
+      recipe: effect.recipe ?? effectById(effect.effectId).recipe,
+      priority: "primary" as const
+    }));
+    const rects = effects.map((effect, index) => estimateMotionLayoutRect(layers[index], effect.transform, project.canvas));
+    const presenterRect = { left: 34, top: 6, right: 66, bottom: 78 };
+
+    expect(effects).toHaveLength(2);
+    expect(rects.every((rect) => !motionLayoutRectsOverlap(rect, presenterRect))).toBe(true);
+    expect(motionLayoutRectsOverlap(rects[0], rects[1])).toBe(false);
+  });
+
   it("updates theme colors with undo and redo support", () => {
     const original = useEditorStore.getState().project.motionTheme.colors.data;
     useEditorStore.getState().updateMotionTheme({ colors: { data: "#123456" } });
@@ -111,7 +150,17 @@ describe("editorStore", () => {
     expect(useEditorStore.getState().project.motionTheme.colors.data).toBe("#123456");
   });
 
-  it("adds scene backgrounds to the independent scene track", () => {
+  it("updates the presenter safe area with undo and redo support", () => {
+    useEditorStore.getState().updatePresenterSafeArea({ position: "right", widthPercent: 40 });
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual({ position: "right", widthPercent: 40 });
+
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual({ position: "center", widthPercent: 32 });
+    useEditorStore.getState().redo();
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual({ position: "right", widthPercent: 40 });
+  });
+
+  it("keeps archived scene backgrounds editable for old project compatibility", () => {
     useEditorStore.getState().updateMotionTheme({ colors: { data: "#47d7ac", opinion: "#47d7ac", warning: "#47d7ac", auxiliary: "#47d7ac" } });
     useEditorStore.getState().addEffect("scene-black-stripes");
     let project = useEditorStore.getState().project;
@@ -119,7 +168,7 @@ describe("editorStore", () => {
     expect(project.tracks.find((track) => track.kind === "scene")!.clips).toEqual([
       expect.objectContaining({
         kind: "scene", trackId: "scene-main", effectId: "scene-black-stripes", opacity: 1,
-        background: expect.objectContaining({ preset: "black-stripes", borderColor: "#47d7ac" })
+        background: expect.objectContaining({ preset: "black-stripes", borderColor: "#5fa8ff" })
       })
     ]);
 
@@ -356,7 +405,7 @@ describe("editorStore", () => {
     useEditorStore.getState().addGeneratedPlan(multiEffectPlan, "增长 42% 的核心结论", "overlay");
     const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips;
     expect(effects).toHaveLength(2);
-    expect(effects.map((clip) => clip.kind === "effect" ? [clip.text, clip.transform.x, clip.transform.y] : [])).toEqual([["增长 42%", 50, 28], ["核心结论", 70, 72]]);
+    expect(effects.map((clip) => clip.kind === "effect" ? clip.text : "")).toEqual(["增长 42%", "核心结论"]);
   });
 
   it("creates exact timed subtitles returned by the first AI call", () => {
@@ -577,6 +626,7 @@ describe("editorStore", () => {
     const effects = project.tracks.find((track) => track.kind === "effect")!.clips as EffectClip[];
     const layoutLayers: MotionLayoutLayer[] = effects.map((effect) => ({
       id: effect.id,
+      effectId: effect.effectId,
       startUs: effect.startUs,
       durationUs: effect.durationUs,
       desiredX: effect.transform.x,
@@ -608,6 +658,39 @@ describe("editorStore", () => {
 
     const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0];
     expect(effect).toMatchObject({ kind: "effect", fontSize: 80, transform: { scale: 0.8 } });
+  });
+
+  it("normalizes Overlay Studio effect scale and keeps it outside the presenter area", () => {
+    useEditorStore.getState().updatePresenterSafeArea({ position: "right", widthPercent: 40 });
+    useEditorStore.getState().addVideo({ id: "presenter-video", name: "presenter.mp4", kind: "video", durationUs: 3_000_000, hasAudio: true });
+    useEditorStore.getState().addSubtitles("presenter-video", [{ startSeconds: 0, endSeconds: 3, text: "增长达到百分之四十二。" }]);
+    const subtitle = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [{
+      ...motionMatch,
+      primaryEffectId: "ring-metric",
+      primaryText: "42%｜增长指标",
+      scale: 2.5
+    }]);
+
+    const project = useEditorStore.getState().project;
+    const effect = project.tracks.find((track) => track.kind === "effect")!.clips[0] as EffectClip;
+    const layer: MotionLayoutLayer = {
+      id: effect.id,
+      effectId: effect.effectId,
+      startUs: effect.startUs,
+      durationUs: effect.durationUs,
+      desiredX: effect.transform.x,
+      desiredY: effect.transform.y,
+      scale: effect.transform.scale,
+      fontSize: effect.fontSize,
+      text: effect.text,
+      recipe: effect.recipe ?? effectById(effect.effectId).recipe,
+      priority: "primary"
+    };
+    const presenterRect = { left: 57, top: 6, right: 97, bottom: 78 };
+
+    expect(effect).toMatchObject({ fontSize: 48, transform: { scale: 1 } });
+    expect(motionLayoutRectsOverlap(estimateMotionLayoutRect(layer, effect.transform, project.canvas), presenterRect)).toBe(false);
   });
 
   it("clears only subtitles inside an AI replace range", () => {

@@ -1,9 +1,9 @@
 import { create } from "zustand";
-import { BUILTIN_EFFECTS, effectById, recommendedEffectFontSize } from "@/domain/effects";
+import { BUILTIN_EFFECTS, OVERLAY_STUDIO_EFFECT_IDS, effectById, effectParamsForText, recommendedEffectFontSizeForId } from "@/domain/effects";
 import { cameraMotionForPreset } from "@/domain/camera";
 import { timedTextSegments } from "@/domain/captions";
 import { createGeneratedEffectLayers } from "@/domain/sceneEffects";
-import { resolveMotionLayout, type MotionLayoutLayer } from "@/domain/motionLayout";
+import { presenterMotionSafeArea, resolveMotionLayout, type MotionLayoutLayer, type OccupiedMotionLayoutLayer } from "@/domain/motionLayout";
 import { motionColorRoleForEffect, motionThemeAccentColor } from "@/domain/motionTheme";
 import { DEFAULT_TRANSFORM, videoLayoutForPreset, visualTransformAt } from "@/domain/transforms";
 import {
@@ -19,6 +19,7 @@ import {
   type InsertMode,
   type MediaAsset,
   type MotionTheme,
+  type PresenterSafeAreaSettings,
   type SceneClip,
   type SubtitleClip,
   type TimelineClip,
@@ -46,8 +47,75 @@ export type SubtitleAppearancePatch = Partial<Pick<
   | "positionY"
 >>;
 
-function aiEffectScale(matchScale: number, hasChart: boolean) {
+const overlayStudioDefaultPosition: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT_IDS)[number], { x: number; y: number }>> = {
+  "quote-lockup": { x: 72, y: 50 },
+  "step-timeline": { x: 73, y: 50 },
+  "rank-bars": { x: 28, y: 50 },
+  "punch-pill": { x: 50, y: 82 },
+  "term-card": { x: 72, y: 50 },
+  "pin-board": { x: 78, y: 20 },
+  checklist: { x: 27, y: 50 },
+  "terminal-3d": { x: 50, y: 50 },
+  "ring-metric": { x: 50, y: 50 },
+  "versus-card": { x: 50, y: 50 },
+  "ui-callout": { x: 50, y: 50 },
+  "type-shift": { x: 50, y: 50 },
+  "blur-text": { x: 50, y: 50 },
+  odometer: { x: 50, y: 50 },
+  "focus-card": { x: 50, y: 50 },
+  "chapter-bar": { x: 50, y: 4 },
+  "caption-track": { x: 50, y: 86 },
+  "stat-proof": { x: 27, y: 50 },
+  "growth-curve": { x: 30, y: 50 },
+  "entity-chips": { x: 34, y: 72 }
+};
+
+function defaultEffectTransform(effectId: string) {
+  const position = overlayStudioDefaultPosition[effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]] ?? { x: 50, y: 30 };
+  return { ...position, scale: 1, rotation: 0, opacity: 1 };
+}
+
+function aiEffectScale(effectId: string, matchScale: number, hasChart: boolean) {
+  if (OVERLAY_STUDIO_EFFECT_IDS.includes(effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number])) return 1;
   return Math.max(hasChart ? 0.8 : 0.65, Math.min(2.5, matchScale));
+}
+
+function effectMotionLayoutLayer(effect: EffectClip): MotionLayoutLayer {
+  return {
+    id: effect.id,
+    effectId: effect.effectId,
+    startUs: effect.startUs,
+    durationUs: effect.durationUs,
+    desiredX: effect.transform.x,
+    desiredY: effect.transform.y,
+    scale: effect.transform.scale,
+    fontSize: effect.fontSize,
+    text: effect.text,
+    recipe: effect.recipe ?? effectById(effect.effectId).recipe,
+    priority: "primary"
+  };
+}
+
+function occupiedMotionLayoutLayer(effect: EffectClip): OccupiedMotionLayoutLayer {
+  return {
+    layer: effectMotionLayoutLayer(effect),
+    placement: { x: effect.transform.x, y: effect.transform.y, scale: effect.transform.scale }
+  };
+}
+
+function placeNewEffect(project: EditorProject, effect: EffectClip) {
+  const safeArea = presenterMotionSafeArea(project.presenterSafeArea, effect.startUs, effect.durationUs);
+  const occupiedLayers = project.tracks
+    .flatMap((track) => track.clips)
+    .filter((clip): clip is EffectClip => clip.kind === "effect")
+    .map(occupiedMotionLayoutLayer);
+  const placement = resolveMotionLayout({
+    canvas: project.canvas,
+    layers: [effectMotionLayoutLayer(effect)],
+    safeAreas: safeArea ? [safeArea] : [],
+    occupiedLayers
+  }).get(effect.id);
+  if (placement) effect.transform = { ...effect.transform, ...placement };
 }
 
 type AiMotionEntrySlot = "primary" | "secondary";
@@ -128,36 +196,20 @@ function resolveAiMotionPlacements(
       if (recipe.sceneBackground) continue;
       layers.push({
         id: aiMotionLayoutId(captionIndex, entry.slot),
+        effectId: entry.effectId,
         startUs: caption.startUs,
         durationUs: Math.max(100_000, endUs - caption.startUs),
         desiredX: entry.x,
         desiredY: entry.y,
-        scale: aiEffectScale(entry.scale, Boolean(recipe.chart)),
-        fontSize: recommendedEffectFontSize(recipe, entry.text),
+        scale: aiEffectScale(entry.effectId, entry.scale, Boolean(recipe.chart)),
+        fontSize: recommendedEffectFontSizeForId(entry.effectId, recipe, entry.text),
         text: entry.text,
         recipe,
         priority: entry.slot
       });
     }
   }
-  const occupiedLayers = existingEffects.map((effect) => {
-    const recipe = effect.recipe ?? effectById(effect.effectId).recipe;
-    return {
-      layer: {
-        id: `existing:${effect.id}`,
-        startUs: effect.startUs,
-        durationUs: effect.durationUs,
-        desiredX: effect.transform.x,
-        desiredY: effect.transform.y,
-        scale: effect.transform.scale,
-        fontSize: effect.fontSize,
-        text: effect.text,
-        recipe,
-        priority: "primary" as const
-      },
-      placement: { x: effect.transform.x, y: effect.transform.y, scale: effect.transform.scale }
-    };
-  });
+  const occupiedLayers = existingEffects.map(occupiedMotionLayoutLayer);
   const safeAreas = captions.map((caption) => ({
     startUs: caption.startUs,
     durationUs: Math.max(100_000, caption.endUs - caption.startUs),
@@ -174,6 +226,12 @@ function resolveAiMotionPlacements(
         ? { left: 0, top: 0, right: 100, bottom: progressRatio }
         : { left: 0, top: 100 - progressRatio, right: 100, bottom: 100 }
     });
+  }
+  if (captions.length) {
+    const firstStartUs = Math.min(...captions.map((caption) => caption.startUs));
+    const lastEndUs = Math.max(...captions.map((caption) => caption.endUs));
+    const presenterArea = presenterMotionSafeArea(project.presenterSafeArea, firstStartUs, lastEndUs - firstStartUs);
+    if (presenterArea) safeAreas.push(presenterArea);
   }
   return resolveMotionLayout({ canvas: project.canvas, layers, safeAreas, occupiedLayers });
 }
@@ -195,6 +253,7 @@ interface EditorState {
   setRangeEnd: (timeUs: number | null) => void;
   clearRange: () => void;
   updateCanvas: (canvas: EditorProject["canvas"]) => void;
+  updatePresenterSafeArea: (settings: PresenterSafeAreaSettings) => void;
   updateMotionTheme: (patch: Partial<Omit<MotionTheme, "colors">> & { colors?: Partial<MotionTheme["colors"]> }) => void;
   updateChapterProgress: (patch: Partial<ChapterProgressSettings>) => void;
   addEffect: (effectId: string) => void;
@@ -572,6 +631,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       fpsDenominator: Math.max(1, Math.min(10_000, Math.round(canvas.fpsDenominator)))
     };
   })),
+  updatePresenterSafeArea: (settings) => set((state) => commit(state, (project) => {
+    project.presenterSafeArea = {
+      position: ["none", "left", "center", "right"].includes(settings.position) ? settings.position : "center",
+      widthPercent: Math.max(18, Math.min(60, Number.isFinite(settings.widthPercent) ? settings.widthPercent : 32))
+    };
+  })),
   updateMotionTheme: (patch) => set((state) => commit(state, (project) => {
     project.motionTheme = {
       ...project.motionTheme,
@@ -615,7 +680,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               soundCues: layer.soundCues,
               zIndex: layer.zIndex, sceneGroupId: groupId, sceneTemplateId: definition.id, matchQuery: layer.matchQuery,
               colorRole: motionColorRoleForEffect(layer.effectId),
-              backdrop: { ...DEFAULT_EFFECT_BACKDROP }
+              backdrop: { ...DEFAULT_EFFECT_BACKDROP, enabled: !OVERLAY_STUDIO_EFFECT_IDS.includes(layer.effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]) },
+              params: structuredClone(effectById(layer.effectId).defaultParams ?? {})
             };
             track.clips.push(clip);
           }
@@ -635,12 +701,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             id, trackId: track.id, kind: "effect", label: definition.name, startUs: state.playheadUs,
             durationUs: definition.defaultDurationUs, locked: false, effectId, text: definition.defaultText,
             color: definition.defaultColor, accentColor: themeAccentColor,
-            fontSize: recommendedEffectFontSize(definition.recipe, definition.defaultText), speed: 1,
-            transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }, recipe: structuredClone(definition.recipe), zIndex: 20,
+            fontSize: recommendedEffectFontSizeForId(definition.id, definition.recipe, definition.defaultText), speed: 1,
+            transform: defaultEffectTransform(effectId), recipe: structuredClone(definition.recipe), zIndex: 20,
             soundCues: structuredClone(definition.soundCues ?? []),
             colorRole: motionColorRoleForEffect(effectId),
-            backdrop: { ...DEFAULT_EFFECT_BACKDROP }
+            backdrop: { ...DEFAULT_EFFECT_BACKDROP, enabled: !OVERLAY_STUDIO_EFFECT_IDS.includes(effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]) },
+            params: structuredClone(definition.defaultParams ?? {})
           };
+          placeNewEffect(project, clip);
           track.clips.push(clip);
         }
       }),
@@ -843,12 +911,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           insertMode: mode,
           scenes: captions.map((caption, captionIndex) => {
             const match = matchByCaption.get(captionIndex);
-            const definition = effectById(match?.primaryEffectId ?? "test-title-slide");
+            const definition = effectById(match?.primaryEffectId ?? "quote-lockup");
             return {
               id: crypto.randomUUID(), title: caption.text.slice(0, 80), narration: caption.text,
               durationUs: Math.max(100_000, caption.endUs - caption.startUs), effectId: definition.id,
               textColor: definition.defaultColor, accentColor: themeAccentColor,
-              fontSize: recommendedEffectFontSize(definition.recipe, caption.text), speed: 1, transform: { x: match?.x ?? 50, y: match?.y ?? 30, scale: aiEffectScale(match?.scale ?? 1, Boolean(definition.recipe.chart)), rotation: 0, opacity: 1 },
+              fontSize: recommendedEffectFontSizeForId(definition.id, definition.recipe, caption.text), speed: 1, transform: { x: match?.x ?? 50, y: match?.y ?? 30, scale: aiEffectScale(definition.id, match?.scale ?? 1, Boolean(definition.recipe.chart)), rotation: 0, opacity: 1 },
               mediaSourceInUs: 0, mediaFit: "cover", mediaVolume: 0, camera: cameraMotionForPreset(match?.cameraPreset ?? "none")
             };
           })
@@ -915,12 +983,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
                 id: crypto.randomUUID(), trackId: effectTrack.id, kind: "effect", label: `AI 动效 · ${definition.name}`,
                 startUs: cueStartUs, durationUs: cueDurationUs, locked: false, effectId: definition.id, text: entry.text,
                 color: definition.defaultColor, accentColor: themeAccentColor,
-                fontSize: recommendedEffectFontSize(recipe, entry.text), speed: 1,
+                fontSize: recommendedEffectFontSizeForId(definition.id, recipe, entry.text), speed: 1,
                 transform: { x: placement.x, y: placement.y, scale: placement.scale, rotation: 0, opacity: 1 },
                 recipe, soundCues, zIndex: entry.zIndex, sceneGroupId, matchQuery: caption.text,
                 colorRole: motionColorRoleForEffect(definition.id),
                 sourceBlockId: id, sourceSubtitleId: subtitleId,
-                backdrop: effectBackdropForPreset(match?.backdropPreset ?? "none", themeAccentColor)
+                backdrop: effectBackdropForPreset(match?.backdropPreset ?? "none", themeAccentColor),
+                params: effectParamsForText(definition.id, entry.text)
               });
             }
           }
@@ -1072,12 +1141,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               id: crypto.randomUUID(), trackId: effectTrack.id, kind: "effect", label: `AI 动效 · ${definition.name}`,
               startUs: subtitle.startUs, durationUs: matchDurationUs, locked: false, effectId: definition.id, text: entry.text.trim(),
               color: definition.defaultColor, accentColor: themeAccentColor,
-              fontSize: recommendedEffectFontSize(recipe, entry.text.trim()), speed: 1,
+              fontSize: recommendedEffectFontSizeForId(definition.id, recipe, entry.text.trim()), speed: 1,
               transform: { x: placement.x, y: placement.y, scale: placement.scale, rotation: 0, opacity: 1 }, recipe,
               soundCues, zIndex: entry.zIndex, sceneGroupId, matchQuery: subtitle.text,
               colorRole: motionColorRoleForEffect(definition.id),
               sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id,
-              backdrop: effectBackdropForPreset(match.backdropPreset ?? "none", themeAccentColor)
+              backdrop: effectBackdropForPreset(match.backdropPreset ?? "none", themeAccentColor),
+              params: effectParamsForText(definition.id, entry.text.trim())
             });
           }
         }

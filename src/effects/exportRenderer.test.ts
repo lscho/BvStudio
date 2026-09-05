@@ -21,4 +21,11 @@ describe("React effect export timing", () => {
     expect(dynamicDurationUs({ ...overlay, effectId: "knowledge-causal-chain", speed: 2 })).toBe(600_000);
     expect(dynamicDurationUs({ ...overlay, effectId: "knowledge-quote-lines" })).toBe(1_550_000);
   });
+
+  it("captures full persistent layers and parameter-driven animation timing", () => {
+    expect(dynamicDurationUs({ ...overlay, effectId: "chapter-bar", durationUs: 30_000_000 })).toBe(30_000_000);
+    expect(dynamicDurationUs({ ...overlay, effectId: "caption-track", durationUs: 12_000_000 })).toBe(12_000_000);
+    expect(dynamicDurationUs({ ...overlay, effectId: "type-shift", durationUs: 4_000_000, params: { shiftAtMs: 3_000 } })).toBe(3_500_000);
+    expect(dynamicDurationUs({ ...overlay, effectId: "focus-card", durationUs: 10_000_000, params: { items: "一|二|三", stepMs: 1_000 } })).toBe(3_900_000);
+  });
 });

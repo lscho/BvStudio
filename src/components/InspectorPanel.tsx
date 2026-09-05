@@ -1,7 +1,7 @@
 import { CircleUserRound, Clock3, Columns2, DiamondPlus, Expand, Focus, PictureInPicture2, ScanSearch, Search, SlidersHorizontal, SunMedium, Trash2, ZoomIn } from "lucide-react";
 import { Select } from "@/components/Select";
 import { EASING_LABELS, EASING_NAMES } from "@/domain/easing";
-import type { ChartSpec } from "@/domain/effects";
+import { effectById, type ChartSpec, type EffectParamValue } from "@/domain/effects";
 import { effectBackdropUsesTheme, effectColorRolePatch, MOTION_COLOR_ROLE_OPTIONS, resolveEffectAppearance, resolveEffectBackdropColor } from "@/domain/motionTheme";
 import type { AudioClip, EffectClip, GeneratedBlock, ImageClip, MotionColorRole, MotionTheme, SceneClip, SubtitleClip, TransformProps, VideoClip, VisualTransformKeyframe } from "@/domain/project";
 import { selectedClip, useEditorStore } from "@/stores/editorStore";
@@ -174,14 +174,26 @@ function EffectInspector({ clip, motionTheme, playheadUs, onSeek, onPatch }: { c
 }
 
 function EffectRegistryControls({ clip, onPatch }: { clip: EffectClip; onPatch: (patch: Partial<EffectClip>) => void }) {
+  const params = { ...effectById(clip.effectId).defaultParams, ...clip.params };
+  const patchParam = (field: string, value: EffectParamValue) => onPatch({ params: { ...params, [field]: value } });
   return <>{effectControlsFor(clip).map((control) => {
     if (control.kind === "text") return <label key={control.field}><span>{control.label}</span><textarea rows={control.rows} value={clip.text} onChange={(event) => onPatch({ text: event.target.value })} /></label>;
     if (control.kind === "color") {
       if ((clip.colorRole ?? "custom") !== "custom") return null;
       return <label key={control.field}><span>{control.label}</span><input type="color" value={clip[control.field]} onChange={(event) => onPatch(control.field === "color" ? { color: event.target.value } : { accentColor: event.target.value })} /></label>;
     }
-    const value = clip[control.field];
-    return <RangeField key={control.field} label={control.label} value={value} min={control.min} max={control.max} step={control.step} suffix={control.suffix === "x" ? "×" : control.suffix} onChange={(next) => onPatch(control.field === "fontSize" ? { fontSize: next } : { speed: next })} />;
+    if (control.kind === "range") {
+      const value = clip[control.field];
+      return <RangeField key={control.field} label={control.label} value={value} min={control.min} max={control.max} step={control.step} suffix={control.suffix === "x" ? "×" : control.suffix} onChange={(next) => onPatch(control.field === "fontSize" ? { fontSize: next } : { speed: next })} />;
+    }
+    const value = params[control.field];
+    if (control.kind === "param-text") return <label key={control.field}><span>{control.label}</span>{control.rows > 1
+      ? <textarea rows={control.rows} value={typeof value === "string" ? value : ""} onChange={(event) => patchParam(control.field, event.target.value)} />
+      : <input value={typeof value === "string" ? value : ""} onChange={(event) => patchParam(control.field, event.target.value)} />}</label>;
+    if (control.kind === "param-range") return <RangeField key={control.field} label={control.label} value={typeof value === "number" ? value : control.min} min={control.min} max={control.max} step={control.step} suffix={control.suffix} onChange={(next) => patchParam(control.field, next)} />;
+    if (control.kind === "param-toggle") return <label className="check-row" key={control.field}><input type="checkbox" checked={typeof value === "boolean" ? value : false} onChange={(event) => patchParam(control.field, event.target.checked)} /><span>{control.label}</span></label>;
+    if (control.kind === "param-select") return <label key={control.field}><span>{control.label}</span><Select label={control.label} value={typeof value === "string" ? value : control.options[0]?.value ?? ""} options={control.options} onChange={(next) => patchParam(control.field, next)} /></label>;
+    return <label key={control.field}><span>{control.label}</span><input type="color" value={typeof value === "string" ? value : "#000000"} onChange={(event) => patchParam(control.field, event.target.value)} /></label>;
   })}</>;
 }
 

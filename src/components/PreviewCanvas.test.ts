@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { moveEffectTransform, previewAudioGain, previewNeedsWebAudioGain, resizeEffectTransform, videoTargetPoint } from "@/components/PreviewCanvas";
+import { moveEffectTransform, previewAudioGain, previewNativeAudioVolume, resizeEffectTransform, videoTargetPoint } from "@/components/PreviewCanvas";
 
 const transform = { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 };
 
@@ -23,18 +23,18 @@ describe("PreviewCanvas effect manipulation", () => {
 });
 
 describe("previewAudioGain", () => {
-  it("keeps standard-volume sounds on native media playback", () => {
-    expect(previewNeedsWebAudioGain(1)).toBe(false);
-    expect(previewNeedsWebAudioGain(0.65)).toBe(false);
-    expect(previewNeedsWebAudioGain(1.5)).toBe(true);
+  it("calculates the requested export-equivalent gain", () => {
+    expect(previewAudioGain(1.5, 1, 1, false)).toBe(1.5);
   });
 
-  it("preserves voice gain above the HTML media element volume limit", () => {
-    expect(previewAudioGain(1.5, 1, 1, false)).toBe(1.5);
+  it("caps native preview volume without muting boosted voice clips", () => {
+    expect(previewNativeAudioVolume(1.5, 1, 1, false)).toBe(1);
+    expect(previewNativeAudioVolume(0.65, 1, 1, false)).toBe(0.65);
   });
 
   it("applies fades and music ducking before preview playback", () => {
     expect(previewAudioGain(1.5, 0.5, 1, false)).toBe(0.75);
     expect(previewAudioGain(1, 1, 1, true)).toBe(0.28);
+    expect(previewNativeAudioVolume(1, 0.5, 1, true)).toBe(0.14);
   });
 });

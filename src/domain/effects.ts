@@ -88,11 +88,15 @@ export interface EffectDefinition {
   defaultText: string;
   defaultColor: string;
   defaultAccentColor: string;
+  defaultParams?: EffectParams;
   recipe: EffectRecipe;
   soundCues?: EffectSoundCue[];
   kind?: "effect" | "scene";
   sceneLayers?: SceneEffectTemplateLayer[];
 }
+
+export type EffectParamValue = string | number | boolean;
+export type EffectParams = Record<string, EffectParamValue>;
 
 export interface SceneEffectTemplateLayer {
   effectId: string;
@@ -466,6 +470,134 @@ const KNOWLEDGE_EFFECTS: readonly EffectDefinition[] = [
   }
 ] as const;
 
+const TALKING_HEAD_EFFECTS: readonly EffectDefinition[] = [
+  {
+    id: "quote-lockup", name: "金句定格", category: "卡片", description: "金句逐行揭示并保留署名", tags: ["口播", "金句", "引用", "观点", "逐行", "总结"],
+    defaultDurationUs: 4_500_000, defaultText: "多行金句｜逐行揭示｜停在画面上", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    defaultParams: { theme: "dark", side: "right", quote: "多行金句|逐行揭示|停在画面上", author: "- 署名", offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 28, paddingY: 22, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.84 }
+  },
+  {
+    id: "step-timeline", name: "步骤时间线", category: "卡片", description: "章节或操作步骤沿时间线逐条出现", tags: ["口播", "步骤", "章节", "流程", "教程", "大纲"],
+    defaultDurationUs: 6_000_000, defaultText: "开场钩子｜干货主体｜结尾升华", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    defaultParams: { theme: "dark", position: "right", title: "本期*章节*大纲", steps: "开场钩子|干货主体|结尾升华", revealed: 3, offsetX: 0, offsetY: 0 },
+    recipe: { layout: "panel", entrance: "none", paddingX: 24, paddingY: 20, borderWidth: 3, borderRadius: 4, backgroundOpacity: 0.84 }
+  },
+  {
+    id: "rank-bars", name: "数据排名条", category: "数据", description: "条形按排名错峰生长并滚动显示数值", tags: ["口播", "数据", "排名", "对比", "增长", "图表"],
+    defaultDurationUs: 4_500_000, defaultText: "第一名 42%｜第二名 21%｜第三名 10%", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    defaultParams: { theme: "dark", position: "left", title: "多项数据 · 对比排名", rows: "第一名,42|第二名,21|第三名,10", suffix: "%", glass: "none", glassAlpha: 0.6, offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 26, paddingY: 22, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.8 }
+  },
+  {
+    id: "punch-pill", name: "金句强调条", category: "强调", description: "短观点以高亮强调条弹入并定格", tags: ["口播", "金句", "观点", "强调", "结论"],
+    defaultDurationUs: 3_500_000, defaultText: "一句金句，定格三秒", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    defaultParams: { theme: "dark", position: "bottom", pillText: "一句金句，定格三秒", offsetX: 0, offsetY: 0 },
+    recipe: { layout: "highlight", entrance: "none", paddingX: 18, paddingY: 10, borderWidth: 0, borderRadius: 4, backgroundOpacity: 0 }
+  },
+  {
+    id: "term-card", name: "术语解释卡", category: "卡片", description: "用中英文名和一句话定义解释新术语", tags: ["口播", "术语", "定义", "解释", "科普", "教程", "原理", "原因", "机制", "为什么"],
+    defaultDurationUs: 5_000_000, defaultText: "术语卡", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    defaultParams: { theme: "dark", position: "right", en: "TERM CARD", term: "术语卡", definition: "视频里出现新名词时，用一句话给它下定义。", offsetX: 0, offsetY: 0 },
+    recipe: { layout: "panel", entrance: "none", paddingX: 26, paddingY: 22, borderWidth: 3, borderRadius: 4, backgroundOpacity: 0.84 }
+  },
+  {
+    id: "pin-board", name: "要点钉板", category: "卡片", description: "口播段落中的观点逐条落位并持续保留；文案格式：段落标题｜要点一｜要点二｜要点三", tags: ["口播", "观点", "要点", "论点", "总结", "累积", "常驻"],
+    defaultDurationUs: 8_000_000, defaultText: "本段要点｜先讲结论｜补充证据｜给出行动", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    defaultParams: { theme: "dark", position: "top-right", title: "本段主题写这里", subtitle: "小标题:", items: "先讲结论|补充证据|给出行动", stepMs: 4000, offsetX: 0, offsetY: 0 },
+    recipe: { layout: "panel", entrance: "none", paddingX: 24, paddingY: 20, borderWidth: 3, borderRadius: 4, backgroundOpacity: 0.84 }
+  },
+  {
+    id: "checklist", name: "步骤清单", category: "卡片", description: "教程与方法口播中的步骤逐项打勾；文案格式：清单标题｜步骤一｜步骤二｜步骤三", tags: ["口播", "步骤", "流程", "方法", "教程", "清单", "行动"],
+    defaultDurationUs: 6_000_000, defaultText: "行动清单｜整理素材｜确认结构｜完成输出", defaultColor: "#ffffff", defaultAccentColor: "#47d7ac",
+    defaultParams: { theme: "dark", position: "left", title: "步骤打勾", items: "整理素材|确认结构|完成输出|没讲到的先灰着", checked: 3, stepMs: 160, offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 24, paddingY: 20, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.84 }
+  },
+  {
+    id: "terminal-3d", name: "3D 终端", category: "场景", description: "带语法色的终端命令按固定速度逐字输入", tags: ["口播", "技术", "代码", "终端", "命令", "教程", "演示"],
+    defaultDurationUs: 6_000_000, defaultText: "$ npm run build｜# 正在生成输出｜✓ 构建完成", defaultColor: "#e8edf2", defaultAccentColor: "#47d7ac",
+    defaultParams: { theme: "dark", position: "center", file: "demo - 终端演示", lines: "$ npm run build --production|# 正在生成输出|❯ 写入目标目录 ...|✓ 构建完成", cps: 26, offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 4, backgroundOpacity: 0 }
+  },
+  {
+    id: "ring-metric", name: "环形指标", category: "数据", description: "环形进度与指标数字同步增长", tags: ["口播", "数据", "占比", "指标", "百分比", "图表"],
+    defaultDurationUs: 4_000_000, defaultText: "圆环注水到这个比例", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    defaultParams: { theme: "dark", position: "center", kicker: "比例指标", value: 92.4, max: 100, decimals: 1, unit: "%", label: "圆环注水到这个比例", offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 24, paddingY: 20, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.8 }
+  },
+  {
+    id: "versus-card", name: "双栏对比", category: "布局", description: "将两个方案或前后状态并置对比；文案格式：左侧方案｜右侧方案｜对比结论", tags: ["口播", "对比", "区别", "方案", "选择", "前后", "优劣", "误区", "纠正", "真相"],
+    defaultDurationUs: 4_500_000, defaultText: "只堆信息｜建立结构｜清晰比数量更重要", defaultColor: "#ffffff", defaultAccentColor: "#b59cff",
+    defaultParams: { theme: "dark", aKicker: "主推 · 会点亮", aTitle: "只堆信息", aSub: "内容多，但重点不清", bKicker: "对照 · 会变灰", bTitle: "建立结构", bSub: "清晰比数量更重要", winner: "b", offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 26, paddingY: 22, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.84 }
+  },
+  {
+    id: "ui-callout", name: "界面标注", category: "标注", description: "圈住界面区域并用引线连接说明标签", tags: ["口播", "界面", "标注", "教程", "操作", "重点"],
+    defaultDurationUs: 4_000_000, defaultText: "圈出界面上的重点", defaultColor: "#ffffff", defaultAccentColor: "#ffb84d",
+    defaultParams: { theme: "dark", label: "圈出界面上的重点", ringW: 300, ringH: 170, side: "right", offsetX: -300, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 }
+  },
+  {
+    id: "type-shift", name: "排版重组", category: "标题", description: "错落草稿逐行出现后重排为重点版式", tags: ["口播", "排版", "标题", "开场", "开篇", "片头", "结尾", "观点", "金句"],
+    defaultDurationUs: 5_000_000, defaultText: "把结尾的升华放在这里｜它会一行一行铺开｜停在最重的那一句", defaultColor: "#ffffff", defaultAccentColor: "#b59cff",
+    defaultParams: { theme: "dark", position: "center", lines: "把结尾的升华放在这里|它会一行一行铺开|*停在最重的那一句|— 小字署名收尾", shiftAtMs: 1600, glass: "none", glassAlpha: 0.6, offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 28, paddingY: 22, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.78 }
+  },
+  {
+    id: "blur-text", name: "模糊浮现", category: "标题", description: "词块从虚焦状态依次变清晰", tags: ["口播", "文字", "情绪", "金句", "标题", "浮现"],
+    defaultDurationUs: 4_500_000, defaultText: "走心的句子｜从虚焦里｜慢慢浮现", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    defaultParams: { theme: "dark", position: "center", blurText: "走心的句子|从虚焦里|*慢慢浮现*", staggerMs: 420, glass: "none", glassAlpha: 0.6, offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 26, paddingY: 20, borderWidth: 0, borderRadius: 4, backgroundOpacity: 0.64 }
+  },
+  {
+    id: "odometer", name: "翻牌计数器", category: "数据", description: "机械翻牌式数字滚动到目标整数", tags: ["口播", "数据", "数字", "计数", "里程", "金额"],
+    defaultDurationUs: 4_000_000, defaultText: "里程表翻牌，机械感十足", defaultColor: "#ffffff", defaultAccentColor: "#ffb84d",
+    defaultParams: { theme: "dark", position: "center", kicker: "整数计数", value: 500, unit: "万", label: "里程表翻牌，机械感十足", glass: "none", glassAlpha: 0.6, offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 24, paddingY: 20, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.8 }
+  },
+  {
+    id: "focus-card", name: "人物聚焦卡", category: "布局", description: "为口播人物预留取景框并在另一侧逐条呈现要点", tags: ["口播", "人物", "聚焦", "运镜", "要点", "画中画"],
+    defaultDurationUs: 8_000_000, defaultText: "本段要点一｜本段要点二", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    defaultParams: { theme: "dark", bg: "dark", side: "left", items: "本段要点一|本段要点二", stepMs: 600, showRing: true, camDX: 0, camDY: 0, camW: 700, camH: 700, offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 26, paddingY: 22, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.72 }
+  },
+  {
+    id: "chapter-bar", name: "章节导航条", category: "布局", description: "按时间高亮当前章节并显示章内进度", tags: ["口播", "章节", "导航", "进度", "常驻", "结构"],
+    defaultDurationUs: 30_000_000, defaultText: "开场 0｜章节名 6｜核心内容 14｜结尾 24", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    defaultParams: { theme: "dark", chapters: "开场 0|章节名 6|核心内容 14|结尾 24", showProgress: true, progressMode: "fill", progAlpha: 0.25 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 }
+  },
+  {
+    id: "caption-track", name: "双语字幕轨", category: "布局", description: "按时间切换中英双语字幕并点亮关键词", tags: ["口播", "字幕", "双语", "关键词", "常驻", "翻译"],
+    defaultDurationUs: 12_000_000, defaultText: "双语字幕", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    defaultParams: { theme: "dark", lines: "0|4|这里是*双语字幕层*的中文主行|This is the bilingual caption layer\n4|8|加星号的词会被*强调色*点亮|Starred words light up in accent\n8|12|它跟着时间轴自动换行|It follows the timeline", showEnglish: true, strokeOn: false, strokeWidth: 3, strokeColor: "#000000" },
+    recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 }
+  },
+  {
+    id: "entity-chips", name: "人物机构名牌", category: "标注", description: "讲到人物、品牌或机构时给出身份与关键信息；文案格式：名称｜身份｜信息一｜信息二", tags: ["口播", "人物", "机构", "品牌", "身份", "公司", "名牌", "介绍"],
+    defaultDurationUs: 5_000_000, defaultText: "人物或机构｜身份说明｜关键经历｜代表观点", defaultColor: "#ffffff", defaultAccentColor: "#ffb84d",
+    defaultParams: { theme: "dark", position: "left", chips: "light|白牌写机构名|EN OR ROLE\ndark|黑牌写人名|头衔 · 点缀色", note: "侧注上行|下行写代码或身份", stepMs: 500, offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 22, paddingY: 18, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.82 }
+  },
+  {
+    id: "stat-proof", name: "数字实证", category: "数据", description: "用滚动大数字和来源说明为口播观点提供证据；文案格式：数字｜指标说明｜数据来源", tags: ["口播", "数字", "数据", "证据", "指标", "增长", "比例", "金额"],
+    defaultDurationUs: 4_000_000, defaultText: "42%｜核心指标增长｜来源：公开数据", defaultColor: "#ffffff", defaultAccentColor: "#47d7ac",
+    defaultParams: { theme: "dark", position: "left", kicker: "EN KICKER · HERE", kickerZh: "核心指标增长", value: 42, prefix: "", suffix: "%", footEn: "EN FOOTNOTE · SOURCE", footZh: "来源：公开数据", countMs: 1600, glass: "none", glassAlpha: 0.6, offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 26, paddingY: 22, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.78 }
+  },
+  {
+    id: "growth-curve", name: "增长曲线", category: "数据", description: "平滑曲线逐帧画出并同步点亮数据节点", tags: ["口播", "数据", "增长", "趋势", "曲线", "复利"],
+    defaultDurationUs: 5_000_000, defaultText: "第一阶段 12｜第二阶段 26｜第三阶段 45｜第四阶段 66", defaultColor: "#ffffff", defaultAccentColor: "#47d7ac",
+    defaultParams: { theme: "dark", position: "left", kicker: "GROWTH", kickerZh: "增长趋势", points: "第一阶段 12|第二阶段 26|第三阶段 45|第四阶段 66", unit: "万", drawMs: 1600, caption: "数据口径：示例数据", offsetX: 0, offsetY: 0 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 26, paddingY: 22, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.78 }
+  }
+] as const;
+
+export const OVERLAY_STUDIO_EFFECT_IDS = [
+  "quote-lockup", "step-timeline", "rank-bars", "punch-pill", "term-card", "checklist", "terminal-3d", "ring-metric", "versus-card", "ui-callout",
+  "type-shift", "blur-text", "odometer", "focus-card", "chapter-bar", "caption-track", "stat-proof", "growth-curve", "entity-chips", "pin-board"
+] as const;
+
 const TEST_EFFECTS: readonly EffectDefinition[] = [
   {
     id: "test-title-slide", name: "标题滑入", category: "标题", description: "简洁标题从左侧进入", tags: ["标题", "开场", "主题"],
@@ -543,7 +675,16 @@ const TEST_EFFECTS: readonly EffectDefinition[] = [
   }))
 ] as const;
 
-export const BUILTIN_EFFECTS: readonly EffectDefinition[] = [...TEST_EFFECTS, ...KNOWLEDGE_EFFECTS, ...FAMILY_EFFECTS, ...SCENE_EFFECTS];
+export const BUILTIN_EFFECTS: readonly EffectDefinition[] = [...TALKING_HEAD_EFFECTS];
+export const OVERLAY_STUDIO_BASE_FONT_SIZE = 48;
+
+// Old project files may still reference these IDs, but they are intentionally hidden from
+// the library, local retrieval, AI candidates, and newly created projects.
+const ARCHIVED_BUILTIN_EFFECTS: readonly EffectDefinition[] = [
+  ...TEST_EFFECTS,
+  ...KNOWLEDGE_EFFECTS,
+  ...LEGACY_EFFECTS
+];
 
 let installedEffects: EffectDefinition[] = [];
 
@@ -557,8 +698,162 @@ export function allEffects(): EffectDefinition[] {
 
 export function effectById(id: string): EffectDefinition {
   return allEffects().find((effect) => effect.id === id)
-    ?? LEGACY_EFFECTS.find((effect) => effect.id === id)
+    ?? ARCHIVED_BUILTIN_EFFECTS.find((effect) => effect.id === id)
     ?? BUILTIN_EFFECTS[0];
+}
+
+/** Maps AI or pasted structured copy into a component effect's primary editable field. */
+export function effectParamsForText(effectId: string, text: string): EffectParams {
+  const params = structuredClone(effectById(effectId).defaultParams ?? {});
+  const normalized = text.replaceAll("｜", "|").trim();
+  const parts = normalized.split("|").map((part) => part.trim()).filter(Boolean);
+  if (effectId === "pin-board") {
+    params.title = parts[0] ?? "";
+    params.subtitle = "";
+    params.items = parts.slice(1).join("|");
+    return params;
+  }
+  if (effectId === "checklist") {
+    params.title = parts[0] ?? "";
+    params.items = parts.slice(1).join("|");
+    params.checked = Math.min(3, Math.max(0, parts.length - 1));
+    return params;
+  }
+  if (effectId === "versus-card") {
+    params.aKicker = "";
+    params.aSub = "";
+    params.bKicker = "";
+    params.bSub = "";
+    params.aTitle = parts[0] ?? "";
+    params.bTitle = parts[1] ?? "";
+    if (parts[2]) params.bSub = parts[2];
+    return params;
+  }
+  if (effectId === "entity-chips") {
+    params.note = "";
+    params.chips = parts[0] ? `light|${parts[0]}|${parts[1] ?? ""}${parts[2] ? `\ndark|${parts[2]}|${parts[3] ?? ""}` : ""}` : "";
+    return params;
+  }
+  if (effectId === "stat-proof") {
+    params.kicker = "";
+    params.kickerZh = "";
+    params.footEn = "";
+    params.footZh = "";
+    params.value = 0;
+    params.prefix = "";
+    params.suffix = "";
+    const match = /^([^\d+\-.]*)([+\-]?\d[\d,.]*)(.*)$/u.exec(parts[0] ?? "");
+    if (match) {
+      params.prefix = `${match[1]}${match[2].startsWith("+") ? "+" : ""}`;
+      params.value = Number(match[2].replaceAll(",", "")) || 0;
+      params.suffix = match[3];
+    }
+    if (parts[1]) params.kickerZh = parts[1];
+    if (parts[2]) params.footZh = parts[2];
+    return params;
+  }
+  if (effectId === "term-card") {
+    params.en = "";
+    params.term = parts[0] ?? normalized;
+    params.definition = parts.slice(1).join("，");
+    return params;
+  }
+  if (effectId === "step-timeline") {
+    params.title = parts.length > 1 ? parts[0] : "";
+    params.steps = parts.length > 1 ? parts.slice(1).join("|") : normalized;
+    params.revealed = Math.min(6, parts.length > 1 ? parts.length - 1 : Number(Boolean(normalized)));
+    return params;
+  }
+  if (effectId === "rank-bars") {
+    params.title = "";
+    params.rows = normalized;
+    return params;
+  }
+  if (effectId === "ring-metric" || effectId === "odometer") {
+    params.kicker = "";
+    params.value = 0;
+    params.unit = "";
+    const match = /^([^\d+\-.]*)([+\-]?\d[\d,.]*)(.*)$/u.exec(parts[0] ?? "");
+    if (match) {
+      params.value = Number(match[2].replaceAll(",", "")) || 0;
+      params.unit = match[3].trim();
+      params.label = parts.slice(1).join("，");
+    } else {
+      params.label = normalized;
+      params.unit = "";
+    }
+    return params;
+  }
+  if (effectId === "growth-curve") {
+    params.kicker = "";
+    params.kickerZh = "";
+    params.caption = "";
+    params.points = normalized;
+    return params;
+  }
+  if (effectId === "quote-lockup") params.author = "";
+  if (effectId === "terminal-3d") params.file = "";
+  const fields: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT_IDS)[number], string>> = {
+    "quote-lockup": "quote",
+    "step-timeline": "steps",
+    "rank-bars": "rows",
+    "punch-pill": "pillText",
+    "term-card": "term",
+    "terminal-3d": "lines",
+    "ring-metric": "label",
+    "ui-callout": "label",
+    "type-shift": "lines",
+    "blur-text": "blurText",
+    "odometer": "label",
+    "focus-card": "items",
+    "chapter-bar": "chapters",
+    "caption-track": "lines",
+    "growth-curve": "points"
+  };
+  const field = fields[effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]];
+  if (field && normalized) params[field] = normalized;
+  return params;
+}
+
+const effectTextParamKeys: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT_IDS)[number], readonly string[]>> = {
+  "quote-lockup": ["quote", "author"],
+  "step-timeline": ["title", "steps", "revealed"],
+  "rank-bars": ["title", "rows"],
+  "punch-pill": ["pillText"],
+  "term-card": ["en", "term", "definition"],
+  "pin-board": ["title", "subtitle", "items"],
+  checklist: ["title", "items", "checked"],
+  "terminal-3d": ["file", "lines"],
+  "ring-metric": ["kicker", "value", "unit", "label"],
+  "versus-card": ["aKicker", "aTitle", "aSub", "bKicker", "bTitle", "bSub"],
+  "ui-callout": ["label"],
+  "type-shift": ["lines"],
+  "blur-text": ["blurText"],
+  odometer: ["kicker", "value", "unit", "label"],
+  "focus-card": ["items"],
+  "chapter-bar": ["chapters"],
+  "caption-track": ["lines"],
+  "entity-chips": ["chips", "note"],
+  "stat-proof": ["kicker", "kickerZh", "value", "prefix", "suffix", "footEn", "footZh"],
+  "growth-curve": ["kicker", "kickerZh", "points", "caption"]
+};
+
+export function remapEffectTextParams(effectId: string, text: string, current: EffectParams): EffectParams {
+  const keys = effectTextParamKeys[effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]];
+  if (!keys) return current;
+  const mapped = effectParamsForText(effectId, text);
+  const next = { ...current };
+  for (const key of keys) {
+    if (mapped[key] !== undefined) next[key] = mapped[key];
+    else delete next[key];
+  }
+  return next;
+}
+
+export function recommendedEffectFontSizeForId(effectId: string, recipe: EffectRecipe, text = ""): number {
+  return OVERLAY_STUDIO_EFFECT_IDS.includes(effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number])
+    ? OVERLAY_STUDIO_BASE_FONT_SIZE
+    : recommendedEffectFontSize(recipe, text);
 }
 
 /** Keeps text effects readable while allowing longer copy to fit common video canvases. */

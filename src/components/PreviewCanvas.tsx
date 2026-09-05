@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Crosshair, FileVideo2, ListTree, Settings2, Sparkles } from "lucide-react";
+import { Crosshair, FileVideo2, ListTree, Settings2, Sparkles, UserRound } from "lucide-react";
 import { CanvasSettingsDialog } from "@/components/CanvasSettingsDialog";
 import { ChapterProgressDialog } from "@/components/ChapterProgressDialog";
 import { contentEndUs, type AudioClip, type EffectClip, type GeneratedBlock, type ImageClip, type SceneClip, type SubtitleClip, type VideoClip } from "@/domain/project";
 import { useEditorStore } from "@/stores/editorStore";
 import { clockControlledRecipe, effectAnimationState, effectById, effectiveEffectFontSize, type EffectRecipe, type SceneBackgroundSpec } from "@/domain/effects";
-import { EffectCardContent, effectCardChromeStyle } from "@/effects/registry";
+import { EffectCardContent, effectCardChromeStyle, usesComponentChrome } from "@/effects/registry";
 import { resolveEffectAppearance } from "@/domain/motionTheme";
 import { cameraStateAt, type CameraMotion } from "@/domain/camera";
 import { upsertVisualKeyframe, visualTransformAt } from "@/domain/transforms";
@@ -34,14 +34,12 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
-let previewAudioContext: AudioContext | null = null;
-
 export function previewAudioGain(volume: number, fadeInGain: number, fadeOutGain: number, ducked: boolean) {
   return clamp(volume, 0, 2) * clamp(Math.min(fadeInGain, fadeOutGain), 0, 1) * (ducked ? 0.28 : 1);
 }
 
-export function previewNeedsWebAudioGain(volume: number) {
-  return volume > 1;
+export function previewNativeAudioVolume(volume: number, fadeInGain: number, fadeOutGain: number, ducked: boolean) {
+  return Math.min(1, previewAudioGain(volume, fadeInGain, fadeOutGain, ducked));
 }
 
 function colorWithOpacity(color: string, opacity: number) {
@@ -221,6 +219,7 @@ function VideoTargetHandle({ point, kind, onCommit }: { point: VideoTargetPoint;
 export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate, playing }: Props) {
   const [canvasSettingsOpen, setCanvasSettingsOpen] = useState(false);
   const [chapterSettingsOpen, setChapterSettingsOpen] = useState(false);
+  const [showPresenterSafeArea, setShowPresenterSafeArea] = useState(false);
   const project = useEditorStore((state) => state.project);
   const playheadUs = useEditorStore((state) => state.playheadUs);
   const selectedClipId = useEditorStore((state) => state.selectedClipId);
@@ -317,7 +316,7 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
   };
   return (
     <section className="preview-stage">
-      <div className="preview-toolbar"><span>{project.canvas.width} × {project.canvas.height}</span><span>{Number((project.canvas.fpsNumerator / project.canvas.fpsDenominator).toFixed(3))} fps</span><button type="button" aria-label="设置章节进度" title="顶部章节进度" onClick={() => setChapterSettingsOpen(true)}><ListTree size={13} /></button><button type="button" aria-label="设置画布" title="画布与输出规格" onClick={() => setCanvasSettingsOpen(true)}><Settings2 size={13} /></button></div>
+      <div className="preview-toolbar"><span>{project.canvas.width} × {project.canvas.height}</span><span>{Number((project.canvas.fpsNumerator / project.canvas.fpsDenominator).toFixed(3))} fps</span><button type="button" className={showPresenterSafeArea ? "active" : ""} aria-label="显示人物避让区" aria-pressed={showPresenterSafeArea} title="人物避让区" disabled={project.presenterSafeArea.position === "none"} onClick={() => setShowPresenterSafeArea((visible) => !visible)}><UserRound size={13} /></button><button type="button" aria-label="设置章节进度" title="顶部章节进度" onClick={() => setChapterSettingsOpen(true)}><ListTree size={13} /></button><button type="button" aria-label="设置画布" title="画布与输出规格" onClick={() => setCanvasSettingsOpen(true)}><Settings2 size={13} /></button></div>
       <div className="canvas-wrap">
         <div className={`preview-canvas ${!hasContent ? "empty-preview" : ""} ${focusPickClipId ? "picking-focus" : ""}`} onPointerDownCapture={pickFocus} data-orientation={canvasRatioNumber < 0.8 ? "portrait" : canvasRatioNumber < 1.2 ? "square" : "landscape"} style={{ aspectRatio: canvasRatio, "--canvas-ratio": canvasRatioNumber } as React.CSSProperties}>
           {activeAudio.map((clip) => {
@@ -363,7 +362,7 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
             const appearance = resolveEffectAppearance(effect, project.motionTheme);
             const themedEffect = { ...effect, ...appearance };
             const dim = effect.dimAtUs !== undefined && localUs >= effect.dimAtUs ? 0.35 : 1;
-            return <InteractiveEffectOverlay key={effect.id} className={`effect-overlay react-effect motion-${project.motionTheme.skin} style-${project.motionTheme.style} recipe-${recipe.layout} entrance-none`} transform={transform} selected={selectedClipId === effect.id} onSelect={() => selectClip(effect.id)} onCommit={(nextTransform) => updateEffect(effect.id, effect.transformKeyframes?.length ? { transformKeyframes: upsertVisualKeyframe(effect.transformKeyframes, localUs, nextTransform) } : { transform: nextTransform })} styleFor={(nextTransform) => ({ left: `${nextTransform.x}%`, top: `${nextTransform.y}%`, zIndex: 200 + (effect.zIndex ?? 20), ...effectCardChromeStyle(themedEffect, recipe, canvasLength, project.motionTheme), ...animatedStyle(recipe, { ...nextTransform, opacity: nextTransform.opacity * dim }, effect.startUs, effect.speed), fontSize: canvasLength(fontSize, 10) } as React.CSSProperties)}><EffectCardContent effectId={effect.effectId} text={effect.text} color={appearance.color} accentColor={appearance.accentColor} fontSize={fontSize} recipe={recipe} timeUs={localUs * effect.speed} durationUs={effect.durationUs} canvasWidth={project.canvas.width} /></InteractiveEffectOverlay>;
+            return <InteractiveEffectOverlay key={effect.id} className={`effect-overlay react-effect component-${effect.effectId} motion-${project.motionTheme.skin} style-${project.motionTheme.style} recipe-${recipe.layout} entrance-none`} transform={transform} selected={selectedClipId === effect.id} onSelect={() => selectClip(effect.id)} onCommit={(nextTransform) => updateEffect(effect.id, effect.transformKeyframes?.length ? { transformKeyframes: upsertVisualKeyframe(effect.transformKeyframes, localUs, nextTransform) } : { transform: nextTransform })} styleFor={(nextTransform) => ({ left: `${nextTransform.x}%`, top: `${nextTransform.y}%`, zIndex: 200 + (effect.zIndex ?? 20), ...effectCardChromeStyle(themedEffect, recipe, canvasLength, project.motionTheme, usesComponentChrome(effect.effectId)), ...animatedStyle(recipe, { ...nextTransform, opacity: nextTransform.opacity * dim }, effect.startUs, effect.speed), fontSize: canvasLength(fontSize, 10) } as React.CSSProperties)}><EffectCardContent effectId={effect.effectId} text={effect.text} color={appearance.color} accentColor={appearance.accentColor} fontSize={fontSize} recipe={recipe} params={effect.params} timeUs={localUs * effect.speed} durationUs={effect.durationUs} canvasWidth={project.canvas.width} canvasHeight={project.canvas.height} /></InteractiveEffectOverlay>;
           })}
           {project.chapterProgress.enabled && project.chapterProgress.chapters.length > 0 && <div
             className={`chapter-progress-overlay position-${project.chapterProgress.position} style-${project.chapterProgress.style} ${project.chapterProgress.showTitles ? "" : "hide-titles"}`}
@@ -380,6 +379,7 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
             } as React.CSSProperties}
           >{project.chapterProgress.chapters.map((chapter, index) => <div key={chapter.id} className={`chapter-progress-item ${index === chapterState.activeIndex ? "active" : ""} ${index < chapterState.activeIndex ? "completed" : ""}`} style={{ "--chapter-fill": `${index === chapterState.activeIndex ? chapterState.localProgress * 100 : index < chapterState.activeIndex ? 100 : 0}%` } as React.CSSProperties}><span>{chapter.title}</span></div>)}</div>}
           {subtitle && activeSubtitleStyle && <div className={`subtitle-overlay preset-${activeSubtitleStyle.stylePreset}`} style={{ bottom: `${100 - subtitle.positionY}%`, color: subtitle.color, backgroundColor: colorWithOpacity(subtitle.backgroundColor, activeSubtitleStyle.stylePreset === "minimal" ? 0 : activeSubtitleStyle.backgroundOpacity), borderRadius: canvasLength(activeSubtitleStyle.borderRadius), fontSize: canvasLength(subtitle.fontSize, 9), WebkitTextStroke: activeSubtitleStyle.outlineWidth > 0 ? `${canvasLength(activeSubtitleStyle.outlineWidth)} ${activeSubtitleStyle.outlineColor}` : undefined }}>{highlightedTextParts(displaySubtitleText(subtitle.text), activeSubtitleStyle.highlightWords).map((part, index) => <span key={`${index}-${part.text}`} className={part.highlighted ? "subtitle-highlight" : undefined} style={part.highlighted ? { color: activeSubtitleStyle.highlightColor } : undefined}>{part.text}</span>)}</div>}
+          {showPresenterSafeArea && project.presenterSafeArea.position !== "none" && <div className={`presenter-safe-area position-${project.presenterSafeArea.position}`} aria-hidden style={{ "--presenter-width": `${project.presenterSafeArea.widthPercent}%` } as React.CSSProperties}><UserRound size={16} /></div>}
           {!hasContent && <div className="empty-canvas"><strong>从任意内容开始</strong><p>导入视频或音频，也可以直接生成 AI 内容。</p><div><button className="button secondary" onClick={onImport}><FileVideo2 size={16} />导入媒体</button><button className="button primary" onClick={onGenerate}><Sparkles size={16} />AI 生成</button></div></div>}
         </div>
       </div>
@@ -436,14 +436,11 @@ function SyncedVideo({ src, sourceInUs, localUs, playbackRate, volume, muted, fi
 }
 
 function AudioPreview({ clip, src, playheadUs, playing, ducked }: { clip: AudioClip; src: string; playheadUs: number; playing: boolean; ducked: boolean }) {
-  const useWebAudioGain = previewNeedsWebAudioGain(clip.volume);
-  return <AudioPreviewElement key={useWebAudioGain ? "boosted" : "native"} clip={clip} src={src} playheadUs={playheadUs} playing={playing} ducked={ducked} useWebAudioGain={useWebAudioGain} />;
+  return <AudioPreviewElement clip={clip} src={src} playheadUs={playheadUs} playing={playing} ducked={ducked} />;
 }
 
-function AudioPreviewElement({ clip, src, playheadUs, playing, ducked, useWebAudioGain }: { clip: AudioClip; src: string; playheadUs: number; playing: boolean; ducked: boolean; useWebAudioGain: boolean }) {
+function AudioPreviewElement({ clip, src, playheadUs, playing, ducked }: { clip: AudioClip; src: string; playheadUs: number; playing: boolean; ducked: boolean }) {
   const ref = useRef<HTMLAudioElement>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
   const playbackGate = useRef(createMediaPlaybackGate());
   const wasPlaying = useRef(false);
   const localUs = playheadUs - clip.startUs;
@@ -456,38 +453,9 @@ function AudioPreviewElement({ clip, src, playheadUs, playing, ducked, useWebAud
     const fadeInGain = clip.fadeInUs > 0 ? Math.min(1, localUs / clip.fadeInUs) : 1;
     const remainingUs = clip.durationUs - localUs;
     const fadeOutGain = clip.fadeOutUs > 0 ? Math.min(1, remainingUs / clip.fadeOutUs) : 1;
-    const gain = previewAudioGain(clip.volume, fadeInGain, fadeOutGain, ducked);
-    if (gainNodeRef.current) {
-      gainNodeRef.current.gain.value = gain;
-      audio.volume = 1;
-      if (playing && audioContextRef.current?.state === "suspended") void audioContextRef.current.resume().catch(() => undefined);
-    } else {
-      audio.volume = Math.min(1, gain);
-    }
+    audio.volume = previewNativeAudioVolume(clip.volume, fadeInGain, fadeOutGain, ducked);
     syncMediaPlayback(audio, playing, playbackGate.current);
   };
-  useEffect(() => {
-    const audio = ref.current;
-    if (!useWebAudioGain || !audio || typeof window.AudioContext === "undefined") return;
-    try {
-      previewAudioContext ??= new window.AudioContext();
-      const sourceNode = previewAudioContext.createMediaElementSource(audio);
-      const gainNode = previewAudioContext.createGain();
-      sourceNode.connect(gainNode).connect(previewAudioContext.destination);
-      audioContextRef.current = previewAudioContext;
-      gainNodeRef.current = gainNode;
-      sync(false);
-      return () => {
-        sourceNode.disconnect();
-        gainNode.disconnect();
-        gainNodeRef.current = null;
-        audioContextRef.current = null;
-      };
-    } catch {
-      gainNodeRef.current = null;
-      audioContextRef.current = null;
-    }
-  }, [useWebAudioGain]);
   useEffect(() => {
     const justStarted = playing && !wasPlaying.current;
     wasPlaying.current = playing;

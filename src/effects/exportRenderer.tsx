@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { toPng } from "html-to-image";
 import { clockControlledRecipe, effectAnimationState } from "@/domain/effects";
 import { visualTransformAt } from "@/domain/transforms";
-import { EffectCardContent, effectCardChromeStyle, reactEffectMotionDurationUs } from "@/effects/registry";
+import { EffectCardContent, effectCardChromeStyle, reactEffectMotionDurationUs, usesComponentChrome } from "@/effects/registry";
 import type { RenderPlan, RenderTextOverlay } from "@/services/media";
 
 const neutralRecipe = {
@@ -27,9 +27,23 @@ function dataUrlPayload(value: string) {
 }
 
 export function dynamicDurationUs(overlay: RenderTextOverlay) {
+  if (overlay.effectId === "chapter-bar" || overlay.effectId === "caption-track") return overlay.durationUs;
   const recipe = clockControlledRecipe(overlay.recipe);
   const entranceUs = (recipe.animation?.durationSeconds ?? 0) * 1_000_000 / Math.max(0.1, overlay.speed);
-  const registeredUs = overlay.effectId ? reactEffectMotionDurationUs(overlay.effectId) : 0;
+  let registeredUs = overlay.effectId ? reactEffectMotionDurationUs(overlay.effectId) : 0;
+  const parameterString = (key: string) => typeof overlay.params?.[key] === "string" ? overlay.params[key] : "";
+  const parameterNumber = (key: string, fallback: number) => typeof overlay.params?.[key] === "number" ? overlay.params[key] : fallback;
+  if (overlay.effectId === "quote-lockup") registeredUs = Math.max(registeredUs, 650_000 + parameterString("quote").split("|").length * 180_000);
+  if (overlay.effectId === "step-timeline") registeredUs = Math.max(registeredUs, 720_000 + parameterString("steps").split("|").length * 240_000);
+  if (overlay.effectId === "terminal-3d") registeredUs = Math.max(registeredUs, Array.from(parameterString("lines")).length / Math.max(1, parameterNumber("cps", 26)) * 1_000_000 + 200_000);
+  if (overlay.effectId === "type-shift") registeredUs = Math.max(registeredUs, parameterNumber("shiftAtMs", 1_600) * 1_000 + 500_000);
+  if (overlay.effectId === "blur-text") registeredUs = Math.max(registeredUs, parameterString("blurText").split("|").length * parameterNumber("staggerMs", 420) * 1_000 + 700_000);
+  if (overlay.effectId === "pin-board") registeredUs = Math.max(registeredUs, 960_000 + parameterString("items").split("|").length * parameterNumber("stepMs", 4_000) * 1_000);
+  if (overlay.effectId === "checklist") registeredUs = Math.max(registeredUs, 480_000 + parameterString("items").split("|").length * parameterNumber("stepMs", 160) * 1_000);
+  if (overlay.effectId === "entity-chips") registeredUs = Math.max(registeredUs, 600_000 + parameterString("chips").split(/\r?\n/u).length * parameterNumber("stepMs", 500) * 1_000);
+  if (overlay.effectId === "stat-proof") registeredUs = Math.max(registeredUs, parameterNumber("countMs", 1_600) * 1_000);
+  if (overlay.effectId === "focus-card") registeredUs = Math.max(registeredUs, parameterString("items").split("|").length * parameterNumber("stepMs", 600) * 1_000 + 900_000);
+  if (overlay.effectId === "growth-curve") registeredUs = Math.max(registeredUs, parameterNumber("drawMs", 1_600) * 1_000 + 300_000);
   const contentUs = Math.max(
     (recipe.chart?.durationSeconds ?? (overlay.effectId?.includes("bullet") || overlay.effectId?.includes("quote") ? 0.75 : 0)) * 1_000_000,
     registeredUs
@@ -57,17 +71,17 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan):
     const animation = effectAnimationState(recipe, localUs, overlay.speed);
     flushSync(() => root.render(
       <div
-        className={`effect-overlay react-effect recipe-${recipe.layout} entrance-none`}
+        className={`effect-overlay react-effect component-${overlay.effectId ?? "unknown"} recipe-${recipe.layout} entrance-none`}
         style={{
           left: `${transform.x}%`,
           top: `${transform.y}%`,
           fontSize: `${overlay.fontSize}px`,
-          ...effectCardChromeStyle({ color: overlay.color, accentColor: overlay.accentColor, backdrop: overlay.backdrop }, recipe, length, overlay.motionTheme),
+          ...effectCardChromeStyle({ color: overlay.color, accentColor: overlay.accentColor, backdrop: overlay.backdrop }, recipe, length, overlay.motionTheme, usesComponentChrome(overlay.effectId ?? "")),
           opacity: transform.opacity * (overlay.dimAtUs !== undefined && localUs >= overlay.dimAtUs ? 0.35 : 1),
           transform: `translate(-50%, -50%) translate(${animation.translateX}%, ${animation.translateY}%) scale(${transform.scale * animation.scale}) rotate(${transform.rotation + animation.rotation}deg)`
         }}
       >
-        <EffectCardContent effectId={overlay.effectId ?? "test-title-slide"} text={overlay.text} color={overlay.color} accentColor={overlay.accentColor} fontSize={overlay.fontSize} recipe={recipe} timeUs={localUs * overlay.speed} durationUs={overlay.durationUs} canvasWidth={plan.width} />
+        <EffectCardContent effectId={overlay.effectId ?? "quote-lockup"} text={overlay.text} color={overlay.color} accentColor={overlay.accentColor} fontSize={overlay.fontSize} recipe={recipe} params={overlay.params} timeUs={localUs * overlay.speed} durationUs={overlay.durationUs} canvasWidth={plan.width} canvasHeight={plan.height} />
       </div>
     ));
     await nextPaint();

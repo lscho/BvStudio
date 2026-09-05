@@ -1,5 +1,5 @@
 import { measureChartBox } from "@/domain/chartEffects";
-import type { EffectRecipe } from "@/domain/effects";
+import { OVERLAY_STUDIO_BASE_FONT_SIZE, OVERLAY_STUDIO_EFFECT_IDS, type EffectRecipe } from "@/domain/effects";
 
 export interface MotionLayoutCanvas {
   width: number;
@@ -15,6 +15,7 @@ export interface MotionLayoutRect {
 
 export interface MotionLayoutLayer {
   id: string;
+  effectId?: string;
   startUs: number;
   durationUs: number;
   desiredX: number;
@@ -36,6 +37,11 @@ export interface MotionLayoutSafeArea {
   startUs: number;
   durationUs: number;
   rect: MotionLayoutRect;
+}
+
+export interface MotionLayoutPresenterSafeArea {
+  position: "none" | "left" | "center" | "right";
+  widthPercent: number;
 }
 
 export interface OccupiedMotionLayoutLayer {
@@ -60,8 +66,50 @@ const collisionGapPercent = 1.25;
 const minimumTextScale = 0.65;
 const minimumChartScale = 0.8;
 
+const overlayStudioFootprints: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT_IDS)[number], { width: number; height: number }>> = {
+  "quote-lockup": { width: 720, height: 390 },
+  "step-timeline": { width: 640, height: 500 },
+  "rank-bars": { width: 650, height: 390 },
+  "punch-pill": { width: 900, height: 120 },
+  "term-card": { width: 680, height: 310 },
+  "pin-board": { width: 560, height: 390 },
+  checklist: { width: 560, height: 430 },
+  "terminal-3d": { width: 820, height: 610 },
+  "ring-metric": { width: 390, height: 440 },
+  "versus-card": { width: 1160, height: 330 },
+  "ui-callout": { width: 780, height: 260 },
+  "type-shift": { width: 1180, height: 390 },
+  "blur-text": { width: 1180, height: 190 },
+  odometer: { width: 700, height: 280 },
+  "focus-card": { width: 980, height: 760 },
+  "chapter-bar": { width: 1920, height: 70 },
+  "caption-track": { width: 1500, height: 150 },
+  "entity-chips": { width: 820, height: 180 },
+  "stat-proof": { width: 660, height: 340 },
+  "growth-curve": { width: 720, height: 480 }
+};
+
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+export function presenterMotionSafeArea(
+  settings: MotionLayoutPresenterSafeArea,
+  startUs: number,
+  durationUs: number
+): MotionLayoutSafeArea | null {
+  if (settings.position === "none") return null;
+  const width = clamp(settings.widthPercent, 18, 60);
+  const left = settings.position === "left"
+    ? 3
+    : settings.position === "right"
+      ? 97 - width
+      : 50 - width / 2;
+  return {
+    startUs,
+    durationUs: Math.max(100_000, durationUs),
+    rect: { left, top: 6, right: left + width, bottom: 78 }
+  };
 }
 
 function intervalsOverlap(left: { startUs: number; durationUs: number }, right: { startUs: number; durationUs: number }) {
@@ -98,6 +146,16 @@ function measuredTextBox(text: string, fontSize: number, maximumWidth: number) {
 }
 
 function layerPixelSize(layer: MotionLayoutLayer, canvas: MotionLayoutCanvas, scale: number) {
+  const componentFootprint = layer.effectId
+    ? overlayStudioFootprints[layer.effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]]
+    : undefined;
+  if (componentFootprint) {
+    const fontScale = layer.fontSize / OVERLAY_STUDIO_BASE_FONT_SIZE;
+    return {
+      width: componentFootprint.width * fontScale * scale,
+      height: componentFootprint.height * fontScale * scale
+    };
+  }
   const paddingX = layer.recipe.paddingX;
   const paddingY = layer.recipe.paddingY;
   const content = layer.recipe.chart
@@ -176,7 +234,8 @@ function placementAt(layer: MotionLayoutLayer, canvas: MotionLayoutCanvas, scale
 }
 
 function candidateScales(layer: MotionLayoutLayer) {
-  const minimumScale = layer.recipe.chart ? minimumChartScale : minimumTextScale;
+  const componentEffect = Boolean(layer.effectId && OVERLAY_STUDIO_EFFECT_IDS.includes(layer.effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]));
+  const minimumScale = componentEffect ? 0.85 : layer.recipe.chart ? minimumChartScale : minimumTextScale;
   return [...new Set([1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
     .map((factor) => layer.scale * factor)
     .concat(minimumScale)

@@ -1,4 +1,4 @@
-import type { EffectEntrance, EffectRecipe, EffectSoundCue, SceneBackgroundSpec } from "@/domain/effects";
+import type { EffectEntrance, EffectParams, EffectRecipe, EffectSoundCue, SceneBackgroundSpec } from "@/domain/effects";
 import type { CameraMotion } from "@/domain/camera";
 import type { EasingName } from "@/domain/easing";
 
@@ -64,6 +64,17 @@ export type MotionSkin = "dark" | "light";
 export type MotionStyle = "minimal" | "editorial";
 export type MotionFont = "sans" | "display";
 export type MotionColorRole = "data" | "opinion" | "warning" | "auxiliary" | "custom";
+export type PresenterSafeAreaPosition = "none" | "left" | "center" | "right";
+
+export interface PresenterSafeAreaSettings {
+  position: PresenterSafeAreaPosition;
+  widthPercent: number;
+}
+
+export const DEFAULT_PRESENTER_SAFE_AREA: PresenterSafeAreaSettings = {
+  position: "center",
+  widthPercent: 32
+};
 
 export interface MotionTheme {
   skin: MotionSkin;
@@ -196,6 +207,7 @@ export interface EffectClip extends BaseClip {
   speed: number;
   transform: TransformProps;
   recipe?: EffectRecipe;
+  params?: EffectParams;
   soundCues?: EffectSoundCue[];
   zIndex?: number;
   sceneGroupId?: string;
@@ -341,7 +353,7 @@ export interface TimelineTrack {
 }
 
 export interface EditorProject {
-  schemaVersion: 20;
+  schemaVersion: 22;
   id: string;
   name: string;
   createdAt: string;
@@ -349,6 +361,7 @@ export interface EditorProject {
   canvas: { width: number; height: number; fpsNumerator: number; fpsDenominator: number };
   durationUs: number;
   chapterProgress: ChapterProgressSettings;
+  presenterSafeArea: PresenterSafeAreaSettings;
   motionTheme: MotionTheme;
   assets: MediaAsset[];
   tracks: TimelineTrack[];
@@ -357,7 +370,7 @@ export interface EditorProject {
 export function createEmptyProject(): EditorProject {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 20,
+    schemaVersion: 22,
     id: crypto.randomUUID(),
     name: "未命名项目",
     createdAt: now,
@@ -378,6 +391,7 @@ export function createEmptyProject(): EditorProject {
       showTitles: true,
       chapters: []
     },
+    presenterSafeArea: { ...DEFAULT_PRESENTER_SAFE_AREA },
     motionTheme: structuredClone(DEFAULT_MOTION_THEME),
     assets: [],
     tracks: [

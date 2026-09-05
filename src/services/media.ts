@@ -1,7 +1,7 @@
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { isDesktopRuntime } from "@/services/runtime";
-import type { EffectRecipe } from "@/domain/effects";
+import type { EffectParams, EffectRecipe } from "@/domain/effects";
 import type { ChapterMarker, ChapterProgressPosition, ChapterProgressStyle, EffectBackdrop, MotionTheme, SubtitleStylePreset, VideoFocusEffect, VideoMask, VideoTransition, VisualTransformKeyframe } from "@/domain/project";
 import type { CameraMotion } from "@/domain/camera";
 import { drawChartFrame, hexAlpha, measureChartBox } from "@/domain/chartEffects";
@@ -101,6 +101,7 @@ export interface RenderTextOverlay extends RenderOverlayBase {
   color: string;
   fontSize: number;
   accentColor: string;
+  params?: EffectParams;
   /** Static baked appearance; absent when the overlay ships a frame sequence instead. */
   imageDataBase64?: string;
   /**

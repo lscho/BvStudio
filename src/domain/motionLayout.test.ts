@@ -40,6 +40,25 @@ describe("resolveMotionLayout", () => {
     )).toBe(false);
   });
 
+  it("uses reference component footprints to keep simultaneous cards apart", () => {
+    const layers = [
+      layer("term", { effectId: "term-card", recipe: effectById("term-card").recipe, fontSize: 48 }),
+      layer("pin", { effectId: "pin-board", recipe: effectById("pin-board").recipe, fontSize: 48 })
+    ];
+    const placements = resolveMotionLayout({ canvas, layers });
+    const term = placements.get("term");
+    const pin = placements.get("pin");
+
+    expect(term).not.toBeNull();
+    expect(pin).not.toBeNull();
+    expect(motionLayoutRectsOverlap(
+      estimateMotionLayoutRect(layers[0], term!, canvas),
+      estimateMotionLayoutRect(layers[1], pin!, canvas)
+    )).toBe(false);
+    expect(term?.scale).toBeGreaterThanOrEqual(0.85);
+    expect(pin?.scale).toBeGreaterThanOrEqual(0.85);
+  });
+
   it("allows the same position when layer time ranges do not overlap", () => {
     const placements = resolveMotionLayout({
       canvas,
@@ -64,6 +83,19 @@ describe("resolveMotionLayout", () => {
 
     expect(placement).not.toBeNull();
     expect(estimateMotionLayoutRect(motion, placement!, canvas).bottom).toBeLessThanOrEqual(78);
+  });
+
+  it("moves a component outside the configured presenter area", () => {
+    const motion = layer("metric", { effectId: "ring-metric", recipe: effectById("ring-metric").recipe, fontSize: 48 });
+    const safeArea = { left: 34, top: 6, right: 66, bottom: 78 };
+    const placement = resolveMotionLayout({
+      canvas,
+      layers: [motion],
+      safeAreas: [{ startUs: 0, durationUs: 4_000_000, rect: safeArea }]
+    }).get("metric");
+
+    expect(placement).not.toBeNull();
+    expect(motionLayoutRectsOverlap(estimateMotionLayoutRect(motion, placement!, canvas), safeArea)).toBe(false);
   });
 
   it.each([
