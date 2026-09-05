@@ -47,6 +47,15 @@ export type SubtitleAppearancePatch = Partial<Pick<
   | "positionY"
 >>;
 
+export interface MotionMatchApplySummary {
+  requestedEffectCount: number;
+  effectCount: number;
+  sceneCount: number;
+  soundCount: number;
+  videoCount: number;
+  skippedEffectCount: number;
+}
+
 const overlayStudioDefaultPosition: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT_IDS)[number], { x: number; y: number }>> = {
   "quote-lockup": { x: 72, y: 50 },
   "step-timeline": { x: 73, y: 50 },
@@ -265,7 +274,7 @@ interface EditorState {
   updateAsset: (assetId: string, patch: Partial<MediaAsset>) => void;
   replaceProject: (project: EditorProject) => void;
   addGeneratedPlan: (plan: AiVideoPlan, prompt: string, mode: InsertMode, target?: { startUs: number; durationUs?: number }) => string;
-  applyMotionMatches: (subtitleIds: string[], matches: AiMotionMatch[], soundAssets?: MediaAsset[]) => void;
+  applyMotionMatches: (subtitleIds: string[], matches: AiMotionMatch[], soundAssets?: MediaAsset[]) => MotionMatchApplySummary;
   alignGeneratedBlockDuration: (blockId: string, durationUs: number) => void;
   alignGeneratedSceneDurations: (blockId: string, durationsUs: number[], subtitleIds?: string[]) => void;
   updateEffect: (clipId: string, patch: Partial<EffectClip>) => void;
@@ -633,7 +642,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   })),
   updatePresenterSafeArea: (settings) => set((state) => commit(state, (project) => {
     project.presenterSafeArea = {
-      position: ["none", "left", "center", "right"].includes(settings.position) ? settings.position : "center",
+      position: ["none", "left", "center", "right"].includes(settings.position) ? settings.position : "none",
       widthPercent: Math.max(18, Math.min(60, Number.isFinite(settings.widthPercent) ? settings.widthPercent : 32))
     };
   })),
@@ -1025,7 +1034,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return id;
   },
   applyMotionMatches: (subtitleIds, matches, soundAssets = []) => {
-    if (!subtitleIds.length) return;
+    const summary: MotionMatchApplySummary = {
+      requestedEffectCount: 0,
+      effectCount: 0,
+      sceneCount: 0,
+      soundCount: 0,
+      videoCount: 0,
+      skippedEffectCount: 0
+    };
+    if (!subtitleIds.length) return summary;
     set((state) => commit(state, (project) => {
       const themeAccentColor = motionThemeAccentColor(project.motionTheme);
       const selectedIds = new Set(subtitleIds);
@@ -1095,6 +1112,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           transition: { ...DEFAULT_VIDEO_TRANSITION, preset: layer.transitionPreset },
           focus: layer.focus ? { ...DEFAULT_VIDEO_FOCUS, enabled: layer.focus.enabled, x: layer.focus.x, y: layer.focus.y, zoom: layer.focus.zoom, startOffsetUs: Math.round(layer.focus.startOffsetSeconds * 1_000_000), durationUs: Math.min(durationUs, Math.round(layer.focus.durationSeconds * 1_000_000)) } : undefined
         });
+        summary.videoCount += 1;
       };
 
       subtitles.forEach((subtitle, captionIndex) => {
@@ -1118,14 +1136,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               sourceInUs: 0, playbackRate: 1, volume: 1, fadeInUs: 0, fadeOutUs: Math.min(50_000, asset.durationUs), role: "sound",
               sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id
             });
+            summary.soundCount += 1;
           }
         }
         const entries = aiMotionEntries(match, subtitle.text, false);
-        for (const entry of entries.slice(0, 2)) {
+        const selectedEntries = entries.slice(0, 2);
+        summary.requestedEffectCount += selectedEntries.length;
+        for (const entry of selectedEntries) {
           const definition = effectById(entry.effectId);
           const recipe = materializedAiEffectRecipe(entry.effectId, match);
           const placement = recipe.sceneBackground ? null : motionPlacements.get(aiMotionLayoutId(captionIndex, entry.slot));
-          if (!recipe.sceneBackground && !placement) continue;
+          if (!recipe.sceneBackground && !placement) {
+            summary.skippedEffectCount += 1;
+            continue;
+          }
           const sceneGroupId = match.motionGroupId ? motionGroupSceneIds.get(match.motionGroupId) : `ai-subtitle:${subtitle.id}`;
           const soundCues = entry.zIndex === 20 ? structuredClone(definition.soundCues ?? []) : [];
           if (recipe.sceneBackground) {
@@ -1135,6 +1159,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               background: { ...structuredClone(recipe.sceneBackground), borderColor: themeAccentColor }, opacity: 1, soundCues, sceneGroupId, matchQuery: subtitle.text,
               sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id
             });
+            summary.sceneCount += 1;
           } else {
             if (!placement) continue;
             effectTrack.clips.push({
@@ -1149,6 +1174,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               backdrop: effectBackdropForPreset(match.backdropPreset ?? "none", themeAccentColor),
               params: effectParamsForText(definition.id, entry.text.trim())
             });
+            summary.effectCount += 1;
           }
         }
 
@@ -1165,6 +1191,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         matchedVideoLayers(match).forEach((layer) => addMatchedVideo(subtitle, matchDurationUs, layer, "AI 素材"));
       });
     }));
+    return summary;
   },
   alignGeneratedBlockDuration: (blockId, durationUs) => {
     const nextDurationUs = Math.max(100_000, Math.round(durationUs));

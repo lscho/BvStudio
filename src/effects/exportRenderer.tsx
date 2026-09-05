@@ -26,6 +26,18 @@ function dataUrlPayload(value: string) {
   return value.slice(comma + 1);
 }
 
+export function configureReactOverlayHost(host: HTMLDivElement, width: number, height: number) {
+  host.style.position = "fixed";
+  host.style.left = "0";
+  host.style.top = "0";
+  host.style.zIndex = "-1";
+  host.style.width = `${width}px`;
+  host.style.height = `${height}px`;
+  host.style.pointerEvents = "none";
+  host.style.background = "transparent";
+  host.style.containerType = "inline-size";
+}
+
 export function dynamicDurationUs(overlay: RenderTextOverlay) {
   if (overlay.effectId === "chapter-bar" || overlay.effectId === "caption-track") return overlay.durationUs;
   const recipe = clockControlledRecipe(overlay.recipe);
@@ -54,15 +66,8 @@ export function dynamicDurationUs(overlay: RenderTextOverlay) {
 async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan): Promise<RenderTextOverlay> {
   const recipe = clockControlledRecipe(overlay.recipe);
   const host = document.createElement("div");
-  host.style.position = "fixed";
-  host.style.left = "-100000px";
-  host.style.top = "0";
-  host.style.width = `${plan.width}px`;
-  host.style.height = `${plan.height}px`;
-  host.style.pointerEvents = "none";
-  host.style.background = "transparent";
-  host.style.containerType = "inline-size";
-  document.body.append(host);
+  configureReactOverlayHost(host, plan.width, plan.height);
+  document.body.prepend(host);
   const root = createRoot(host);
   const length = (pixels: number) => `${pixels}px`;
   const renderAt = async (localUs: number) => {
@@ -85,7 +90,13 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan):
       </div>
     ));
     await nextPaint();
-    return dataUrlPayload(await toPng(host, { width: plan.width, height: plan.height, pixelRatio: 1, backgroundColor: "transparent" }));
+    return dataUrlPayload(await toPng(host, {
+      width: plan.width,
+      height: plan.height,
+      pixelRatio: 1,
+      backgroundColor: "transparent",
+      style: { zIndex: "0" }
+    }));
   };
 
   try {

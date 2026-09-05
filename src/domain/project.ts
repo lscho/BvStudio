@@ -72,7 +72,7 @@ export interface PresenterSafeAreaSettings {
 }
 
 export const DEFAULT_PRESENTER_SAFE_AREA: PresenterSafeAreaSettings = {
-  position: "center",
+  position: "none",
   widthPercent: 32
 };
 

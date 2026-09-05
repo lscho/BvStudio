@@ -207,7 +207,7 @@ function expandedRect(rect: MotionLayoutRect, amount: number): MotionLayoutRect 
 function candidatePositions(layer: MotionLayoutLayer, canvas: MotionLayoutCanvas) {
   const portrait = canvas.height > canvas.width;
   const square = Math.abs(canvas.width / Math.max(1, canvas.height) - 1) < 0.15;
-  const xSlots = portrait ? [28, 50, 72] : square ? [24, 50, 76] : [22, 50, 78];
+  const xSlots = portrait ? [22, 28, 50, 72, 78] : square ? [18, 24, 50, 76, 82] : [18, 22, 50, 78, 82];
   const ySlots = portrait ? [14, 29, 44, 59, 72] : [18, 36, 54, 70];
   const slots = xSlots.flatMap((x) => ySlots.map((y) => ({ x, y })))
     .sort((left, right) => (
@@ -235,8 +235,8 @@ function placementAt(layer: MotionLayoutLayer, canvas: MotionLayoutCanvas, scale
 
 function candidateScales(layer: MotionLayoutLayer) {
   const componentEffect = Boolean(layer.effectId && OVERLAY_STUDIO_EFFECT_IDS.includes(layer.effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]));
-  const minimumScale = componentEffect ? 0.85 : layer.recipe.chart ? minimumChartScale : minimumTextScale;
-  return [...new Set([1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
+  const minimumScale = componentEffect ? 0.45 : layer.recipe.chart ? minimumChartScale : minimumTextScale;
+  return [...new Set([1, 0.9, 0.85, 0.8, 0.7, 0.6, 0.5, 0.4]
     .map((factor) => layer.scale * factor)
     .concat(minimumScale)
     .map((candidate) => Math.max(minimumScale, Math.min(2.5, candidate)).toFixed(4)))]

@@ -530,7 +530,7 @@ export default function App() {
         const existing = useEditorStore.getState().project.assets.find((asset) => asset.id === builtinSoundAssetId(soundId) && !asset.missing && asset.name === expectedName);
         return existing ?? createBuiltinSoundAsset(soundId, { refresh: true });
       }));
-      applyMotionMatches(subtitles.map((clip) => clip.id), result.matches ?? [], soundAssets);
+      const applied = applyMotionMatches(subtitles.map((clip) => clip.id), result.matches ?? [], soundAssets);
       const lintIssues = lintMotionProject(useEditorStore.getState().project);
       const errors = lintIssues.filter((issue) => issue.severity === "error");
       if (errors.length) {
@@ -538,7 +538,15 @@ export default function App() {
         throw new Error(`AI 编排未通过动效检查：${errors[0].message}`);
       }
       const warnings = lintIssues.filter((issue) => issue.severity === "warning");
-      setNotice(warnings.length ? `AI 编排已完成，动效检查有 ${warnings.length} 条提醒：${warnings[0].message}` : `已按连续场景为 ${subtitles.length} 条字幕匹配 A-roll、B-roll、动效与音效`);
+      const visualCount = applied.effectCount + applied.sceneCount;
+      let completionNotice = `AI 编排已完成：写入 ${visualCount} 个动效、${applied.soundCount} 个音效、${applied.videoCount} 段视频或运镜`;
+      if (applied.requestedEffectCount === 0) {
+        completionNotice += "；模型本次没有为这些字幕选择动效";
+      } else if (applied.skippedEffectCount > 0) {
+        completionNotice += `；${applied.skippedEffectCount} 个动效因避让空间不足未添加，请调整人物避让区后重试`;
+      }
+      if (warnings.length) completionNotice += `；动效检查有 ${warnings.length} 条提醒：${warnings[0].message}`;
+      setNotice(completionNotice);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "动效匹配失败");
     } finally {

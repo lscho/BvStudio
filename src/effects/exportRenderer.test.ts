@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dynamicDurationUs } from "@/effects/exportRenderer";
+import { configureReactOverlayHost, dynamicDurationUs } from "@/effects/exportRenderer";
 import type { RenderTextOverlay } from "@/services/media";
 
 const overlay: RenderTextOverlay = {
@@ -10,6 +10,13 @@ const overlay: RenderTextOverlay = {
 };
 
 describe("React effect export timing", () => {
+  it("keeps the capture host in the painted viewport behind the editor", () => {
+    const host = document.createElement("div");
+    configureReactOverlayHost(host, 1920, 1080);
+
+    expect(host.style).toMatchObject({ left: "0px", top: "0px", zIndex: "-1", width: "1920px", height: "1080px" });
+  });
+
   it("captures the deterministic entrance and optional dim point", () => {
     expect(dynamicDurationUs(overlay)).toBe(450_000);
     expect(dynamicDurationUs({ ...overlay, dimAtUs: 1_500_000 })).toBe(1_500_000);

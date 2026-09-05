@@ -40,7 +40,7 @@ describe("project files", () => {
 
     expect(parseProject(JSON.stringify(raw))).toMatchObject({
       schemaVersion: 22,
-      presenterSafeArea: { position: "center", widthPercent: 32 }
+      presenterSafeArea: { position: "none", widthPercent: 32 }
     });
   });
 
@@ -66,7 +66,7 @@ describe("project files", () => {
   it("repositions overlapping generated component effects when migrating v21 projects", () => {
     const raw = JSON.parse(serializeProject(createEmptyProject()));
     raw.schemaVersion = 21;
-    delete raw.presenterSafeArea;
+    raw.presenterSafeArea = { position: "center", widthPercent: 32 };
     const track = raw.tracks.find((candidate: { kind: string }) => candidate.kind === "effect");
     for (const id of ["first", "second"]) {
       track.clips.push({
@@ -102,7 +102,7 @@ describe("project files", () => {
   it("normalizes malformed presenter safe area settings", () => {
     const invalidPosition = JSON.parse(serializeProject(createEmptyProject()));
     invalidPosition.presenterSafeArea = { position: "diagonal", widthPercent: 90 };
-    expect(parseProject(JSON.stringify(invalidPosition)).presenterSafeArea).toEqual({ position: "center", widthPercent: 60 });
+    expect(parseProject(JSON.stringify(invalidPosition)).presenterSafeArea).toEqual({ position: "none", widthPercent: 60 });
 
     const invalidWidth = JSON.parse(serializeProject(createEmptyProject()));
     invalidWidth.presenterSafeArea = { position: "right", widthPercent: "wide" };

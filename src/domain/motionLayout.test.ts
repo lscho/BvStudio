@@ -98,6 +98,23 @@ describe("resolveMotionLayout", () => {
     expect(motionLayoutRectsOverlap(estimateMotionLayoutRect(motion, placement!, canvas), safeArea)).toBe(false);
   });
 
+  it("uses a smaller fallback scale instead of dropping a wide component around a center presenter", () => {
+    const motion = layer("wide", { effectId: "type-shift", recipe: effectById("type-shift").recipe, fontSize: 48 });
+    const safeArea = { left: 34, top: 6, right: 66, bottom: 78 };
+    const placement = resolveMotionLayout({
+      canvas,
+      layers: [motion],
+      safeAreas: [
+        { startUs: 0, durationUs: 4_000_000, rect: safeArea },
+        { startUs: 0, durationUs: 4_000_000, rect: { left: 0, top: 78, right: 100, bottom: 100 } }
+      ]
+    }).get("wide");
+
+    expect(placement).not.toBeNull();
+    expect(placement?.scale).toBeLessThan(0.85);
+    expect(motionLayoutRectsOverlap(estimateMotionLayoutRect(motion, placement!, canvas), safeArea)).toBe(false);
+  });
+
   it.each([
     ["16:9", { width: 1920, height: 1080 }],
     ["9:16", { width: 1080, height: 1920 }],

@@ -151,11 +151,12 @@ describe("editorStore", () => {
   });
 
   it("updates the presenter safe area with undo and redo support", () => {
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual({ position: "none", widthPercent: 32 });
     useEditorStore.getState().updatePresenterSafeArea({ position: "right", widthPercent: 40 });
     expect(useEditorStore.getState().project.presenterSafeArea).toEqual({ position: "right", widthPercent: 40 });
 
     useEditorStore.getState().undo();
-    expect(useEditorStore.getState().project.presenterSafeArea).toEqual({ position: "center", widthPercent: 32 });
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual({ position: "none", widthPercent: 32 });
     useEditorStore.getState().redo();
     expect(useEditorStore.getState().project.presenterSafeArea).toEqual({ position: "right", widthPercent: 40 });
   });
@@ -532,7 +533,9 @@ describe("editorStore", () => {
     useEditorStore.getState().addSubtitles("asr-video", [{ startSeconds: 1, endSeconds: 4, text: "点击按钮完成操作。" }]);
     const subtitle = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
     const clickAsset = { id: "builtin-sound:clean-click", name: "字幕弹出.wav", kind: "audio" as const, durationUs: 220_000, sourcePath: "/cache/click.wav", objectUrl: "asset://click", hasAudio: true, missing: false };
-    useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, soundEffectId: "clean-click" }], [clickAsset]);
+    const summary = useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, soundEffectId: "clean-click" }], [clickAsset]);
+
+    expect(summary).toMatchObject({ requestedEffectCount: 1, effectCount: 1, sceneCount: 0, soundCount: 1, skippedEffectCount: 0 });
 
     let soundTrack = useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")!;
     expect(soundTrack.clips).toEqual([expect.objectContaining({

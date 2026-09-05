@@ -1,9 +1,31 @@
-import { describe, expect, it } from "vitest";
-import { moveEffectTransform, previewAudioGain, previewNativeAudioVolume, resizeEffectTransform, videoTargetPoint } from "@/components/PreviewCanvas";
+import { createElement } from "react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PreviewCanvas, moveEffectTransform, previewAudioGain, previewNativeAudioVolume, resizeEffectTransform, videoTargetPoint } from "@/components/PreviewCanvas";
+import { createEmptyProject } from "@/domain/project";
+import type { AiProviderConfig } from "@/services/ai/provider";
+import { useEditorStore } from "@/stores/editorStore";
 
 const transform = { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 };
+const aiProvider: AiProviderConfig = { protocol: "openai-chat", baseUrl: "https://models.example.com", model: "test", inputCostPerMillion: 0, outputCostPerMillion: 0 };
+
+beforeEach(() => {
+  useEditorStore.setState({
+    project: createEmptyProject(), selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1,
+    rangeStartUs: null, rangeEndUs: null, past: [], future: [], clipboard: [], focusPickClipId: null, previewRequest: null
+  });
+});
 
 describe("PreviewCanvas effect manipulation", () => {
+  it("opens presenter settings from the toolbar when avoidance is not configured", () => {
+    render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
+
+    const presenterButton = screen.getByRole("button", { name: "设置人物避让区" });
+    expect(presenterButton).toBeEnabled();
+    fireEvent.click(presenterButton);
+    expect(screen.getByRole("heading", { name: "画布与动效主题" })).toBeVisible();
+  });
+
   it("moves an effect in canvas-relative percentages", () => {
     expect(moveEffectTransform(transform, 100, -50, 1000, 500)).toMatchObject({ x: 60, y: 40, scale: 1 });
   });
