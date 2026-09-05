@@ -1,0 +1,4 @@
+allowBuilds:
+  '@ffprobe-installer/darwin-arm64': set this to true or false
+  esbuild: set this to true or false
+  ffmpeg-static: set this to true or false
