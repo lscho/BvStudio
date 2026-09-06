@@ -1,6 +1,6 @@
 import { cameraMotionForPreset } from "@/domain/camera";
 import type { CameraMotion } from "@/domain/camera";
-import type { EffectBackdrop, TransformProps, VideoClip, VideoFocusEffect, VideoMask, VideoMotionPresetId, VideoPresentationCue, VideoRole, VideoTransition } from "@/domain/project";
+import type { EditorProject, EffectBackdrop, ImageClip, TransformProps, VideoClip, VideoFocusEffect, VideoMask, VideoMotionPresetId, VideoPresentationCue, VideoRole, VideoTransition, VideoTransitionPreset } from "@/domain/project";
 import { eased } from "@/domain/easing";
 import { DEFAULT_TRANSFORM, videoLayoutForPreset, visualTransformAt } from "@/domain/transforms";
 
@@ -8,6 +8,18 @@ export const DEFAULT_VIDEO_MASK: VideoMask = { shape: "rectangle", radius: 0, fe
 export const DEFAULT_VIDEO_TRANSITION: VideoTransition = { preset: "none", durationUs: 500_000, easing: "ease-in-out" };
 export const DEFAULT_VIDEO_FOCUS: VideoFocusEffect = { enabled: false, startOffsetUs: 0, durationUs: 1_500_000, x: 50, y: 50, zoom: 1.8, radius: 14, feather: 6, dimOpacity: 0.58, showCursor: true };
 export const DEFAULT_EFFECT_BACKDROP: EffectBackdrop = { enabled: true, color: "#111316", opacity: 0.64, blur: 8, paddingX: 18, paddingY: 10, radius: 4 };
+export const MOMENTUM_ZOOM_SCALE_DELTA = 0.2;
+
+export const VIDEO_TRANSITION_OPTIONS: readonly { value: VideoTransitionPreset; label: string }[] = [
+  { value: "none", label: "无" },
+  { value: "fade", label: "淡入" },
+  { value: "slide-left", label: "左侧滑入" },
+  { value: "slide-right", label: "右侧滑入" },
+  { value: "zoom", label: "缩放进入" },
+  { value: "dock", label: "停靠进入" },
+  { value: "circle-reveal", label: "圆形揭示" },
+  { value: "momentum-zoom", label: "动势缩放" }
+];
 
 export const VIDEO_ROLE_OPTIONS: readonly { value: VideoRole; label: string }[] = [
   { value: "a-roll", label: "A-roll 主叙事" },
@@ -229,8 +241,14 @@ export function videoMask(clip: VideoClip): VideoMask {
   return { ...DEFAULT_VIDEO_MASK, ...clip.mask };
 }
 
-export function videoTransition(clip: VideoClip): VideoTransition {
+export type VisualTransitionClip = VideoClip | ImageClip;
+
+export function visualTransition(clip: VisualTransitionClip): VideoTransition {
   return { ...DEFAULT_VIDEO_TRANSITION, ...clip.transition };
+}
+
+export function videoTransition(clip: VideoClip): VideoTransition {
+  return visualTransition(clip);
 }
 
 export function videoFocus(clip: VideoClip): VideoFocusEffect {
@@ -249,9 +267,68 @@ export function focusEnvelope(focus: VideoFocusEffect, localUs: number): number 
   return smooth(Math.min(entering, exiting));
 }
 
-export function transitionEnvelope(clip: VideoClip, localUs: number): number {
-  const transition = videoTransition(clip);
+export function transitionEnvelope(clip: VisualTransitionClip, localUs: number): number {
+  const transition = visualTransition(clip);
   if (transition.preset === "none") return 1;
   const progress = Math.max(0, Math.min(1, localUs / Math.max(1, Math.min(transition.durationUs, clip.durationUs))));
   return eased(progress, transition.easing);
+}
+
+export function momentumExitTransition(clip: VisualTransitionClip, clips: readonly VisualTransitionClip[]): VideoTransition | undefined {
+  const cutUs = clip.startUs + clip.durationUs;
+  const explicit = clips.find((candidate) => candidate.id !== clip.id
+    && candidate.startUs === cutUs
+    && visualTransition(candidate).fromClipId === clip.id
+    && visualTransition(candidate).preset === "momentum-zoom");
+  if (explicit) return visualTransition(explicit);
+  const implicitCandidates = clips.filter((candidate) => candidate.id !== clip.id
+    && candidate.startUs === cutUs
+    && !visualTransition(candidate).fromClipId
+    && visualTransition(candidate).preset === "momentum-zoom");
+  const sameTrack = implicitCandidates.find((candidate) => candidate.trackId === clip.trackId);
+  const implicit = sameTrack ?? (implicitCandidates.length === 1 ? implicitCandidates[0] : undefined);
+  return implicit ? visualTransition(implicit) : undefined;
+}
+
+export interface SelectedVisualTransitionCut {
+  outgoing: VisualTransitionClip;
+  incoming: VisualTransitionClip;
+}
+
+export function selectedVisualTransitionCuts(project: EditorProject, selectedClipIds: readonly string[]): SelectedVisualTransitionCut[] {
+  const selected = new Set(selectedClipIds);
+  const clips = project.tracks.flatMap((track) => {
+    if ((track.kind !== "video" && track.kind !== "image") || track.locked || track.hidden) return [];
+    return track.clips.filter((clip): clip is VisualTransitionClip => (clip.kind === "video" || clip.kind === "image") && !clip.locked && selected.has(clip.id));
+  });
+  return clips.flatMap((incoming): SelectedVisualTransitionCut[] => {
+    const candidates = clips.filter((outgoing) => outgoing.id !== incoming.id && outgoing.startUs + outgoing.durationUs === incoming.startUs);
+    if (!candidates.length) return [];
+    const fromClipId = visualTransition(incoming).fromClipId;
+    const explicit = fromClipId ? candidates.find((candidate) => candidate.id === fromClipId) : undefined;
+    if (explicit) return [{ outgoing: explicit, incoming }];
+    const sameTrack = candidates.filter((candidate) => candidate.trackId === incoming.trackId);
+    const outgoing = sameTrack.length === 1 ? sameTrack[0] : sameTrack.length === 0 && candidates.length === 1 ? candidates[0] : undefined;
+    return outgoing ? [{ outgoing, incoming }] : [];
+  }).sort((left, right) => left.incoming.startUs - right.incoming.startUs);
+}
+
+export function momentumTransitionVisualState(clip: VisualTransitionClip, localUs: number, exitTransition?: VideoTransition) {
+  const boundedLocalUs = Math.max(0, Math.min(clip.durationUs, localUs));
+  const entering = visualTransition(clip);
+  let scale = 1;
+  let blur = 0;
+  if (entering.preset === "momentum-zoom") {
+    const durationUs = Math.max(1, Math.min(entering.durationUs, clip.durationUs));
+    const progress = Math.max(0, Math.min(1, boundedLocalUs / durationUs));
+    scale *= 1 - MOMENTUM_ZOOM_SCALE_DELTA * (1 - eased(progress, "ease-out"));
+    blur = Math.max(blur, 1 - progress);
+  }
+  if (exitTransition?.preset === "momentum-zoom") {
+    const durationUs = Math.max(1, Math.min(exitTransition.durationUs, clip.durationUs));
+    const progress = Math.max(0, Math.min(1, (boundedLocalUs - (clip.durationUs - durationUs)) / durationUs));
+    scale *= 1 - MOMENTUM_ZOOM_SCALE_DELTA * eased(progress, "ease-in");
+    blur = Math.max(blur, progress);
+  }
+  return { scale, blur };
 }

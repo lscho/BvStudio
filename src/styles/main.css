@@ -498,6 +498,9 @@ h1, h2, h3, p { margin: 0; }
 .video-motion-presets > button small { color: var(--muted); font-size: 9px; line-height: 1.4; white-space: normal; }
 .video-cue-position { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--soft); font-size: 10px; font-variant-numeric: tabular-nums; }
 .video-cue-position svg { color: var(--accent); }
+.video-transition-batch { display: grid; gap: 10px; }
+.video-transition-batch > .button { width: 100%; min-height: 32px; }
+.video-transition-empty { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .video-cue-duration { display: grid; gap: 8px; padding: 9px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2); }
 .video-cue-duration > header { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--soft); font-size: 10px; font-weight: 700; }
 .video-cue-duration > header small { min-width: 0; overflow: hidden; color: var(--accent); font-size: 9px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
@@ -607,6 +610,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .resize-handle { position: absolute; z-index: 2; top: 0; bottom: 0; width: 7px; cursor: ew-resize; }.resize-handle.start { left: 0; }.resize-handle.end { right: 0; }.timeline-clip.selected .resize-handle { background: rgb(255 255 255 / 0.14); }
 .motion-cue-marker { position: absolute; z-index: 3; top: 1px; bottom: 1px; width: 2px; border-radius: 1px; background: #fff; box-shadow: 0 0 0 1px rgb(16 19 23 / 0.55); pointer-events: none; transform: translateX(-1px); }
 .timeline-range { position: absolute; z-index: 1; top: 24px; bottom: 0; min-width: 1px; border-inline: 1px solid rgb(79 140 255 / 0.85); background: rgb(79 140 255 / 0.14); pointer-events: none; }.timeline-range::before { position: absolute; left: 0; right: 0; top: -24px; height: 24px; background: rgb(79 140 255 / 0.18); content: ""; }.playhead { position: absolute; z-index: 4; top: 0; bottom: 0; width: 12px; padding: 0; border: 0; background: transparent; cursor: ew-resize; touch-action: none; transform: translateX(-6px); }.playhead::before { position: absolute; left: 5px; top: 0; bottom: 0; width: 1px; background: #f46a70; content: ""; }.playhead:hover::before, .playhead:focus-visible::before { width: 2px; background: #ff7c82; }.playhead i { position: absolute; left: 0; top: 0; width: 11px; height: 8px; background: #f46a70; clip-path: polygon(0 0,100% 0,50% 100%); }.playhead:hover i, .playhead:focus-visible i { background: #ff7c82; }
+.timeline-snap-guide { position: absolute; z-index: 3; top: 24px; bottom: 0; width: 1px; background: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent); pointer-events: none; transform: translateX(-0.5px); }
 
 .dialog-overlay { position: fixed; z-index: 1000; inset: 0; background: rgb(5 7 9 / 0.72); backdrop-filter: blur(3px); animation: dialog-overlay-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 .dialog-overlay[data-state="closed"] { animation: dialog-overlay-out 0.18s ease-out forwards; }

@@ -26,10 +26,11 @@ import {
   type TimelineTrack,
   type VideoClip,
   type VideoMotionPresetId,
-  type VideoPresentationCue
+  type VideoPresentationCue,
+  type VideoTransition
 } from "@/domain/project";
 import type { AiMotionMatch, AiVideoPlan } from "@/services/ai/schema";
-import { createVideoPresentationCue, DEFAULT_EFFECT_BACKDROP, DEFAULT_VIDEO_FOCUS, DEFAULT_VIDEO_MASK, DEFAULT_VIDEO_TRANSITION, videoPresentationAt } from "@/domain/videoPresentation";
+import { createVideoPresentationCue, DEFAULT_EFFECT_BACKDROP, DEFAULT_VIDEO_FOCUS, DEFAULT_VIDEO_MASK, DEFAULT_VIDEO_TRANSITION, selectedVisualTransitionCuts, videoPresentationAt } from "@/domain/videoPresentation";
 import { DEFAULT_SUBTITLE_STYLE, subtitleKeywordsForText } from "@/domain/videoDecorations";
 import { builtinSoundAssetId, builtinSoundEffectById } from "@/domain/soundEffects";
 
@@ -280,6 +281,7 @@ interface EditorState {
   updateEffect: (clipId: string, patch: Partial<EffectClip>) => void;
   updateScene: (clipId: string, patch: Partial<SceneClip>) => void;
   updateVideo: (clipId: string, patch: Partial<VideoClip>) => void;
+  applyTransitionToSelectedMaterials: (transition: VideoTransition) => void;
   addVideoPresentationCue: (clipId: string, presetId: VideoMotionPresetId, offsetUs: number) => void;
   updateVideoPresentationCue: (clipId: string, cueId: string, patch: Partial<VideoPresentationCue>) => void;
   removeVideoPresentationCue: (clipId: string, cueId: string) => void;
@@ -356,10 +358,18 @@ function stretchSceneGroup(project: EditorProject, clip: EffectClip | SceneClip,
   return true;
 }
 
-function videoTrackForPlacement(project: EditorProject, startUs: number, _placement: "auto" | "main" | "overlay" = "auto", durationUs = 1): TimelineTrack {
+function visualInsertion(project: EditorProject, selectedClipId: string | null, fallbackStartUs: number, sequential: boolean) {
+  const selected = sequential ? findClip(project, selectedClipId) : undefined;
+  if (selected?.kind !== "video" && selected?.kind !== "image") return { startUs: fallbackStartUs, selected: undefined };
+  return { startUs: selected.startUs + selected.durationUs, selected };
+}
+
+function videoTrackForPlacement(project: EditorProject, startUs: number, _placement: "auto" | "main" | "overlay" = "auto", durationUs = 1, preferredTrackId?: string): TimelineTrack {
   const videoTracks = project.tracks.filter((track) => track.kind === "video");
   const endUs = startUs + Math.max(1, durationUs);
-  const preferred = videoTracks.find((track) => !track.clips.some((clip) => startUs < clip.startUs + clip.durationUs && endUs > clip.startUs));
+  const available = (track: TimelineTrack) => !track.locked && !track.clips.some((clip) => startUs < clip.startUs + clip.durationUs && endUs > clip.startUs);
+  const preferred = videoTracks.find((track) => track.id === preferredTrackId && available(track))
+    ?? videoTracks.find(available);
   if (preferred) return preferred;
   const track: TimelineTrack = {
     id: `video-layer-${crypto.randomUUID()}`,
@@ -739,13 +749,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           };
         }
         project.assets.push(asset);
-        const track = videoTrackForPlacement(project, state.playheadUs, "auto", asset.durationUs);
+        const insertion = visualInsertion(project, state.selectedClipId, state.playheadUs, true);
+        const track = videoTrackForPlacement(project, insertion.startUs, "auto", asset.durationUs, insertion.selected?.kind === "video" ? insertion.selected.trackId : undefined);
         track.clips.push({
           id,
           trackId: track.id,
           kind: "video",
           label: asset.name,
-          startUs: state.playheadUs,
+          startUs: insertion.startUs,
           durationUs: asset.durationUs,
           locked: false,
           assetId: asset.id,
@@ -753,7 +764,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           playbackRate: 1,
           fit: "cover",
           camera: cameraMotionForPreset("none"),
-          ...videoClipFields(project, state.playheadUs)
+          ...videoClipFields(project, insertion.startUs)
         });
       }),
       selectedClipId: id,
@@ -765,13 +776,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => ({
       ...commit(state, (project) => {
         project.assets.push(asset);
+        const insertion = visualInsertion(project, state.selectedClipId, state.playheadUs, true);
         const track = project.tracks.find((candidate) => candidate.kind === "image")!;
         track.clips.push({
           id,
           trackId: track.id,
           kind: "image",
           label: asset.name,
-          startUs: state.playheadUs,
+          startUs: insertion.startUs,
           durationUs: asset.durationUs || 5_000_000,
           locked: false,
           assetId: asset.id,
@@ -852,12 +864,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (!asset || asset.missing) return state;
       return {
         ...commit(state, (project) => {
+          const insertion = visualInsertion(project, state.selectedClipId, state.playheadUs, placement === "auto");
           if (asset.kind === "video") {
-            const track = videoTrackForPlacement(project, state.playheadUs, placement, asset.durationUs);
-            track.clips.push({ id, trackId: track.id, kind: "video", label: asset.name, startUs: state.playheadUs, durationUs: asset.durationUs, locked: false, assetId, sourceInUs: 0, playbackRate: 1, fit: "cover", camera: cameraMotionForPreset("none"), ...videoClipFields(project, state.playheadUs, placement) });
+            const track = videoTrackForPlacement(project, insertion.startUs, placement, asset.durationUs, insertion.selected?.kind === "video" ? insertion.selected.trackId : undefined);
+            track.clips.push({ id, trackId: track.id, kind: "video", label: asset.name, startUs: insertion.startUs, durationUs: asset.durationUs, locked: false, assetId, sourceInUs: 0, playbackRate: 1, fit: "cover", camera: cameraMotionForPreset("none"), ...videoClipFields(project, insertion.startUs, placement) });
           } else if (asset.kind === "image") {
             const track = project.tracks.find((candidate) => candidate.kind === "image")!;
-            track.clips.push({ id, trackId: track.id, kind: "image", label: asset.name, startUs: state.playheadUs, durationUs: asset.durationUs || 5_000_000, locked: false, assetId, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, entrance: "pop", speed: 1 });
+            track.clips.push({ id, trackId: track.id, kind: "image", label: asset.name, startUs: insertion.startUs, durationUs: asset.durationUs || 5_000_000, locked: false, assetId, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, entrance: "pop", speed: 1 });
           } else {
             const track = project.tracks.find((candidate) => candidate.kind === "audio" && candidate.audioRole === "music")!;
             track.clips.push({ id, trackId: track.id, kind: "audio", label: asset.name, startUs: state.playheadUs, durationUs: asset.durationUs, locked: false, assetId, sourceInUs: 0, playbackRate: 1, volume: 0.65, fadeInUs: 500_000, fadeOutUs: 500_000, role: "music" });
@@ -1345,6 +1358,24 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!clip || clip.kind !== "video") return;
     Object.assign(clip, patch);
   })),
+  applyTransitionToSelectedMaterials: (transition) => set((state) => {
+    const targets = selectedVisualTransitionCuts(state.project, state.selectedClipIds);
+    if (!targets.length) return state;
+    const targetById = new Map(targets.map(({ outgoing, incoming }) => [incoming.id, outgoing]));
+    const maximumDurationUs = new Map(targets.map(({ outgoing, incoming }) => [incoming.id, Math.min(outgoing.durationUs, incoming.durationUs)]));
+    return commit(state, (project) => {
+      for (const clip of project.tracks.flatMap((track) => track.clips)) {
+        if ((clip.kind !== "video" && clip.kind !== "image") || !targetById.has(clip.id)) continue;
+        const outgoing = targetById.get(clip.id);
+        if (!outgoing) continue;
+        clip.transition = {
+          ...transition,
+          durationUs: Math.max(100_000, Math.min(maximumDurationUs.get(clip.id) ?? clip.durationUs, Math.round(transition.durationUs))),
+          fromClipId: outgoing.id
+        };
+      }
+    });
+  }),
   addVideoPresentationCue: (clipId, presetId, offsetUs) => set((state) => commit(state, (project) => {
     const clip = findClip(project, clipId);
     if (!clip || clip.kind !== "video" || clip.locked) return;

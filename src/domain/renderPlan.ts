@@ -1,8 +1,8 @@
-import { contentEndUs, type AudioClip, type EditorProject, type EffectBackdrop, type EffectClip, type GeneratedBlock, type ImageClip, type SceneClip, type VideoClip } from "@/domain/project";
+import { contentEndUs, type AudioClip, type EditorProject, type EffectBackdrop, type EffectClip, type GeneratedBlock, type ImageClip, type SceneClip, type VideoClip, type VideoTransition } from "@/domain/project";
 import type { ExportVideoFormat, RenderAudioClip, RenderFocusOverlay, RenderOverlay, RenderPlan, RenderSegment, VideoEncoder } from "@/services/media";
 import { clockControlledRecipe, effectById, effectiveEffectFontSize } from "@/domain/effects";
 import { DEFAULT_TRANSFORM } from "@/domain/transforms";
-import { videoFocus, videoMask, videoPresentationAt, videoTransition } from "@/domain/videoPresentation";
+import { momentumExitTransition, videoFocus, videoMask, videoPresentationAt, videoTransition, visualTransition, type VisualTransitionClip } from "@/domain/videoPresentation";
 import { displaySubtitleText, subtitleStyle } from "@/domain/videoDecorations";
 import { resolveEffectAppearance } from "@/domain/motionTheme";
 
@@ -51,7 +51,9 @@ function focusOverlay(
   focus: ReturnType<typeof videoFocus>,
   startOffsetUs: number,
   durationUs: number,
-  zIndex: number
+  zIndex: number,
+  transition?: VideoTransition,
+  exitTransition?: VideoTransition
 ): RenderFocusOverlay {
   const presentation = videoPresentationAt(clip, startOffsetUs);
   return {
@@ -68,12 +70,17 @@ function focusOverlay(
     transformKeyframes: transformKeyframesForRange(clip, startOffsetUs, startOffsetUs + durationUs),
     mask: { ...presentation.mask, borderWidth: 0, focusX: 50, focusY: 50 },
     focus: { ...focus, startOffsetUs: 0 },
+    transition,
+    exitTransition,
     recipe: frameRecipe
   };
 }
 
-function dynamicVideoOverlays(clip: VideoClip, path: string): RenderOverlay[] {
-  if (!clip.presentationCues?.length) {
+function dynamicVideoOverlays(clip: VideoClip, path: string, exitTransition?: VideoTransition): RenderOverlay[] {
+  const transition = videoTransition(clip);
+  const momentumEntering = transition.preset === "momentum-zoom";
+  const momentumExiting = exitTransition?.preset === "momentum-zoom";
+  if (!clip.presentationCues?.length && !momentumEntering && !momentumExiting) {
     const transform = clip.transform ?? DEFAULT_TRANSFORM;
     const focus = videoFocus(clip);
     const videoOverlay = { kind: "video" as const, startUs: clip.startUs, durationUs: clip.durationUs, path, sourceInUs: clip.sourceInUs, playbackRate: clip.playbackRate, fit: clip.fit, loop: false, camera: clip.camera, cameraOffsetUs: clip.cameraOffsetUs ?? 0, cameraDurationUs: clip.cameraDurationUs ?? clip.durationUs, x: transform.x, y: transform.y, opacity: transform.opacity, scale: transform.scale, rotation: transform.rotation, speed: 1, zIndex: clip.zIndex ?? 0, transformKeyframes: clip.transformKeyframes, mask: videoMask(clip), transition: videoTransition(clip), focus, recipe: frameRecipe };
@@ -82,8 +89,15 @@ function dynamicVideoOverlays(clip: VideoClip, path: string): RenderOverlay[] {
     return [videoOverlay, focusOverlay(clip, focus, focus.startOffsetUs, durationUs, (clip.zIndex ?? 0) + 1)];
   }
   const points = new Set<number>([0, clip.durationUs]);
+  if (momentumEntering) points.add(Math.min(clip.durationUs, transition.durationUs));
+  if (momentumExiting) points.add(Math.max(0, clip.durationUs - exitTransition.durationUs));
   for (const frame of clip.transformKeyframes ?? []) points.add(Math.max(0, Math.min(clip.durationUs, frame.offsetUs)));
-  for (const cue of clip.presentationCues) {
+  const baseFocus = videoFocus(clip);
+  if (baseFocus.enabled) {
+    points.add(Math.max(0, Math.min(clip.durationUs, baseFocus.startOffsetUs)));
+    points.add(Math.max(0, Math.min(clip.durationUs, baseFocus.startOffsetUs + baseFocus.durationUs)));
+  }
+  for (const cue of clip.presentationCues ?? []) {
     points.add(Math.max(0, Math.min(clip.durationUs, cue.offsetUs)));
     points.add(Math.max(0, Math.min(clip.durationUs, cue.offsetUs + cue.transitionDurationUs)));
     if (cue.focus.enabled) {
@@ -128,12 +142,57 @@ function dynamicVideoOverlays(clip: VideoClip, path: string): RenderOverlay[] {
       zIndex: clip.zIndex ?? 0,
       transformKeyframes,
       mask: start.mask,
-      transition: { ...videoTransition(clip), preset: "none" as const },
+      transition: startOffsetUs === 0 && (momentumEntering || !clip.presentationCues?.length)
+        ? { ...transition, durationUs: Math.min(transition.durationUs, durationUs) }
+        : { ...transition, preset: "none" as const },
+      exitTransition: momentumExiting && endOffsetUs === clip.durationUs
+        ? { ...exitTransition, durationUs: Math.min(exitTransition.durationUs, durationUs) }
+        : undefined,
       focus,
       recipe: frameRecipe
     };
     if (!focus.enabled) return [videoOverlay];
-    return [videoOverlay, focusOverlay(clip, focus, startOffsetUs + focus.startOffsetUs, focus.durationUs, (clip.zIndex ?? 0) + 1)];
+    return [videoOverlay, focusOverlay(clip, focus, startOffsetUs + focus.startOffsetUs, focus.durationUs, (clip.zIndex ?? 0) + 1, videoOverlay.transition, videoOverlay.exitTransition)];
+  });
+}
+
+function dynamicImageOverlays(clip: ImageClip, imagePath: string, targetWidthPx: number, exitTransition?: VideoTransition): RenderOverlay[] {
+  const transition = visualTransition(clip);
+  const momentumEntering = transition.preset === "momentum-zoom";
+  const momentumExiting = exitTransition?.preset === "momentum-zoom";
+  const points = new Set<number>([0, clip.durationUs]);
+  if (momentumEntering) points.add(Math.min(clip.durationUs, transition.durationUs));
+  if (momentumExiting) points.add(Math.max(0, clip.durationUs - exitTransition.durationUs));
+  const ranges = [...points].sort((left, right) => left - right);
+  return ranges.slice(0, -1).flatMap((startOffsetUs, index): RenderOverlay[] => {
+    const endOffsetUs = ranges[index + 1];
+    const durationUs = endOffsetUs - startOffsetUs;
+    if (durationUs <= 0) return [];
+    const incomingTransition = startOffsetUs === 0
+      ? { ...transition, durationUs: Math.min(transition.durationUs, durationUs) }
+      : { ...transition, preset: "none" as const };
+    return [{
+      kind: "image" as const,
+      startUs: clip.startUs + startOffsetUs,
+      durationUs,
+      imagePath,
+      targetWidthPx,
+      x: clip.transform.x,
+      y: clip.transform.y,
+      opacity: clip.transform.opacity,
+      scale: clip.transform.scale,
+      rotation: clip.transform.rotation,
+      speed: clip.speed,
+      zIndex: 150,
+      transition: incomingTransition,
+      exitTransition: momentumExiting && endOffsetUs === clip.durationUs
+        ? { ...exitTransition, durationUs: Math.min(exitTransition.durationUs, durationUs) }
+        : undefined,
+      recipe: {
+        ...frameRecipe,
+        entrance: startOffsetUs === 0 && transition.preset === "none" ? clip.entrance : "none"
+      }
+    }];
   });
 }
 
@@ -157,6 +216,8 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
   } : undefined;
   const videoTracks = project.tracks.filter((track) => track.kind === "video" && !track.hidden);
   const videoClips = videoTracks.flatMap((track) => track.clips).filter((clip): clip is VideoClip => clip.kind === "video");
+  const imageClips = project.tracks.filter((track) => track.kind === "image" && !track.hidden).flatMap((track) => track.clips).filter((clip): clip is ImageClip => clip.kind === "image");
+  const visualClips: VisualTransitionClip[] = [...videoClips, ...imageClips];
   const generated = project.tracks.filter((track) => !track.hidden).flatMap((track) => track.clips).filter((clip): clip is GeneratedBlock => clip.kind === "generated");
   const endUs = contentEndUs(project);
   const cuts = new Set<number>([0, endUs]);
@@ -181,7 +242,7 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
     if (clip.kind === "video") {
       const asset = project.assets.find((candidate) => candidate.id === clip.assetId);
       if (!asset?.sourcePath) throw new Error(`视频图层“${clip.label}”缺少本地源路径，无法导出`);
-      return dynamicVideoOverlays(clip, asset.sourcePath);
+      return dynamicVideoOverlays(clip, asset.sourcePath, momentumExitTransition(clip, visualClips));
     }
     if (clip.kind === "scene") {
       const recipe = scaleRecipe({ ...effectById(clip.effectId).recipe, sceneBackground: clip.background });
@@ -240,7 +301,7 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
       const image = clip as ImageClip;
       const asset = project.assets.find((candidate) => candidate.id === image.assetId);
       if (!asset?.sourcePath) throw new Error(`贴图“${image.label}”缺少本地源路径，无法导出`);
-      return [{ kind: "image" as const, startUs: image.startUs, durationUs: image.durationUs, imagePath: asset.sourcePath, targetWidthPx: Math.max(8, Math.round(width * 0.3 * image.transform.scale)), x: image.transform.x, y: image.transform.y, opacity: image.transform.opacity, scale: image.transform.scale, rotation: image.transform.rotation, speed: image.speed, zIndex: 150, recipe: { layout: "frame" as const, entrance: image.entrance, paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 } }];
+      return dynamicImageOverlays(image, asset.sourcePath, Math.max(8, Math.round(width * 0.3 * image.transform.scale)), momentumExitTransition(image, visualClips));
     }
     return [];
   });

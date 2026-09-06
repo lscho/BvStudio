@@ -1,12 +1,13 @@
 import { CircleUserRound, Clock3, Columns2, DiamondPlus, Expand, Focus, PictureInPicture2, ScanSearch, Search, SlidersHorizontal, SunMedium, Trash2, ZoomIn } from "lucide-react";
+import { useState } from "react";
 import { Select } from "@/components/Select";
 import { EASING_LABELS, EASING_NAMES } from "@/domain/easing";
 import { effectById, type ChartSpec, type EffectParamValue } from "@/domain/effects";
 import { effectBackdropUsesTheme, effectColorRolePatch, MOTION_COLOR_ROLE_OPTIONS, resolveEffectAppearance, resolveEffectBackdropColor } from "@/domain/motionTheme";
-import type { AudioClip, EffectClip, GeneratedBlock, ImageClip, MotionColorRole, MotionTheme, SceneClip, SubtitleClip, TransformProps, VideoClip, VisualTransformKeyframe } from "@/domain/project";
+import type { AudioClip, EffectClip, GeneratedBlock, ImageClip, MotionColorRole, MotionTheme, SceneClip, SubtitleClip, TransformProps, VideoClip, VideoTransition, VideoTransitionPreset, VisualTransformKeyframe } from "@/domain/project";
 import { selectedClip, useEditorStore } from "@/stores/editorStore";
 import { upsertVisualKeyframe, visualTransformAt } from "@/domain/transforms";
-import { activeVideoPresentationCue, DEFAULT_EFFECT_BACKDROP, VIDEO_MOTION_PRESETS, videoMotionPresetUsesFocusPoint, videoPresentationAt, type VideoMotionPresetId } from "@/domain/videoPresentation";
+import { activeVideoPresentationCue, DEFAULT_EFFECT_BACKDROP, selectedVisualTransitionCuts, VIDEO_MOTION_PRESETS, VIDEO_TRANSITION_OPTIONS, videoMotionPresetUsesFocusPoint, videoPresentationAt, videoTransition, visualTransition, type VideoMotionPresetId, type VisualTransitionClip } from "@/domain/videoPresentation";
 import { subtitleStyle } from "@/domain/videoDecorations";
 import { effectControlsFor } from "@/effects/registry";
 
@@ -47,6 +48,7 @@ const VIDEO_MOTION_ICONS = {
 export function InspectorPanel() {
   const project = useEditorStore((state) => state.project);
   const selectedClipId = useEditorStore((state) => state.selectedClipId);
+  const selectedClipIds = useEditorStore((state) => state.selectedClipIds);
   const updateEffect = useEditorStore((state) => state.updateEffect);
   const updateScene = useEditorStore((state) => state.updateScene);
   const updateImage = useEditorStore((state) => state.updateImage);
@@ -54,6 +56,8 @@ export function InspectorPanel() {
   const updateGenerated = useEditorStore((state) => state.updateGenerated);
   const updateSubtitle = useEditorStore((state) => state.updateSubtitle);
   const clip = selectedClip(project, selectedClipId);
+  const selectedMaterials = project.tracks.flatMap((track) => track.clips).filter((candidate): candidate is VisualTransitionClip => (candidate.kind === "video" || candidate.kind === "image") && selectedClipIds.includes(candidate.id));
+  const showTransitionBatch = (clip?.kind === "video" || clip?.kind === "image") && selectedMaterials.length > 1;
 
   function patchEffect(patch: Partial<EffectClip>) {
     if (clip?.kind === "effect") updateEffect(clip.id, patch);
@@ -81,12 +85,69 @@ export function InspectorPanel() {
       {clip?.kind === "scene" && <SceneInspector clip={clip} onPatch={patchScene} />}
       {clip?.kind === "effect" && <EffectInspectorAtPlayhead clip={clip} onPatch={patchEffect} />}
       {clip?.kind === "generated" && <GeneratedInspector clip={clip} onPatch={patchGenerated} />}
-      {clip?.kind === "video" && <VideoInspectorAtPlayhead clip={clip} />}
-      {clip?.kind === "image" && <div className="inspector-content"><div className="selection-heading"><span className="type-dot image" /><div><strong>{clip.label}</strong><small>图片贴图</small></div></div><div className="two-column"><NumberField label="开始时间" value={clip.startUs / 1_000_000} min={0} step={0.05} suffix="s" onChange={(value) => patchImage({ startUs: Math.round(value * 1_000_000) })} /><NumberField label="持续时间" value={clip.durationUs / 1_000_000} min={0.1} step={0.05} suffix="s" onChange={(value) => patchImage({ durationUs: Math.round(value * 1_000_000) })} /></div><label><span>入场动效</span><Select label="入场动效" value={clip.entrance} onChange={(value) => patchImage({ entrance: value as ImageClip["entrance"] })} options={ENTRANCE_OPTIONS} /></label><RangeField label="动效速度" value={clip.speed} min={0.25} max={3} step={0.05} suffix="×" onChange={(speed) => patchImage({ speed })} /><RangeField label="水平位置" value={clip.transform.x} min={0} max={100} suffix="%" onChange={(x) => patchImage({ transform: { ...clip.transform, x } })} /><RangeField label="垂直位置" value={clip.transform.y} min={0} max={100} suffix="%" onChange={(y) => patchImage({ transform: { ...clip.transform, y } })} /><RangeField label="大小" value={clip.transform.scale} min={0.1} max={3} step={0.05} suffix="×" onChange={(scale) => patchImage({ transform: { ...clip.transform, scale } })} /><RangeField label="旋转" value={clip.transform.rotation} min={-180} max={180} step={1} suffix="°" onChange={(rotation) => patchImage({ transform: { ...clip.transform, rotation } })} /><RangeField label="透明度" value={clip.transform.opacity} min={0} max={1} step={0.05} suffix="" onChange={(opacity) => patchImage({ transform: { ...clip.transform, opacity } })} /></div>}
+      {showTransitionBatch && <VisualTransitionBatchInspector key={selectedClipIds.join(":")} selectedCount={selectedMaterials.length} />}
+      {!showTransitionBatch && clip?.kind === "video" && <VideoInspectorAtPlayhead clip={clip} />}
+      {!showTransitionBatch && clip?.kind === "image" && <ImageInspector clip={clip} onPatch={patchImage} />}
       {clip?.kind === "audio" && <div className="inspector-content"><div className="selection-heading"><span className="type-dot audio" /><div><strong>{clip.label}</strong><small>音频片段</small></div></div><div className="two-column"><NumberField label="开始时间" value={clip.startUs / 1_000_000} min={0} step={0.05} suffix="s" onChange={(value) => patchAudio({ startUs: Math.round(value * 1_000_000) })} /><NumberField label="片段时长" value={clip.durationUs / 1_000_000} min={0.1} step={0.05} suffix="s" onChange={(value) => patchAudio({ durationUs: Math.round(value * 1_000_000) })} /></div><NumberField label="源入点" value={clip.sourceInUs / 1_000_000} min={0} step={0.05} suffix="s" onChange={(value) => patchAudio({ sourceInUs: Math.round(value * 1_000_000) })} /><RangeField label="播放速度" value={clip.playbackRate} min={0.25} max={4} step={0.05} suffix="×" onChange={(playbackRate) => patchAudio({ playbackRate })} /><RangeField label="音量" value={clip.volume} min={0} max={2} step={0.05} suffix="×" onChange={(volume) => patchAudio({ volume })} /><div className="two-column"><NumberField label="淡入" value={clip.fadeInUs / 1_000_000} min={0} max={clip.durationUs / 1_000_000} step={0.1} suffix="s" onChange={(value) => patchAudio({ fadeInUs: Math.round(value * 1_000_000) })} /><NumberField label="淡出" value={clip.fadeOutUs / 1_000_000} min={0} max={clip.durationUs / 1_000_000} step={0.1} suffix="s" onChange={(value) => patchAudio({ fadeOutUs: Math.round(value * 1_000_000) })} /></div><label><span>混音角色</span><Select label="混音角色" value={clip.role} onChange={(value) => patchAudio({ role: value as AudioClip["role"] })} options={AUDIO_ROLE_OPTIONS} /></label></div>}
       {clip?.kind === "subtitle" && <SubtitleInspector clip={clip} onPatch={patchSubtitle} />}
     </aside>
   );
+}
+
+function VisualTransitionBatchInspector({ selectedCount }: { selectedCount: number }) {
+  const project = useEditorStore((state) => state.project);
+  const selectedClipIds = useEditorStore((state) => state.selectedClipIds);
+  const applyTransition = useEditorStore((state) => state.applyTransitionToSelectedMaterials);
+  const requestPreview = useEditorStore((state) => state.requestPreview);
+  const [preset, setPreset] = useState<VideoTransitionPreset>("momentum-zoom");
+  const [durationUs, setDurationUs] = useState(500_000);
+  const cuts = selectedVisualTransitionCuts(project, selectedClipIds);
+  const maximumDurationUs = cuts.length
+    ? Math.min(...cuts.map(({ outgoing, incoming }) => Math.min(outgoing.durationUs, incoming.durationUs)))
+    : 500_000;
+  const apply = () => {
+    applyTransition({ preset, durationUs, easing: "ease-in-out" });
+    const firstCut = cuts[0]?.incoming.startUs;
+    if (firstCut !== undefined) requestPreview(Math.max(0, firstCut - durationUs), firstCut + durationUs);
+  };
+  return <div className="inspector-content">
+    <div className="selection-heading"><span className="type-dot video" /><div><strong>{selectedCount} 个视觉素材</strong><small>{cuts.length} 个相邻切点</small></div></div>
+    <section className="video-transition-batch">
+      <label><span>批量转场</span><Select label="批量转场" value={preset} onChange={(value) => setPreset(value as VideoTransitionPreset)} options={VIDEO_TRANSITION_OPTIONS} /></label>
+      {preset !== "none" && <NumberField label="转场时长" value={durationUs / 1_000_000} min={0.1} max={maximumDurationUs / 1_000_000} step={0.05} suffix="s" onChange={(value) => setDurationUs(Math.round(value * 1_000_000))} />}
+      <button className="button primary" type="button" disabled={!cuts.length} onClick={apply}>{preset === "none" ? "清除选中切点转场" : `应用到 ${cuts.length} 个切点`}</button>
+      {!cuts.length && <p className="video-transition-empty">选中的视频或贴图之间没有可用的相邻切点</p>}
+    </section>
+  </div>;
+}
+
+function ImageInspector({ clip, onPatch }: { clip: ImageClip; onPatch: (patch: Partial<ImageClip>) => void }) {
+  const requestPreview = useEditorStore((state) => state.requestPreview);
+  const transition = visualTransition(clip);
+  const previewTransition = (durationUs: number) => requestPreview(
+    Math.max(0, clip.startUs - durationUs),
+    Math.min(clip.startUs + clip.durationUs, clip.startUs + durationUs)
+  );
+  return <div className="inspector-content">
+    <div className="selection-heading"><span className="type-dot image" /><div><strong>{clip.label}</strong><small>图片贴图</small></div></div>
+    <div className="two-column"><NumberField label="开始时间" value={clip.startUs / 1_000_000} min={0} step={0.05} suffix="s" onChange={(value) => onPatch({ startUs: Math.round(value * 1_000_000) })} /><NumberField label="持续时间" value={clip.durationUs / 1_000_000} min={0.1} step={0.05} suffix="s" onChange={(value) => onPatch({ durationUs: Math.round(value * 1_000_000) })} /></div>
+    <label title="动势缩放会在相邻视觉素材切点两侧保持连续缩放速度"><span>片段转场</span><Select label="片段转场" value={transition.preset} onChange={(value) => {
+      onPatch({ transition: { ...transition, preset: value as VideoTransitionPreset } });
+      previewTransition(transition.durationUs);
+    }} options={VIDEO_TRANSITION_OPTIONS} /></label>
+    {transition.preset !== "none" && <div className="two-column"><NumberField label="转场时长" value={transition.durationUs / 1_000_000} min={0.1} max={clip.durationUs / 1_000_000} step={0.05} suffix="s" onChange={(value) => {
+      const durationUs = Math.round(value * 1_000_000);
+      onPatch({ transition: { ...transition, durationUs } });
+      previewTransition(durationUs);
+    }} />{transition.preset !== "momentum-zoom" && <label><span>转场曲线</span><Select label="转场曲线" value={transition.easing} onChange={(value) => onPatch({ transition: { ...transition, easing: value as VideoTransition["easing"] } })} options={EASING_OPTIONS} /></label>}</div>}
+    <label><span>入场动效</span><Select label="入场动效" value={clip.entrance} onChange={(value) => onPatch({ entrance: value as ImageClip["entrance"] })} options={ENTRANCE_OPTIONS} /></label>
+    <RangeField label="动效速度" value={clip.speed} min={0.25} max={3} step={0.05} suffix="×" onChange={(speed) => onPatch({ speed })} />
+    <RangeField label="水平位置" value={clip.transform.x} min={0} max={100} suffix="%" onChange={(x) => onPatch({ transform: { ...clip.transform, x } })} />
+    <RangeField label="垂直位置" value={clip.transform.y} min={0} max={100} suffix="%" onChange={(y) => onPatch({ transform: { ...clip.transform, y } })} />
+    <RangeField label="大小" value={clip.transform.scale} min={0.1} max={3} step={0.05} suffix="×" onChange={(scale) => onPatch({ transform: { ...clip.transform, scale } })} />
+    <RangeField label="旋转" value={clip.transform.rotation} min={-180} max={180} step={1} suffix="°" onChange={(rotation) => onPatch({ transform: { ...clip.transform, rotation } })} />
+    <RangeField label="透明度" value={clip.transform.opacity} min={0} max={1} step={0.05} suffix="" onChange={(opacity) => onPatch({ transform: { ...clip.transform, opacity } })} />
+  </div>;
 }
 
 function SubtitleInspector({ clip, onPatch }: { clip: SubtitleClip; onPatch: (patch: Partial<SubtitleClip>) => void }) {
@@ -234,16 +295,22 @@ function ChartFields({ spec, onChange }: { spec: ChartSpec; onChange: (next: Cha
 function VideoInspector({ clip, playheadUs, onSeek }: { clip: VideoClip; playheadUs: number; onSeek: (timeUs: number) => void }) {
   const setFocusPickClip = useEditorStore((state) => state.setFocusPickClip);
   const requestPreview = useEditorStore((state) => state.requestPreview);
+  const updateVideo = useEditorStore((state) => state.updateVideo);
   const addVideoPresentationCue = useEditorStore((state) => state.addVideoPresentationCue);
   const updateVideoPresentationCue = useEditorStore((state) => state.updateVideoPresentationCue);
   const removeVideoPresentationCue = useEditorStore((state) => state.removeVideoPresentationCue);
   const localUs = Math.max(0, Math.min(clip.durationUs - 1, playheadUs - clip.startUs));
   const presentation = videoPresentationAt(clip, localUs);
+  const clipTransition = videoTransition(clip);
   const activeCue = activeVideoPresentationCue(clip, localUs);
   const transitionEnabled = Boolean(activeCue && activeCue.transitionDurationUs > 0);
   const defaultTransitionDurationUs = activeCue
     ? Math.min(650_000, Math.max(100_000, clip.durationUs - activeCue.offsetUs))
     : 650_000;
+  const previewTransition = (durationUs: number) => requestPreview(
+    Math.max(0, clip.startUs - durationUs),
+    Math.min(clip.startUs + clip.durationUs, clip.startUs + durationUs)
+  );
   const applyPreset = (presetId: VideoMotionPresetId) => {
     addVideoPresentationCue(clip.id, presetId, localUs);
     setFocusPickClip(videoMotionPresetUsesFocusPoint(presetId) ? clip.id : null);
@@ -252,6 +319,15 @@ function VideoInspector({ clip, playheadUs, onSeek }: { clip: VideoClip; playhea
   return <div className="inspector-content">
     <div className="selection-heading"><span className="type-dot video" /><div><strong>{clip.label}</strong><small>选择一个运镜方案即可直接应用</small></div></div>
     <p className="video-cue-position"><Clock3 size={13} />将在当前时间 {formatCueTime(localUs)} 添加运镜节点</p>
+    <label title="动势缩放会在相邻片段切点两侧保持连续缩放速度"><span>片段转场</span><Select label="片段转场" value={clipTransition.preset} onChange={(value) => {
+      updateVideo(clip.id, { transition: { ...clipTransition, preset: value as VideoTransitionPreset } });
+      previewTransition(clipTransition.durationUs);
+    }} options={VIDEO_TRANSITION_OPTIONS} /></label>
+    {clipTransition.preset !== "none" && <div className="two-column"><NumberField label="转场时长" value={clipTransition.durationUs / 1_000_000} min={0.1} max={clip.durationUs / 1_000_000} step={0.05} suffix="s" onChange={(value) => {
+      const durationUs = Math.round(value * 1_000_000);
+      updateVideo(clip.id, { transition: { ...clipTransition, durationUs } });
+      previewTransition(durationUs);
+    }} />{clipTransition.preset !== "momentum-zoom" && <label><span>转场曲线</span><Select label="转场曲线" value={clipTransition.easing} onChange={(value) => updateVideo(clip.id, { transition: { ...clipTransition, easing: value as VideoTransition["easing"] } })} options={EASING_OPTIONS} /></label>}</div>}
     <div className="video-motion-presets">
       {VIDEO_MOTION_PRESETS.map((preset) => {
         const Icon = VIDEO_MOTION_ICONS[preset.id];

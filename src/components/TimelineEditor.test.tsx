@@ -85,4 +85,34 @@ describe("Timeline interactions", () => {
 
     expect(useEditorStore.getState().playheadUs).toBe(20_000_000);
   });
+
+  it("snaps a moved clip to a nearby material edge before frame rounding", () => {
+    const state = useEditorStore.getState();
+    const project = createEmptyProject();
+    const track = project.tracks.find((candidate) => candidate.kind === "video")!;
+    const base = { trackId: track.id, kind: "video" as const, locked: false, assetId: "video", sourceInUs: 0, playbackRate: 1, volume: 0, fit: "cover" as const, camera: { preset: "none" as const, startScale: 1, endScale: 1, startX: 0, endX: 0, startY: 0, endY: 0, easing: "linear" as const } };
+    track.clips.push(
+      { ...base, id: "first", label: "前段", startUs: 0, durationUs: 2_000_000 },
+      { ...base, id: "second", label: "后段", startUs: 4_000_000, durationUs: 2_000_000 }
+    );
+    useEditorStore.setState({ ...state, project, selectedClipId: null, selectedClipIds: [], playheadUs: 8_000_000 });
+    const { container } = render(<Timeline />);
+    const second = screen.getByRole("button", { name: "后段" });
+    Object.defineProperty(second, "setPointerCapture", { configurable: true, value: () => undefined });
+
+    fireEvent.pointerDown(second, { pointerId: 7, clientX: 200 });
+    fireEvent.pointerMove(second, { pointerId: 7, clientX: 155.6 });
+
+    expect(container.querySelector(".timeline-snap-guide")).toHaveStyle({ left: "48px" });
+    fireEvent.pointerUp(second, { pointerId: 7, clientX: 155.6 });
+    expect(useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "second")?.startUs).toBe(2_000_000);
+
+    const magnet = screen.getByRole("button", { name: "切换吸附" });
+    expect(magnet).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(magnet);
+    fireEvent.pointerDown(second, { pointerId: 8, clientX: 200 });
+    fireEvent.pointerMove(second, { pointerId: 8, clientX: 203.6 });
+    fireEvent.pointerUp(second, { pointerId: 8, clientX: 203.6 });
+    expect(useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "second")?.startUs).toBe(2_150_000);
+  });
 });

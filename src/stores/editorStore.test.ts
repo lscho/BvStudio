@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createEmptyProject, type AudioClip, type EffectClip, type ImageClip, type VideoClip } from "@/domain/project";
 import { effectById } from "@/domain/effects";
+import { cameraMotionForPreset } from "@/domain/camera";
 import { estimateMotionLayoutRect, motionLayoutRectsOverlap, type MotionLayoutLayer } from "@/domain/motionLayout";
 import type { AiVideoPlan } from "@/services/ai/schema";
 import { useEditorStore } from "@/stores/editorStore";
@@ -41,7 +42,51 @@ beforeEach(() => {
 });
 
 describe("editorStore", () => {
-  it("places any number of overlapping videos on independent ordinary tracks", () => {
+  it("applies one transition to selected adjacent videos and images with one undo step", () => {
+    const project = createEmptyProject();
+    const videoTrack = project.tracks.find((candidate) => candidate.kind === "video")!;
+    const imageTrack = project.tracks.find((candidate) => candidate.kind === "image")!;
+    const baseVideo = { trackId: videoTrack.id, kind: "video" as const, locked: false, assetId: "asset", sourceInUs: 0, playbackRate: 1, volume: 1, fit: "cover" as const, camera: cameraMotionForPreset("none") };
+    videoTrack.clips.push(
+      { ...baseVideo, id: "first", label: "第一段", startUs: 0, durationUs: 1_000_000 },
+      { ...baseVideo, id: "third", label: "第三段", startUs: 2_000_000, durationUs: 1_000_000 }
+    );
+    imageTrack.clips.push({ id: "second", trackId: imageTrack.id, kind: "image", label: "贴图", startUs: 1_000_000, durationUs: 1_000_000, locked: false, assetId: "image", transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, entrance: "pop", speed: 1 });
+    useEditorStore.setState({ ...useEditorStore.getState(), project, selectedClipId: "third", selectedClipIds: ["first", "second", "third"], past: [], future: [] });
+
+    useEditorStore.getState().applyTransitionToSelectedMaterials({ preset: "momentum-zoom", durationUs: 400_000, easing: "ease-in-out" });
+
+    const clips = useEditorStore.getState().project.tracks.flatMap((track) => track.clips);
+    const first = clips.find((clip) => clip.id === "first");
+    const second = clips.find((clip) => clip.id === "second");
+    const third = clips.find((clip) => clip.id === "third");
+    expect(first?.kind === "video" ? first.transition : undefined).toBeUndefined();
+    expect(second?.kind === "image" ? second.transition : undefined).toEqual({ preset: "momentum-zoom", durationUs: 400_000, easing: "ease-in-out", fromClipId: "first" });
+    expect(third?.kind === "video" ? third.transition : undefined).toEqual({ preset: "momentum-zoom", durationUs: 400_000, easing: "ease-in-out", fromClipId: "second" });
+    expect(useEditorStore.getState().past).toHaveLength(1);
+
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips).every((clip) => (clip.kind !== "video" && clip.kind !== "image") || clip.transition === undefined)).toBe(true);
+  });
+
+  it("skips gaps and locked video cuts when applying a transition to a selection", () => {
+    const project = createEmptyProject();
+    const track = project.tracks.find((candidate) => candidate.kind === "video")!;
+    const base = { trackId: track.id, kind: "video" as const, locked: false, assetId: "asset", sourceInUs: 0, playbackRate: 1, volume: 1, fit: "cover" as const, camera: cameraMotionForPreset("none") };
+    track.clips.push(
+      { ...base, id: "first", label: "第一段", startUs: 0, durationUs: 1_000_000 },
+      { ...base, id: "locked", label: "锁定段", startUs: 1_000_000, durationUs: 1_000_000, locked: true },
+      { ...base, id: "gapped", label: "间隔段", startUs: 2_500_000, durationUs: 1_000_000 }
+    );
+    useEditorStore.setState({ ...useEditorStore.getState(), project, selectedClipId: "gapped", selectedClipIds: ["first", "locked", "gapped"], past: [], future: [] });
+
+    useEditorStore.getState().applyTransitionToSelectedMaterials({ preset: "momentum-zoom", durationUs: 500_000, easing: "ease-in-out" });
+
+    expect((useEditorStore.getState().project.tracks.find((candidate) => candidate.id === track.id)!.clips as VideoClip[]).every((video) => video.transition === undefined)).toBe(true);
+    expect(useEditorStore.getState().past).toHaveLength(0);
+  });
+
+  it("appends sequentially imported videos on one track", () => {
     for (let index = 1; index <= 4; index += 1) {
       useEditorStore.getState().addVideo({ id: `video-${index}`, name: `video-${index}.mp4`, kind: "video", durationUs: 5_000_000 });
     }
@@ -49,11 +94,20 @@ describe("editorStore", () => {
     const project = useEditorStore.getState().project;
     const videos = project.tracks.flatMap((track) => track.clips).filter((clip): clip is VideoClip => clip.kind === "video");
     expect(videos).toHaveLength(4);
-    expect(new Set(videos.map((video) => video.trackId))).toHaveLength(4);
-    expect(videos.map((video) => video.zIndex)).toEqual([0, 10, 20, 30]);
-    expect(videos[0]).toMatchObject({ role: "a-roll", layoutPreset: "full", volume: 1 });
-    expect(videos.slice(1).every((video) => video.role === "b-roll" && video.volume === 0)).toBe(true);
+    expect(new Set(videos.map((video) => video.trackId))).toHaveLength(1);
+    expect(videos.map((video) => video.startUs)).toEqual([0, 5_000_000, 10_000_000, 15_000_000]);
+    expect(videos.every((video) => video.role === "a-roll" && video.layoutPreset === "full" && video.volume === 1)).toBe(true);
     expect(project.tracks.filter((track) => track.kind === "video").every((track) => track.name === "视频")).toBe(true);
+  });
+
+  it("keeps explicit overlapping video placement on a separate track", () => {
+    useEditorStore.getState().addVideo({ id: "video", name: "video.mp4", kind: "video", durationUs: 5_000_000 });
+    useEditorStore.getState().setPlayhead(0);
+    useEditorStore.getState().placeAsset("video", "overlay");
+
+    const videos = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).filter((clip): clip is VideoClip => clip.kind === "video");
+    expect(videos.map((video) => video.startUs)).toEqual([0, 0]);
+    expect(new Set(videos.map((video) => video.trackId))).toHaveLength(2);
   });
 
   it("preserves visual keyframe continuity when an insertion splits a video", () => {
@@ -830,7 +884,7 @@ describe("editorStore", () => {
     expect(first).toMatchObject({ kind: "image", entrance: "pop", transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 } });
     useEditorStore.getState().updateImage(first.id, { speed: 1.6, transform: { ...first.transform, x: 72, rotation: 15 } });
     useEditorStore.getState().setPlayhead(8_000_000);
-    useEditorStore.getState().placeAsset("image-asset");
+    useEditorStore.getState().placeAsset("image-asset", "overlay");
     const images = useEditorStore.getState().project.tracks.find((track) => track.kind === "image")!.clips as ImageClip[];
     expect(images).toHaveLength(2);
     expect(images[0]).toMatchObject({ speed: 1.6, transform: { x: 72, rotation: 15 } });

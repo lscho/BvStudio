@@ -6,7 +6,8 @@ export type TrackKind = "video" | "image" | "generated" | "scene" | "effect" | "
 export type InsertMode = "insert" | "replace" | "overlay";
 export type VideoRole = "a-roll" | "b-roll" | "presenter" | "screen" | "supporting" | "unspecified";
 export type VideoShape = "rectangle" | "rounded" | "circle" | "ellipse" | "square" | "portrait";
-export type VideoTransitionPreset = "none" | "fade" | "slide-left" | "slide-right" | "zoom" | "dock" | "circle-reveal";
+export const VIDEO_TRANSITION_PRESETS = ["none", "fade", "slide-left", "slide-right", "zoom", "dock", "circle-reveal", "momentum-zoom"] as const;
+export type VideoTransitionPreset = (typeof VIDEO_TRANSITION_PRESETS)[number];
 export type VideoMotionPresetId = "full-screen" | "zoom-to-full" | "presenter-circle-bottom-right" | "picture-in-picture-top-right" | "split-left" | "split-right" | "slow-push-in" | "screen-magnify" | "screen-spotlight" | "screen-focus";
 
 export interface VideoMask {
@@ -23,6 +24,7 @@ export interface VideoTransition {
   preset: VideoTransitionPreset;
   durationUs: number;
   easing: EasingName;
+  fromClipId?: string;
 }
 
 export interface VideoFocusEffect {
@@ -182,6 +184,7 @@ export interface ImageClip extends BaseClip {
   transform: TransformProps;
   entrance: EffectEntrance;
   speed: number;
+  transition?: VideoTransition;
 }
 
 export type AudioRole = "voice" | "music" | "sound";
@@ -353,7 +356,7 @@ export interface TimelineTrack {
 }
 
 export interface EditorProject {
-  schemaVersion: 22;
+  schemaVersion: 24;
   id: string;
   name: string;
   createdAt: string;
@@ -370,7 +373,7 @@ export interface EditorProject {
 export function createEmptyProject(): EditorProject {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 22,
+    schemaVersion: 24,
     id: crypto.randomUUID(),
     name: "未命名项目",
     createdAt: now,

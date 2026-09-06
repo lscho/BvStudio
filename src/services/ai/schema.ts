@@ -3,6 +3,7 @@ import { BUILTIN_EFFECTS } from "@/domain/effects";
 import { CAMERA_PRESETS } from "@/domain/camera";
 import { VIDEO_LAYOUT_PRESETS } from "@/domain/transforms";
 import { BUILTIN_SOUND_EFFECT_IDS } from "@/domain/soundEffects";
+import { VIDEO_TRANSITION_PRESETS } from "@/domain/project";
 
 const effectIds = BUILTIN_EFFECTS.map((effect) => effect.id);
 const cameraPresetIds = CAMERA_PRESETS.map((preset) => preset.id);
@@ -11,7 +12,7 @@ const cameraPresetEnum = cameraPresetIds as [typeof cameraPresetIds[number], ...
 const videoLayoutPresetEnum = videoLayoutPresetIds as [typeof videoLayoutPresetIds[number], ...typeof videoLayoutPresetIds[number][]];
 const videoRoleSchema = z.enum(["a-roll", "b-roll", "presenter", "screen", "supporting", "unspecified"]);
 const videoShapeSchema = z.enum(["rectangle", "rounded", "circle", "ellipse", "square", "portrait"]);
-const videoTransitionSchema = z.enum(["none", "fade", "slide-left", "slide-right", "zoom", "dock", "circle-reveal"]);
+const videoTransitionSchema = z.enum(VIDEO_TRANSITION_PRESETS);
 const backdropPresetSchema = z.enum(["none", "dark", "soft", "light", "accent"]);
 const motionGroupIdSchema = z.string().trim().regex(/^[a-z0-9][a-z0-9-]{0,39}$/);
 

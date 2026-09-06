@@ -42,6 +42,40 @@ describe("PreviewCanvas effect manipulation", () => {
     expect(videoTargetPoint(300, 100, bounds)).toEqual({ x: 50, y: 25 });
     expect(videoTargetPoint(50, 400, bounds)).toEqual({ x: 0, y: 100 });
   });
+
+  it("previews an image momentum transition without also playing its pop entrance", () => {
+    const project = createEmptyProject();
+    project.assets.push({ id: "image", name: "badge.png", kind: "image", durationUs: 2_000_000, objectUrl: "data:image/png;base64,iVBORw0KGgo=" });
+    const track = project.tracks.find((candidate) => candidate.kind === "image")!;
+    track.clips.push({
+      id: "image-clip", trackId: track.id, kind: "image", label: "badge", startUs: 2_000_000, durationUs: 2_000_000,
+      locked: false, assetId: "image", transform: { x: 65, y: 35, scale: 0.8, rotation: 4, opacity: 0.9 }, entrance: "pop", speed: 1,
+      transition: { preset: "momentum-zoom", durationUs: 500_000, easing: "ease-in-out" }
+    });
+    useEditorStore.setState({ ...useEditorStore.getState(), project, playheadUs: 2_250_000 });
+
+    const { container } = render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
+    const image = container.querySelector<HTMLElement>(".image-overlay");
+    expect(image?.style.transform).toContain("scale(0.76)");
+    expect(image?.style.filter).toContain("blur(");
+  });
+
+  it("previews the same momentum scale on video clips", () => {
+    const project = createEmptyProject();
+    project.assets.push({ id: "video", name: "cut.mp4", kind: "video", durationUs: 2_000_000, objectUrl: "blob:cut-video" });
+    const track = project.tracks.find((candidate) => candidate.kind === "video")!;
+    track.clips.push({
+      id: "video-clip", trackId: track.id, kind: "video", label: "cut", startUs: 2_000_000, durationUs: 2_000_000,
+      locked: false, assetId: "video", sourceInUs: 0, playbackRate: 1, volume: 0, fit: "cover", camera: { preset: "none", startScale: 1, endScale: 1, startX: 0, endX: 0, startY: 0, endY: 0, easing: "linear" },
+      transition: { preset: "momentum-zoom", durationUs: 500_000, easing: "ease-in-out" }
+    });
+    useEditorStore.setState({ ...useEditorStore.getState(), project, playheadUs: 2_250_000 });
+
+    const { container } = render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
+    const video = container.querySelector<HTMLElement>(".video-layer");
+    expect(video?.style.transform).toContain("scale(0.95)");
+    expect(container.querySelector<HTMLElement>(".video-content video")?.style.filter).toContain("blur(");
+  });
 });
 
 describe("previewAudioGain", () => {

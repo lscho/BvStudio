@@ -5,6 +5,7 @@ import { localMediaUrl } from "@/services/media";
 import { useEditorStore } from "@/stores/editorStore";
 
 const PIXELS_PER_SECOND = 24;
+const SNAP_THRESHOLD_PX = 12;
 type DragMode = "move" | "start" | "end";
 
 interface DragState {
@@ -15,6 +16,7 @@ interface DragState {
   initialStartUs: number;
   initialDurationUs: number;
   deltaUs: number;
+  snapUs: number | null;
 }
 
 function clipEnd(clip: TimelineClip) {
@@ -116,14 +118,16 @@ export function Timeline() {
     zoomAround(Number((zoom * Math.exp(-delta * 0.0015)).toFixed(3)), event.clientX - rect.left);
   }
 
-  function snapTime(timeUs: number, excludedIds: string[]): number {
-    if (!snapping) return Math.max(0, timeUs);
+  function snapTime(timeUs: number, excludedIds: string[]): { timeUs: number; snapUs: number | null } {
+    if (!snapping) return { timeUs: Math.max(0, timeUs), snapUs: null };
     const frameUs = 1_000_000 * project.canvas.fpsDenominator / project.canvas.fpsNumerator;
     const frameSnapped = Math.round(timeUs / frameUs) * frameUs;
     const boundaries = [0, useEditorStore.getState().playheadUs, ...allClips.filter((clip) => !excludedIds.includes(clip.id)).flatMap((clip) => [clip.startUs, clipEnd(clip)])];
-    const thresholdUs = 9 / (PIXELS_PER_SECOND * zoom) * 1_000_000;
-    const closest = boundaries.reduce((best, candidate) => Math.abs(candidate - timeUs) < Math.abs(best - timeUs) ? candidate : best, frameSnapped);
-    return Math.max(0, Math.abs(closest - timeUs) <= thresholdUs ? closest : frameSnapped);
+    const thresholdUs = SNAP_THRESHOLD_PX / (PIXELS_PER_SECOND * zoom) * 1_000_000;
+    const closest = boundaries.reduce((best, candidate) => Math.abs(candidate - timeUs) < Math.abs(best - timeUs) ? candidate : best);
+    return Math.abs(closest - timeUs) <= thresholdUs
+      ? { timeUs: Math.max(0, closest), snapUs: Math.max(0, closest) }
+      : { timeUs: Math.max(0, frameSnapped), snapUs: null };
   }
 
   function seek(event: React.MouseEvent<HTMLDivElement>) {
@@ -182,7 +186,7 @@ export function Timeline() {
     const additive = event.metaKey || event.ctrlKey || event.shiftKey;
     if (!selectedClipIds.includes(clip.id) || additive) selectClip(clip.id, additive);
     event.currentTarget.setPointerCapture(event.pointerId);
-    const nextDrag = { clipId: clip.id, pointerId: event.pointerId, mode, originX: event.clientX, initialStartUs: clip.startUs, initialDurationUs: clip.durationUs, deltaUs: 0 };
+    const nextDrag = { clipId: clip.id, pointerId: event.pointerId, mode, originX: event.clientX, initialStartUs: clip.startUs, initialDurationUs: clip.durationUs, deltaUs: 0, snapUs: null };
     dragRef.current = nextDrag;
     setDrag(nextDrag);
   }
@@ -193,17 +197,36 @@ export function Timeline() {
     const rawDelta = (event.clientX - currentDrag.originX) / (PIXELS_PER_SECOND * zoom) * 1_000_000;
     const movingIds = selectedClipIds.includes(currentDrag.clipId) ? selectedClipIds : [currentDrag.clipId];
     let deltaUs = rawDelta;
+    let snapUs: number | null = null;
     if (currentDrag.mode === "move") {
       const clip = allClips.find((candidate) => candidate.id === currentDrag.clipId)!;
-      const startDelta = snapTime(currentDrag.initialStartUs + rawDelta, movingIds) - currentDrag.initialStartUs;
-      const endDelta = snapTime(currentDrag.initialStartUs + currentDrag.initialDurationUs + rawDelta, movingIds) - clipEnd(clip);
-      deltaUs = Math.abs(startDelta - rawDelta) <= Math.abs(endDelta - rawDelta) ? startDelta : endDelta;
+      const startSnap = snapTime(currentDrag.initialStartUs + rawDelta, movingIds);
+      const endSnap = snapTime(currentDrag.initialStartUs + currentDrag.initialDurationUs + rawDelta, movingIds);
+      const startDelta = startSnap.timeUs - currentDrag.initialStartUs;
+      const endDelta = endSnap.timeUs - clipEnd(clip);
+      const edgeSnaps = [
+        { deltaUs: startDelta, snapUs: startSnap.snapUs },
+        { deltaUs: endDelta, snapUs: endSnap.snapUs }
+      ].filter((candidate): candidate is { deltaUs: number; snapUs: number } => candidate.snapUs !== null);
+      const closestEdge = edgeSnaps.reduce<{ deltaUs: number; snapUs: number } | null>((best, candidate) => (
+        !best || Math.abs(candidate.deltaUs - rawDelta) < Math.abs(best.deltaUs - rawDelta) ? candidate : best
+      ), null);
+      if (closestEdge) {
+        deltaUs = closestEdge.deltaUs;
+        snapUs = closestEdge.snapUs;
+      } else {
+        deltaUs = Math.abs(startDelta - rawDelta) <= Math.abs(endDelta - rawDelta) ? startDelta : endDelta;
+      }
     } else if (currentDrag.mode === "start") {
-      deltaUs = Math.min(snapTime(currentDrag.initialStartUs + rawDelta, [currentDrag.clipId]) - currentDrag.initialStartUs, currentDrag.initialDurationUs - 100_000);
+      const result = snapTime(currentDrag.initialStartUs + rawDelta, [currentDrag.clipId]);
+      deltaUs = Math.min(result.timeUs - currentDrag.initialStartUs, currentDrag.initialDurationUs - 100_000);
+      snapUs = result.snapUs;
     } else {
-      deltaUs = Math.max(snapTime(currentDrag.initialStartUs + currentDrag.initialDurationUs + rawDelta, [currentDrag.clipId]) - currentDrag.initialStartUs - currentDrag.initialDurationUs, 100_000 - currentDrag.initialDurationUs);
+      const result = snapTime(currentDrag.initialStartUs + currentDrag.initialDurationUs + rawDelta, [currentDrag.clipId]);
+      deltaUs = Math.max(result.timeUs - currentDrag.initialStartUs - currentDrag.initialDurationUs, 100_000 - currentDrag.initialDurationUs);
+      snapUs = result.snapUs;
     }
-    const nextDrag = { ...currentDrag, deltaUs: Math.round(deltaUs) };
+    const nextDrag = { ...currentDrag, deltaUs: Math.round(deltaUs), snapUs };
     dragRef.current = nextDrag;
     setDrag(nextDrag);
   }
@@ -244,7 +267,7 @@ export function Timeline() {
 
   return (
     <section className="timeline-panel" onPointerMove={updateDrag} onPointerUp={finishDrag} onPointerCancel={cancelDrag}>
-      <header className="timeline-header"><strong>时间线</strong><TimelineTimecode /><button className="timeline-tool" type="button" aria-label="在播放头分割" title="分割片段" disabled={!selectedClipIds.length} onClick={splitSelected}><Scissors size={14} /></button><button className={`timeline-tool ${snapping ? "active" : ""}`} type="button" aria-label="切换吸附" title="吸附" onClick={() => setSnapping(!snapping)}><Magnet size={14} /></button><span className="timeline-divider" /><button className={`timeline-tool ${rangeStartUs !== null ? "active" : ""}`} type="button" aria-label="设置选区入点" title="设置入点 (I)" onClick={() => setRangeStart(useEditorStore.getState().playheadUs)}><BetweenHorizontalStart size={14} /></button><button className={`timeline-tool ${rangeEndUs !== null ? "active" : ""}`} type="button" aria-label="设置选区出点" title="设置出点 (O)" onClick={() => setRangeEnd(useEditorStore.getState().playheadUs)}><BetweenHorizontalEnd size={14} /></button><button className="timeline-tool" type="button" aria-label="清除时间选区" title="清除选区" disabled={rangeStartUs === null && rangeEndUs === null} onClick={clearRange}><X size={13} /></button>{range && <span className="range-summary">{formatTime(range.startUs)} – {formatTime(range.endUs)} · {((range.endUs - range.startUs) / 1_000_000).toFixed(2)}s</span>}<div className="zoom-control"><ZoomIn size={14} /><button type="button" aria-label="缩小时间线" onClick={() => zoomAround(zoom - 0.2, timelineScrollRef.current?.clientWidth ? timelineScrollRef.current.clientWidth / 2 : 0)}><Minus size={13} /></button><output>{Math.round(zoom * 100)}%</output><button type="button" aria-label="放大时间线" onClick={() => zoomAround(zoom + 0.2, timelineScrollRef.current?.clientWidth ? timelineScrollRef.current.clientWidth / 2 : 0)}>+</button></div></header>
+      <header className="timeline-header"><strong>时间线</strong><TimelineTimecode /><button className="timeline-tool" type="button" aria-label="在播放头分割" title="分割片段" disabled={!selectedClipIds.length} onClick={splitSelected}><Scissors size={14} /></button><button className={`timeline-tool ${snapping ? "active" : ""}`} type="button" aria-label="切换吸附" aria-pressed={snapping} title={snapping ? "吸附已开启" : "吸附已关闭"} onClick={() => setSnapping(!snapping)}><Magnet size={14} /></button><span className="timeline-divider" /><button className={`timeline-tool ${rangeStartUs !== null ? "active" : ""}`} type="button" aria-label="设置选区入点" title="设置入点 (I)" onClick={() => setRangeStart(useEditorStore.getState().playheadUs)}><BetweenHorizontalStart size={14} /></button><button className={`timeline-tool ${rangeEndUs !== null ? "active" : ""}`} type="button" aria-label="设置选区出点" title="设置出点 (O)" onClick={() => setRangeEnd(useEditorStore.getState().playheadUs)}><BetweenHorizontalEnd size={14} /></button><button className="timeline-tool" type="button" aria-label="清除时间选区" title="清除选区" disabled={rangeStartUs === null && rangeEndUs === null} onClick={clearRange}><X size={13} /></button>{range && <span className="range-summary">{formatTime(range.startUs)} – {formatTime(range.endUs)} · {((range.endUs - range.startUs) / 1_000_000).toFixed(2)}s</span>}<div className="zoom-control"><ZoomIn size={14} /><button type="button" aria-label="缩小时间线" onClick={() => zoomAround(zoom - 0.2, timelineScrollRef.current?.clientWidth ? timelineScrollRef.current.clientWidth / 2 : 0)}><Minus size={13} /></button><output>{Math.round(zoom * 100)}%</output><button type="button" aria-label="放大时间线" onClick={() => zoomAround(zoom + 0.2, timelineScrollRef.current?.clientWidth ? timelineScrollRef.current.clientWidth / 2 : 0)}>+</button></div></header>
       <div className="timeline-body">
         <div className="track-labels"><div className="ruler-spacer" />{project.tracks.map((track) => <TrackLabel key={track.id} track={track} onChange={(patch) => setTrackState(track.id, patch)} />)}</div>
         <div className="timeline-scroll" ref={timelineScrollRef} onWheel={zoomWithWheel}><div className="timeline-inner" ref={timelineInnerRef} style={{ width }} onClick={seek}>
@@ -256,6 +279,7 @@ export function Timeline() {
             return <button type="button" key={clip.id} className={`timeline-clip clip-${clip.kind} ${selectedClipIds.includes(clip.id) ? "selected" : ""} ${grouped ? "grouped" : ""} ${clip.locked ? "locked" : ""}`} style={{ left: (timing.startUs / 1_000_000) * PIXELS_PER_SECOND * zoom, width: Math.max(34, (timing.durationUs / 1_000_000) * PIXELS_PER_SECOND * zoom), ...(waveform ? { "--waveform": `url('${localMediaUrl(waveform).replaceAll("'", "%27")}')` } : {}) } as React.CSSProperties} onPointerDown={(event) => beginDrag(event, clip, dragModeForTarget(event.target))} onPointerMove={updateDrag} onPointerUp={finishDrag} onPointerCancel={cancelDrag} onClick={(event) => event.stopPropagation()} title={grouped ? `${clip.label} · 场景组` : clip.label}><i className="resize-handle start" />{clip.kind === "video" && clip.presentationCues?.map((cue) => <i key={cue.id} className="motion-cue-marker" style={{ left: `${cue.offsetUs / Math.max(1, clip.durationUs) * 100}%` }} title={`${(cue.offsetUs / 1_000_000).toFixed(2)}s · ${cue.presetId}`} />)}<span>{clip.label}</span>{clip.kind === "generated" && <small>{clip.scenes.length} 条字幕</small>}<i className="resize-handle end" /></button>;
           })}</div>)}
           {range && <span className="timeline-range" style={{ left: (range.startUs / 1_000_000) * PIXELS_PER_SECOND * zoom, width: ((range.endUs - range.startUs) / 1_000_000) * PIXELS_PER_SECOND * zoom }} />}
+          {drag?.snapUs != null && <span className="timeline-snap-guide" style={{ left: (drag.snapUs / 1_000_000) * PIXELS_PER_SECOND * zoom }} />}
           <TimelinePlayhead zoom={zoom} onMouseDown={beginPlayheadMouseDrag} onPointerDown={beginPlayheadDrag} onPointerMove={updatePlayheadDrag} onPointerUp={finishPlayheadDrag} onPointerCancel={cancelPlayheadDrag} />
         </div></div>
       </div>

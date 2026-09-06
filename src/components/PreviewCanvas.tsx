@@ -10,7 +10,7 @@ import { resolveEffectAppearance } from "@/domain/motionTheme";
 import { cameraStateAt, type CameraMotion } from "@/domain/camera";
 import { upsertVisualKeyframe, visualTransformAt } from "@/domain/transforms";
 import { createMediaPlaybackGate, mediaNeedsSeek, previewMediaTimeSeconds, syncMediaPlayback } from "@/domain/playback";
-import { activeVideoPresentationCue, focusEnvelope, transitionEnvelope, videoFocus, videoPresentationAt, videoTransition } from "@/domain/videoPresentation";
+import { activeVideoPresentationCue, focusEnvelope, momentumExitTransition, momentumTransitionVisualState, transitionEnvelope, videoFocus, videoPresentationAt, videoTransition, visualTransition } from "@/domain/videoPresentation";
 import { chapterProgressAt, displaySubtitleText, highlightedTextParts, subtitleStyle } from "@/domain/videoDecorations";
 import { localMediaUrl } from "@/services/media";
 import type { AiProviderConfig } from "@/services/ai/provider";
@@ -244,6 +244,7 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
     };
   }, [project]);
   const activeVideos = clipIndex.videos.filter((clip) => playheadUs >= clip.startUs && playheadUs < clip.startUs + clip.durationUs).sort((left, right) => (left.zIndex ?? 0) - (right.zIndex ?? 0));
+  const visualClips = [...clipIndex.videos, ...clipIndex.images];
   const generated = activeAt(clipIndex.generated, playheadUs);
   const activeScenes = clipIndex.scenes.filter((clip) => playheadUs >= clip.startUs && playheadUs < clip.startUs + clip.durationUs);
   const activeEffects = clipIndex.effects.filter((clip) => playheadUs >= clip.startUs && playheadUs < clip.startUs + clip.durationUs);
@@ -290,14 +291,15 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
   const canvasLength = (pixels: number, minimum = 0) => minimum > 0
     ? `clamp(${minimum}px, ${pixels / project.canvas.width * 100}cqw, ${pixels}px)`
     : `${pixels / project.canvas.width * 100}cqw`;
-  const animatedStyle = (recipe: EffectRecipe, transform: EffectClip["transform"], startUs: number, speed: number) => {
+  const animatedStyle = (recipe: EffectRecipe, transform: EffectClip["transform"], startUs: number, speed: number, transitionState: { scale?: number; translateX?: number; opacity?: number; blur?: number } = {}) => {
     const animation = effectAnimationState(recipe, Math.max(0, playheadUs - startUs), speed);
     const tilt = (animation.rotateX || animation.rotateY)
       ? ` ${animation.perspective >= 100 ? `perspective(${Math.min(4000, animation.perspective)}px)` : "perspective(1000px)"} rotateX(${animation.rotateX}deg) rotateY(${animation.rotateY}deg)`
       : "";
     return {
-      opacity: transform.opacity,
-      transform: `translate(-50%, -50%) translate(${animation.translateX}%, ${animation.translateY}%) scale(${transform.scale * animation.scale}) rotate(${transform.rotation + animation.rotation}deg)${tilt}`
+      opacity: transform.opacity * (transitionState.opacity ?? 1),
+      filter: transitionState.blur && transitionState.blur > 0.01 ? `blur(${transitionState.blur / 1920 * 100}cqw)` : undefined,
+      transform: `translate(-50%, -50%) translate(${animation.translateX}%, ${animation.translateY}%) translateX(${transitionState.translateX ?? 0}%) scale(${transform.scale * animation.scale * (transitionState.scale ?? 1)}) rotate(${transform.rotation + animation.rotation}deg)${tilt}`
     };
   };
   const pickFocus = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -334,7 +336,10 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
             const presentation = videoPresentationAt(video, localUs);
             const transform = presentation.transform;
             const mask = presentation.mask;
-            const transition = video.presentationCues?.length ? { ...videoTransition(video), preset: "none" as const } : videoTransition(video);
+            const baseTransition = videoTransition(video);
+            const transition = video.presentationCues?.length && baseTransition.preset !== "momentum-zoom" ? { ...baseTransition, preset: "none" as const } : baseTransition;
+            const exitTransition = momentumExitTransition(video, visualClips);
+            const momentum = momentumTransitionVisualState(video, localUs, exitTransition);
             const squareFrame = mask.shape === "circle" || mask.shape === "square";
             const transitionProgress = transitionEnvelope(video, localUs);
             const transitionX = transition.preset === "slide-left" ? (1 - transitionProgress) * 100 : transition.preset === "slide-right" ? (transitionProgress - 1) * 100 : 0;
@@ -342,8 +347,8 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
               ? 0.72 + transitionProgress * 0.28
               : transition.preset === "dock" && !video.transformKeyframes?.length ? 0.15 + transitionProgress * 0.85 : 1;
             const clipPath = mask.shape === "circle" ? "circle(50% at 50% 50%)" : mask.shape === "ellipse" ? "ellipse(50% 50% at 50% 50%)" : mask.shape === "square" ? "inset(0 21.875%)" : mask.shape === "portrait" ? "inset(0 34.18%)" : undefined;
-            return <InteractiveEffectOverlay key={video.id} className="video-layer" transform={transform} selected={selectedClipId === video.id} onSelect={() => selectClip(video.id)} onCommit={(nextTransform) => presentation.activeCueId ? updateVideoPresentationCue(video.id, presentation.activeCueId, { transform: nextTransform }) : updateVideo(video.id, video.transformKeyframes?.length ? { transformKeyframes: upsertVisualKeyframe(video.transformKeyframes, localUs, nextTransform), layoutPreset: "custom" } : { transform: nextTransform, layoutPreset: "custom" })} styleFor={(nextTransform) => ({ left: `${nextTransform.x}%`, top: `${nextTransform.y}%`, width: squareFrame && canvasRatioNumber >= 1 ? "auto" : "100%", height: squareFrame && canvasRatioNumber < 1 ? "auto" : "100%", aspectRatio: squareFrame ? "1 / 1" : undefined, zIndex: 20 + (video.zIndex ?? 0), opacity: nextTransform.opacity * (transition.preset === "fade" || transition.preset === "circle-reveal" ? transitionProgress : 1), clipPath, borderRadius: mask.shape === "circle" ? "50%" : mask.shape === "rounded" ? `${mask.radius}%` : undefined, border: mask.borderWidth > 0 ? `${canvasLength(mask.borderWidth, 1)} solid ${mask.borderColor}` : undefined, transform: `translate(-50%, -50%) translateX(${transitionX}%) scale(${nextTransform.scale * transitionScale}) rotate(${nextTransform.rotation}deg)` })}>
-              <SyncedVideo src={src} sourceInUs={video.sourceInUs} localUs={localUs} playbackRate={video.playbackRate} volume={video.volume} muted={videoAsset?.hasAudio === false || video.volume <= 0 || Boolean(project.tracks.find((track) => track.id === video.trackId)?.muted)} fit={presentation.fit} camera={presentation.camera} cameraStartOffsetUs={presentation.cameraStartOffsetUs} cameraDurationUs={presentation.cameraDurationUs} focus={presentation.focus} contentFocus={{ x: mask.focusX, y: mask.focusY }} playing={playing} />
+            return <InteractiveEffectOverlay key={video.id} className="video-layer" transform={transform} selected={selectedClipId === video.id} onSelect={() => selectClip(video.id)} onCommit={(nextTransform) => presentation.activeCueId ? updateVideoPresentationCue(video.id, presentation.activeCueId, { transform: nextTransform }) : updateVideo(video.id, video.transformKeyframes?.length ? { transformKeyframes: upsertVisualKeyframe(video.transformKeyframes, localUs, nextTransform), layoutPreset: "custom" } : { transform: nextTransform, layoutPreset: "custom" })} styleFor={(nextTransform) => ({ left: `${nextTransform.x}%`, top: `${nextTransform.y}%`, width: squareFrame && canvasRatioNumber >= 1 ? "auto" : "100%", height: squareFrame && canvasRatioNumber < 1 ? "auto" : "100%", aspectRatio: squareFrame ? "1 / 1" : undefined, zIndex: 20 + (video.zIndex ?? 0), opacity: nextTransform.opacity * (transition.preset === "fade" || transition.preset === "circle-reveal" ? transitionProgress : 1), clipPath, borderRadius: mask.shape === "circle" ? "50%" : mask.shape === "rounded" ? `${mask.radius}%` : undefined, border: mask.borderWidth > 0 ? `${canvasLength(mask.borderWidth, 1)} solid ${mask.borderColor}` : undefined, transform: `translate(-50%, -50%) translateX(${transitionX}%) scale(${nextTransform.scale * transitionScale * momentum.scale}) rotate(${nextTransform.rotation}deg)` })}>
+              <SyncedVideo src={src} sourceInUs={video.sourceInUs} localUs={localUs} playbackRate={video.playbackRate} volume={video.volume} muted={videoAsset?.hasAudio === false || video.volume <= 0 || Boolean(project.tracks.find((track) => track.id === video.trackId)?.muted)} fit={presentation.fit} camera={presentation.camera} cameraStartOffsetUs={presentation.cameraStartOffsetUs} cameraDurationUs={presentation.cameraDurationUs} focus={presentation.focus} contentFocus={{ x: mask.focusX, y: mask.focusY }} transitionBlur={momentum.blur * 6} playing={playing} />
               {presentation.focus.enabled && focusEnvelope(presentation.focus, localUs) > 0 && <div className="video-focus-overlay" style={{ "--focus-x": `${presentation.focus.x}%`, "--focus-y": `${presentation.focus.y}%`, "--focus-radius": `${presentation.focus.radius}%`, "--focus-feather": `${presentation.focus.feather}%`, "--focus-dim": presentation.focus.dimOpacity } as React.CSSProperties}>{presentation.focus.showCursor && <i />}</div>}
               {selectedClipId === video.id && mask.shape === "circle" && <VideoTargetHandle point={{ x: mask.focusX, y: mask.focusY }} kind="crop" onCommit={(point) => presentation.activeCueId ? updateVideoPresentationCue(video.id, presentation.activeCueId, { mask: { ...mask, focusX: point.x, focusY: point.y } }) : updateVideo(video.id, { mask: { ...mask, focusX: point.x, focusY: point.y } })} />}
               {selectedClipId === video.id && presentation.focus.enabled && <VideoTargetHandle point={{ x: presentation.focus.x, y: presentation.focus.y }} kind="focus" onCommit={(point) => presentation.activeCueId ? updateVideoPresentationCue(video.id, presentation.activeCueId, { focus: { ...presentation.focus, x: point.x, y: point.y } }) : updateVideo(video.id, { focus: { ...presentation.focus, x: point.x, y: point.y } })} />}
@@ -351,8 +356,16 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
           })}
           {activeImages.map((clip) => {
             const imageAsset = project.assets.find((candidate) => candidate.id === clip.assetId);
-            const recipe = clockControlledRecipe({ layout: "frame", entrance: clip.entrance, paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 });
-            return imageAsset?.objectUrl ? <img key={clip.id} className={`image-overlay entrance-none ${selectedClipId === clip.id ? "selected" : ""}`} src={imageAsset.objectUrl} alt="" draggable={false} onPointerDown={(event) => { event.stopPropagation(); selectClip(clip.id); }} style={{ left: `${clip.transform.x}%`, top: `${clip.transform.y}%`, width: "30%", ...animatedStyle(recipe, clip.transform, clip.startUs, clip.speed) }} /> : null;
+            const transition = visualTransition(clip);
+            const recipe = clockControlledRecipe({ layout: "frame", entrance: transition.preset === "none" ? clip.entrance : "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 });
+            const localUs = playheadUs - clip.startUs;
+            const progress = transitionEnvelope(clip, localUs);
+            const exitTransition = momentumExitTransition(clip, visualClips);
+            const momentum = momentumTransitionVisualState(clip, localUs, exitTransition);
+            const transitionX = transition.preset === "slide-left" ? (1 - progress) * 100 : transition.preset === "slide-right" ? (progress - 1) * 100 : 0;
+            const transitionScale = transition.preset === "zoom" ? 0.72 + progress * 0.28 : transition.preset === "dock" ? 0.15 + progress * 0.85 : 1;
+            const transitionOpacity = transition.preset === "fade" || transition.preset === "circle-reveal" ? progress : 1;
+            return imageAsset?.objectUrl ? <img key={clip.id} className={`image-overlay entrance-none ${selectedClipId === clip.id ? "selected" : ""}`} src={imageAsset.objectUrl} alt="" draggable={false} onPointerDown={(event) => { event.stopPropagation(); selectClip(clip.id); }} style={{ left: `${clip.transform.x}%`, top: `${clip.transform.y}%`, width: "30%", ...animatedStyle(recipe, clip.transform, clip.startUs, clip.speed, { scale: transitionScale * momentum.scale, translateX: transitionX, opacity: transitionOpacity, blur: momentum.blur * 6 }) }} /> : null;
           })}
           {foregroundEffects.sort((left, right) => (left.zIndex ?? 20) - (right.zIndex ?? 20)).map((effect) => {
             const recipe = clockControlledRecipe(effect.recipe ?? effectById(effect.effectId).recipe);
@@ -389,7 +402,7 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
   );
 }
 
-function SyncedVideo({ src, sourceInUs, localUs, playbackRate, volume, muted, fit, camera, cameraStartOffsetUs, cameraDurationUs, focus, contentFocus = { x: 50, y: 50 }, playing, loopDurationUs, className = "video-content", onSelect }: { src: string; sourceInUs: number; localUs: number; playbackRate: number; volume: number; muted: boolean; fit: "cover" | "contain"; camera: CameraMotion; cameraStartOffsetUs: number; cameraDurationUs: number; focus?: VideoClip["focus"]; contentFocus?: VideoTargetPoint; playing: boolean; loopDurationUs?: number; className?: string; onSelect?: () => void }) {
+function SyncedVideo({ src, sourceInUs, localUs, playbackRate, volume, muted, fit, camera, cameraStartOffsetUs, cameraDurationUs, focus, contentFocus = { x: 50, y: 50 }, transitionBlur = 0, playing, loopDurationUs, className = "video-content", onSelect }: { src: string; sourceInUs: number; localUs: number; playbackRate: number; volume: number; muted: boolean; fit: "cover" | "contain"; camera: CameraMotion; cameraStartOffsetUs: number; cameraDurationUs: number; focus?: VideoClip["focus"]; contentFocus?: VideoTargetPoint; transitionBlur?: number; playing: boolean; loopDurationUs?: number; className?: string; onSelect?: () => void }) {
   const ref = useRef<HTMLVideoElement>(null);
   const playbackGate = useRef(createMediaPlaybackGate());
   const wasPlaying = useRef(false);
@@ -432,7 +445,7 @@ function SyncedVideo({ src, sourceInUs, localUs, playbackRate, volume, muted, fi
     playbackGate.current.failed = false;
     sync(false);
   };
-  return <div className={className ?? "video-content"} onPointerDown={onSelect ? (event) => { event.stopPropagation(); onSelect(); } : undefined}><video ref={ref} src={src} muted={muted} playsInline preload="auto" loop={Boolean(loopDurationUs)} onLoadedMetadata={metadataReady} onCanPlay={canPlay} style={{ objectFit: fit, objectPosition: `${contentFocus.x}% ${contentFocus.y}%`, transform: `translate(${cameraTranslateX}%, ${cameraTranslateY}%) scale(${combinedScale})` }} /></div>;
+  return <div className={className ?? "video-content"} onPointerDown={onSelect ? (event) => { event.stopPropagation(); onSelect(); } : undefined}><video ref={ref} src={src} muted={muted} playsInline preload="auto" loop={Boolean(loopDurationUs)} onLoadedMetadata={metadataReady} onCanPlay={canPlay} style={{ objectFit: fit, objectPosition: `${contentFocus.x}% ${contentFocus.y}%`, filter: transitionBlur > 0.01 ? `blur(${transitionBlur / 1920 * 100}cqw)` : undefined, transform: `translate(${cameraTranslateX}%, ${cameraTranslateY}%) scale(${combinedScale})` }} /></div>;
 }
 
 function AudioPreview({ clip, src, playheadUs, playing, ducked }: { clip: AudioClip; src: string; playheadUs: number; playing: boolean; ducked: boolean }) {

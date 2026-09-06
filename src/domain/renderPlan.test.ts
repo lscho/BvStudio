@@ -193,6 +193,56 @@ describe("buildRenderPlan", () => {
     expect(plan.audios).toContainEqual(expect.objectContaining({ path: "/media/foreground.mp4", volume: 0.5 }));
   });
 
+  it("exports matched ease-in and ease-out ranges around a momentum cut", () => {
+    const project = createEmptyProject();
+    project.assets.push(
+      { id: "first", name: "first.mp4", kind: "video", durationUs: 5_000_000, sourcePath: "/media/first.mp4" },
+      { id: "second", name: "second.mp4", kind: "video", durationUs: 5_000_000, sourcePath: "/media/second.mp4" }
+    );
+    const track = project.tracks.find((candidate) => candidate.kind === "video")!;
+    track.clips.push(
+      { id: "first-clip", trackId: track.id, kind: "video", label: "first", startUs: 0, durationUs: 5_000_000, locked: false, assetId: "first", sourceInUs: 0, playbackRate: 1, volume: 0, fit: "cover", camera: cameraMotionForPreset("none") },
+      { id: "second-clip", trackId: track.id, kind: "video", label: "second", startUs: 5_000_000, durationUs: 5_000_000, locked: false, assetId: "second", sourceInUs: 0, playbackRate: 1, volume: 0, fit: "cover", camera: cameraMotionForPreset("none"), transition: { preset: "momentum-zoom", durationUs: 500_000, easing: "ease-in-out" } }
+    );
+
+    const videos = buildRenderPlan(project, "/output.mp4").overlays.filter((overlay) => overlay.kind === "video");
+    expect(videos).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "/media/first.mp4", startUs: 4_500_000, durationUs: 500_000, exitTransition: expect.objectContaining({ preset: "momentum-zoom", durationUs: 500_000 }) }),
+      expect.objectContaining({ path: "/media/second.mp4", startUs: 5_000_000, durationUs: 500_000, transition: expect.objectContaining({ preset: "momentum-zoom", durationUs: 500_000 }) })
+    ]));
+    expect(videos.find((overlay) => overlay.path === "/media/first.mp4" && overlay.startUs === 0)?.exitTransition).toBeUndefined();
+    expect(videos.find((overlay) => overlay.path === "/media/second.mp4" && overlay.startUs === 5_500_000)?.transition?.preset).toBe("none");
+  });
+
+  it("exports image momentum ranges between cross-track videos", () => {
+    const project = createEmptyProject();
+    project.assets.push(
+      { id: "first", name: "first.mp4", kind: "video", durationUs: 2_000_000, sourcePath: "/media/first.mp4" },
+      { id: "image", name: "badge.png", kind: "image", durationUs: 2_000_000, sourcePath: "/media/badge.png" },
+      { id: "last", name: "last.mp4", kind: "video", durationUs: 2_000_000, sourcePath: "/media/last.mp4" }
+    );
+    const videoTrack = project.tracks.find((track) => track.kind === "video")!;
+    const imageTrack = project.tracks.find((track) => track.kind === "image")!;
+    const videoBase = { trackId: videoTrack.id, kind: "video" as const, locked: false, sourceInUs: 0, playbackRate: 1, volume: 0, fit: "cover" as const, camera: cameraMotionForPreset("none") };
+    videoTrack.clips.push(
+      { ...videoBase, id: "first-clip", label: "first", startUs: 0, durationUs: 2_000_000, assetId: "first" },
+      { ...videoBase, id: "last-clip", label: "last", startUs: 4_000_000, durationUs: 2_000_000, assetId: "last", transition: { preset: "momentum-zoom", durationUs: 500_000, easing: "ease-in-out", fromClipId: "image-clip" } }
+    );
+    imageTrack.clips.push({
+      id: "image-clip", trackId: imageTrack.id, kind: "image", label: "badge", startUs: 2_000_000, durationUs: 2_000_000,
+      locked: false, assetId: "image", transform: { x: 72, y: 38, scale: 0.8, rotation: 6, opacity: 0.9 }, entrance: "pop", speed: 1,
+      transition: { preset: "momentum-zoom", durationUs: 500_000, easing: "ease-in-out", fromClipId: "first-clip" }
+    });
+
+    const overlays = buildRenderPlan(project, "/output.mp4").overlays;
+    expect(overlays).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "video", path: "/media/first.mp4", startUs: 1_500_000, exitTransition: expect.objectContaining({ fromClipId: "first-clip" }) }),
+      expect.objectContaining({ kind: "image", imagePath: "/media/badge.png", startUs: 2_000_000, durationUs: 500_000, x: 72, y: 38, transition: expect.objectContaining({ fromClipId: "first-clip" }), recipe: expect.objectContaining({ entrance: "none" }) }),
+      expect.objectContaining({ kind: "image", imagePath: "/media/badge.png", startUs: 3_500_000, durationUs: 500_000, exitTransition: expect.objectContaining({ fromClipId: "image-clip" }) }),
+      expect.objectContaining({ kind: "video", path: "/media/last.mp4", startUs: 4_000_000, transition: expect.objectContaining({ fromClipId: "image-clip" }) })
+    ]));
+  });
+
   it("exports chained video presentation cues as continuous source-time ranges", () => {
     const project = createEmptyProject();
     project.assets.push({ id: "asset", name: "source.mp4", kind: "video", durationUs: 12_000_000, sourcePath: "/media/source.mp4" });
@@ -295,5 +345,23 @@ describe("buildRenderPlan", () => {
       transformKeyframes: transitionVideo?.transformKeyframes,
       mask: { shape: "rectangle", borderWidth: 0, focusX: 50, focusY: 50 }
     });
+  });
+
+  it("keeps focus overlays attached through a momentum transition", () => {
+    const project = createEmptyProject();
+    project.assets.push({ id: "screen", name: "screen.mp4", kind: "video", durationUs: 4_000_000, sourcePath: "/media/screen.mp4" });
+    const track = project.tracks.find((candidate) => candidate.kind === "video")!;
+    track.clips.push({
+      id: "screen-clip", trackId: track.id, kind: "video", label: "screen", startUs: 0, durationUs: 4_000_000,
+      locked: false, assetId: "screen", sourceInUs: 0, playbackRate: 1, volume: 0, fit: "cover",
+      camera: cameraMotionForPreset("none"), transition: { preset: "momentum-zoom", durationUs: 500_000, easing: "ease-in-out" },
+      focus: { enabled: true, startOffsetUs: 0, durationUs: 2_000_000, x: 50, y: 50, zoom: 1.6, radius: 15, feather: 5, dimOpacity: 0.5, showCursor: true }
+    });
+
+    const overlays = buildRenderPlan(project, "/output.mp4").overlays;
+    expect(overlays).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "video", startUs: 0, transition: expect.objectContaining({ preset: "momentum-zoom" }) }),
+      expect.objectContaining({ kind: "focus", startUs: 0, transition: expect.objectContaining({ preset: "momentum-zoom" }) })
+    ]));
   });
 });

@@ -129,6 +129,8 @@ export interface RenderImageOverlay extends RenderOverlayBase {
   kind: "image";
   imagePath: string;
   targetWidthPx: number;
+  transition?: VideoTransition;
+  exitTransition?: VideoTransition;
 }
 
 export interface RenderVideoOverlay extends RenderOverlayBase {
@@ -143,6 +145,7 @@ export interface RenderVideoOverlay extends RenderOverlayBase {
   cameraDurationUs: number;
   mask?: VideoMask;
   transition?: VideoTransition;
+  exitTransition?: VideoTransition;
   focus?: VideoFocusEffect;
 }
 
@@ -150,6 +153,8 @@ export interface RenderFocusOverlay extends RenderOverlayBase {
   kind: "focus";
   focus: VideoFocusEffect;
   mask?: VideoMask;
+  transition?: VideoTransition;
+  exitTransition?: VideoTransition;
   imageDataBase64?: string;
 }
 

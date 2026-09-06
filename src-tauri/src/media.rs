@@ -231,6 +231,7 @@ pub struct RenderOverlay {
     camera_duration_us: Option<u64>,
     mask: Option<RenderVideoMask>,
     transition: Option<RenderVideoTransition>,
+    exit_transition: Option<RenderVideoTransition>,
     focus: Option<RenderVideoFocus>,
 }
 
@@ -1405,14 +1406,45 @@ fn transform_scale_filter(
     keyframes: &[RenderTransformKeyframe],
     is_video: bool,
     base_scale: f64,
+    additional_factor: Option<&str>,
 ) -> Option<String> {
     let mut factor = transform_keyframe_expression(keyframes, "scale", "t")?;
     if !is_video {
         factor = format!("({factor})/{:.9}", base_scale.clamp(0.05, 5.0));
     }
+    if let Some(additional_factor) = additional_factor {
+        factor = format!("({factor})*({additional_factor})");
+    }
     Some(format!(
         "scale=w='max(2,trunc(iw*({factor})/2)*2)':h='max(2,trunc(ih*({factor})/2)*2)':eval=frame"
     ))
+}
+
+fn momentum_scale_factor(overlay: &RenderOverlay) -> Option<String> {
+    let mut factors = Vec::new();
+    if let Some(transition) = overlay
+        .transition
+        .as_ref()
+        .filter(|transition| transition.preset == "momentum-zoom")
+    {
+        let duration = (transition.duration_us.min(overlay.duration_us).max(1) as f64
+            / 1_000_000.0)
+            .max(0.001);
+        let progress = easing_tokens("ease-out", &format!("min(max(t/{duration:.6},0),1)"));
+        factors.push(format!("0.8+0.2*({progress})"));
+    }
+    if let Some(transition) = overlay
+        .exit_transition
+        .as_ref()
+        .filter(|transition| transition.preset == "momentum-zoom")
+    {
+        let duration = (transition.duration_us.min(overlay.duration_us).max(1) as f64
+            / 1_000_000.0)
+            .max(0.001);
+        let progress = easing_tokens("ease-in", &format!("min(max(t/{duration:.6},0),1)"));
+        factors.push(format!("1-0.2*({progress})"));
+    }
+    (!factors.is_empty()).then(|| factors.join("*"))
 }
 
 fn camera_filter_for(
@@ -1735,6 +1767,7 @@ fn render_overlays(
     for (index, overlay) in overlays.iter().enumerate() {
         let is_image = overlay.kind.as_deref() == Some("image");
         let is_video = overlay.kind.as_deref() == Some("video");
+        let is_focus = overlay.kind.as_deref() == Some("focus");
         let overlay_duration = seconds(overlay.duration_us.max(1));
         if is_video {
             if overlay.loop_media.unwrap_or(false) {
@@ -1866,6 +1899,8 @@ fn render_overlays(
                 if matches!(transition.preset.as_str(), "fade" | "circle-reveal") {
                     source_filters
                         .push(format!("fade=t=in:st=0:d={transition_duration:.6}:alpha=1"));
+                } else if transition.preset == "momentum-zoom" {
+                    source_filters.push("gblur=sigma=2.4:steps=1".into());
                 } else if transition.preset == "zoom"
                     || (transition.preset == "dock"
                         && overlay
@@ -1883,6 +1918,14 @@ fn render_overlays(
                     source_filters.push(format!("scale=w='iw*({start_scale:.6}+{:.6}*({transition_progress}))':h='ih*({start_scale:.6}+{:.6}*({transition_progress}))':eval=frame", 1.0 - start_scale, 1.0 - start_scale));
                 }
             }
+            if overlay
+                .exit_transition
+                .as_ref()
+                .filter(|transition| transition.preset == "momentum-zoom")
+                .is_some()
+            {
+                source_filters.push("gblur=sigma=2.4:steps=1".into());
+            }
         } else if is_image {
             let width = overlay
                 .target_width_px
@@ -1894,8 +1937,58 @@ fn render_overlays(
                 "colorchannelmixer=aa={:.6}",
                 overlay.opacity.unwrap_or(1.0).clamp(0.0, 1.0)
             ));
+            if let Some(transition) = overlay
+                .transition
+                .as_ref()
+                .filter(|transition| transition.preset != "none")
+            {
+                let transition_duration =
+                    (transition.duration_us.min(overlay.duration_us).max(1) as f64 / 1_000_000.0)
+                        .max(0.001);
+                if matches!(transition.preset.as_str(), "fade" | "circle-reveal") {
+                    source_filters
+                        .push(format!("fade=t=in:st=0:d={transition_duration:.6}:alpha=1"));
+                } else if transition.preset == "momentum-zoom" {
+                    source_filters.push("gblur=sigma=2.4:steps=1".into());
+                } else if transition.preset == "zoom" || transition.preset == "dock" {
+                    let raw_progress = format!("min(max(t/{transition_duration:.6},0),1)");
+                    let transition_progress = easing_tokens(&transition.easing, &raw_progress);
+                    let start_scale = if transition.preset == "dock" {
+                        0.15
+                    } else {
+                        0.72
+                    };
+                    source_filters.push(format!("scale=w='iw*({start_scale:.6}+{:.6}*({transition_progress}))':h='ih*({start_scale:.6}+{:.6}*({transition_progress}))':eval=frame", 1.0 - start_scale, 1.0 - start_scale));
+                }
+            }
+            if overlay
+                .exit_transition
+                .as_ref()
+                .filter(|transition| transition.preset == "momentum-zoom")
+                .is_some()
+            {
+                source_filters.push("gblur=sigma=2.4:steps=1".into());
+            }
         } else {
             source_filters.push("format=rgba".into());
+        }
+        if is_focus {
+            if overlay
+                .transition
+                .as_ref()
+                .filter(|transition| transition.preset == "momentum-zoom")
+                .is_some()
+            {
+                source_filters.push("gblur=sigma=2.4:steps=1".into());
+            }
+            if overlay
+                .exit_transition
+                .as_ref()
+                .filter(|transition| transition.preset == "momentum-zoom")
+                .is_some()
+            {
+                source_filters.push("gblur=sigma=2.4:steps=1".into());
+            }
         }
         if overlay
             .sequence_frames_base64
@@ -1910,20 +2003,38 @@ fn render_overlays(
             source_filters.extend(video_mask_filters(overlay.mask.as_ref()));
         }
         let local_time = format!("t-{start:.6}");
+        let momentum_scale = momentum_scale_factor(overlay);
+        let defer_momentum_scale =
+            keyframes.is_some() || (keyframes.is_none() && entrance == "pop");
+        let immediate_momentum_scale = if defer_momentum_scale {
+            None
+        } else {
+            momentum_scale.as_deref()
+        };
         if let Some(keyframes) = overlay
             .transform_keyframes
             .as_deref()
             .filter(|frames| !frames.is_empty())
         {
-            if let Some(filter) =
-                transform_scale_filter(keyframes, is_video, overlay.scale.unwrap_or(1.0))
-            {
+            if let Some(filter) = transform_scale_filter(
+                keyframes,
+                is_video,
+                overlay.scale.unwrap_or(1.0),
+                immediate_momentum_scale,
+            ) {
                 source_filters.push(filter);
             }
         } else if is_video {
             let factor = overlay.scale.unwrap_or(1.0).clamp(0.05, 5.0);
+            let factor = immediate_momentum_scale
+                .map(|momentum| format!("{factor:.9}*({momentum})"))
+                .unwrap_or_else(|| format!("{factor:.9}"));
             source_filters.push(format!(
-                "scale=w='max(2,trunc(iw*{factor:.9}/2)*2)':h='max(2,trunc(ih*{factor:.9}/2)*2)'"
+                "scale=w='max(2,trunc(iw*({factor})/2)*2)':h='max(2,trunc(ih*({factor})/2)*2)':eval=frame"
+            ));
+        } else if let Some(factor) = immediate_momentum_scale {
+            source_filters.push(format!(
+                "scale=w='max(2,trunc(iw*({factor})/2)*2)':h='max(2,trunc(ih*({factor})/2)*2)':eval=frame"
             ));
         }
         if let Some(animation) = keyframes {
@@ -1949,6 +2060,10 @@ fn render_overlays(
                 ));
             }
             if let Some(factor) = keyframe_expression(animation, "scale", "t", speed) {
+                let factor = momentum_scale
+                    .as_ref()
+                    .map(|momentum| format!("({factor})*({momentum})"))
+                    .unwrap_or(factor);
                 // Pseudo-3D approximation: export foreshortens each axis by cos(tilt)
                 // instead of a true homography; documented in the .bveffect format guide.
                 let width_factor = if tilts_y {
@@ -1991,6 +2106,10 @@ fn render_overlays(
             let factor = format!(
                 "if(lt(t,{first_stage:.6}),0.45+0.70*t/{first_stage:.6},if(lt(t,{animation_duration:.6}),1.15-0.15*(t-{first_stage:.6})/{last_stage:.6},1))"
             );
+            let factor = momentum_scale
+                .as_ref()
+                .map(|momentum| format!("({factor})*({momentum})"))
+                .unwrap_or(factor);
             source_filters.push(format!(
                 "scale=w='iw*({factor})':h='ih*({factor})':eval=frame"
             ));
@@ -2675,8 +2794,9 @@ mod tests {
                 easing: "ease-in-out".into(),
             },
         ];
-        let filter = transform_scale_filter(&keyframes, true, 0.25).unwrap();
+        let filter = transform_scale_filter(&keyframes, true, 0.25, Some("0.8+0.2*t")).unwrap();
         assert!(filter.contains("lte((t),0.650000000)"));
+        assert!(filter.contains("0.8+0.2*t"));
         assert!(!filter.contains("t-"));
     }
 
@@ -2829,7 +2949,7 @@ mod tests {
             ],
             overlays: vec![
                 RenderOverlay {
-                    kind: Some("text".into()),
+                    kind: Some("focus".into()),
                     start_us: 0,
                     duration_us: 1_000_000,
                     x: 25.0,
@@ -2895,7 +3015,12 @@ mod tests {
                     camera_offset_us: None,
                     camera_duration_us: None,
                     mask: None,
-                    transition: None,
+                    transition: Some(RenderVideoTransition {
+                        preset: "momentum-zoom".into(),
+                        duration_us: 200_000,
+                        easing: "ease-in-out".into(),
+                    }),
+                    exit_transition: None,
                     focus: None,
                 },
                 RenderOverlay {
@@ -2934,6 +3059,7 @@ mod tests {
                     camera_duration_us: None,
                     mask: None,
                     transition: None,
+                    exit_transition: None,
                     focus: None,
                 },
                 RenderOverlay {
@@ -2946,7 +3072,7 @@ mod tests {
                     rotation: Some(12.0),
                     speed: Some(1.0),
                     recipe: Some(RenderEffectRecipe {
-                        entrance: "pop".into(),
+                        entrance: "none".into(),
                         animation: None,
                     }),
                     image_data_base64: None,
@@ -2968,7 +3094,16 @@ mod tests {
                     camera_offset_us: None,
                     camera_duration_us: None,
                     mask: None,
-                    transition: None,
+                    transition: Some(RenderVideoTransition {
+                        preset: "momentum-zoom".into(),
+                        duration_us: 200_000,
+                        easing: "ease-in-out".into(),
+                    }),
+                    exit_transition: Some(RenderVideoTransition {
+                        preset: "momentum-zoom".into(),
+                        duration_us: 200_000,
+                        easing: "ease-in-out".into(),
+                    }),
                     focus: None,
                 },
                 RenderOverlay {
@@ -3032,7 +3167,12 @@ mod tests {
                         focus_y: 38.0,
                     }),
                     transition: Some(RenderVideoTransition {
-                        preset: "fade".into(),
+                        preset: "momentum-zoom".into(),
+                        duration_us: 200_000,
+                        easing: "ease-in-out".into(),
+                    }),
+                    exit_transition: Some(RenderVideoTransition {
+                        preset: "momentum-zoom".into(),
                         duration_us: 200_000,
                         easing: "ease-in-out".into(),
                     }),

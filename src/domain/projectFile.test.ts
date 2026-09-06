@@ -11,12 +11,12 @@ describe("project files", () => {
     const serialized = serializeProject(project);
     expect(serialized).not.toContain("blob:temporary");
     expect(serialized).not.toContain("missing");
-    expect(parseProject(serialized)).toMatchObject({ schemaVersion: 22, id: project.id, assets: [{ sourcePath: "/source.mp4" }] });
+    expect(parseProject(serialized)).toMatchObject({ schemaVersion: 24, id: project.id, assets: [{ sourcePath: "/source.mp4" }] });
   });
 
   it("creates separate scene and effect tracks", () => {
     const project = createEmptyProject();
-    expect(project.schemaVersion).toBe(22);
+    expect(project.schemaVersion).toBe(24);
     expect(project.tracks).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "scene-main", kind: "scene", name: "场景", clips: [] }),
       expect.objectContaining({ id: "effect-main", kind: "effect", name: "动效", clips: [] })
@@ -28,7 +28,7 @@ describe("project files", () => {
     raw.schemaVersion = 19;
     delete raw.motionTheme;
     expect(parseProject(JSON.stringify(raw))).toMatchObject({
-      schemaVersion: 22,
+      schemaVersion: 24,
       motionTheme: { skin: "dark", style: "minimal", font: "sans", colors: { text: "#ffffff", data: "#5fa8ff" } }
     });
   });
@@ -39,8 +39,70 @@ describe("project files", () => {
     delete raw.presenterSafeArea;
 
     expect(parseProject(JSON.stringify(raw))).toMatchObject({
-      schemaVersion: 22,
+      schemaVersion: 24,
       presenterSafeArea: { position: "none", widthPercent: 32 }
+    });
+  });
+
+  it("migrates v22 projects and preserves existing video transitions", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    raw.schemaVersion = 22;
+    const videoTrack = raw.tracks.find((track: { kind: string }) => track.kind === "video");
+    videoTrack.clips.push({
+      id: "video-22", trackId: videoTrack.id, kind: "video", label: "旧视频", startUs: 0, durationUs: 2_000_000,
+      locked: false, assetId: "asset", sourceInUs: 0, playbackRate: 1, volume: 1, fit: "cover",
+      camera: cameraMotionForTest(), transition: { preset: "zoom", durationUs: 400_000, easing: "ease-out" }
+    });
+
+    expect(parseProject(JSON.stringify(raw))).toMatchObject({
+      schemaVersion: 24,
+      tracks: expect.arrayContaining([expect.objectContaining({ clips: expect.arrayContaining([
+        expect.objectContaining({ id: "video-22", transition: { preset: "zoom", durationUs: 400_000, easing: "ease-out" } })
+      ]) })])
+    });
+  });
+
+  it("migrates v23 image clips with normalized transitions", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    raw.schemaVersion = 23;
+    const imageTrack = raw.tracks.find((track: { kind: string }) => track.kind === "image");
+    imageTrack.clips.push({
+      id: "image-23", trackId: imageTrack.id, kind: "image", label: "旧贴图", startUs: 1_000_000, durationUs: 2_000_000,
+      locked: false, assetId: "image", transform: { x: 60, y: 40, scale: 0.8, rotation: 0, opacity: 1 }, entrance: "pop", speed: 1
+    });
+
+    expect(parseProject(JSON.stringify(raw))).toMatchObject({
+      schemaVersion: 24,
+      tracks: expect.arrayContaining([expect.objectContaining({ clips: expect.arrayContaining([
+        expect.objectContaining({ id: "image-23", transition: { preset: "none", durationUs: 500_000, easing: "ease-in-out" } })
+      ]) })])
+    });
+  });
+
+  it("round-trips momentum transitions and normalizes malformed transition input", () => {
+    const project = createEmptyProject();
+    const videoTrack = project.tracks.find((track) => track.kind === "video")!;
+    videoTrack.clips.push({
+      id: "momentum", trackId: videoTrack.id, kind: "video", label: "动势转场", startUs: 0, durationUs: 2_000_000,
+      locked: false, assetId: "asset", sourceInUs: 0, playbackRate: 1, volume: 1, fit: "cover",
+      camera: cameraMotionForTest(), transition: { preset: "momentum-zoom", durationUs: 450_000, easing: "ease-in-out", fromClipId: "previous" }
+    });
+    const imageTrack = project.tracks.find((track) => track.kind === "image")!;
+    imageTrack.clips.push({
+      id: "image", trackId: imageTrack.id, kind: "image", label: "贴图", startUs: 2_000_000, durationUs: 2_000_000,
+      locked: false, assetId: "image-asset", transform: { x: 70, y: 40, scale: 0.8, rotation: 5, opacity: 0.9 }, entrance: "pop", speed: 1,
+      transition: { preset: "momentum-zoom", durationUs: 350_000, easing: "ease-in-out", fromClipId: "momentum" }
+    });
+    const restored = parseProject(serializeProject(project)).tracks.flatMap((track) => track.clips);
+    expect(restored.find((clip) => clip.id === "momentum")).toMatchObject({
+      transition: { preset: "momentum-zoom", durationUs: 450_000, easing: "ease-in-out", fromClipId: "previous" }
+    });
+    expect(restored.find((clip) => clip.id === "image")).toMatchObject({ transition: { preset: "momentum-zoom", durationUs: 350_000, fromClipId: "momentum" } });
+
+    const malformed = JSON.parse(serializeProject(project));
+    malformed.tracks.find((track: { kind: string }) => track.kind === "video").clips[0].transition = { preset: "unknown", durationUs: -1, easing: "unknown" };
+    expect(parseProject(JSON.stringify(malformed)).tracks.flatMap((track) => track.clips).find((clip) => clip.id === "momentum")).toMatchObject({
+      transition: { preset: "none", durationUs: 500_000, easing: "ease-in-out" }
     });
   });
 
@@ -122,7 +184,7 @@ describe("project files", () => {
 
     const restored = parseProject(JSON.stringify(raw));
     const effect = restored.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "metric");
-    expect(restored.schemaVersion).toBe(22);
+    expect(restored.schemaVersion).toBe(24);
     expect(effect?.kind === "effect" ? effect.params : undefined).toMatchObject({
       kicker: "比例指标", value: 76.5, max: 100, decimals: 1, unit: "分", label: "圆环注水到这个比例", enabled: true, infinite: "not-a-number"
     });
@@ -191,7 +253,7 @@ describe("project files", () => {
     };
 
     expect(parseProject(JSON.stringify(legacy))).toMatchObject({
-      schemaVersion: 22,
+      schemaVersion: 24,
       chapterProgress: {
         enabled: true,
         preset: "top-dark",
@@ -256,7 +318,7 @@ describe("project files", () => {
     });
 
     const migrated = parseProject(JSON.stringify(raw));
-    expect(migrated.schemaVersion).toBe(22);
+    expect(migrated.schemaVersion).toBe(24);
     expect(migrated.tracks.find((track) => track.kind === "effect")?.clips).toHaveLength(0);
     expect(migrated.tracks.find((track) => track.kind === "scene")?.clips).toEqual([
       expect.objectContaining({
@@ -298,7 +360,7 @@ describe("project files", () => {
       transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }
     });
     expect(parseProject(JSON.stringify(legacy))).toMatchObject({
-      schemaVersion: 22,
+      schemaVersion: 24,
       chapterProgress: { enabled: false, chapters: [] },
       tracks: expect.arrayContaining([
         expect.objectContaining({ clips: expect.arrayContaining([expect.objectContaining({ id: "caption", stylePreset: "classic", highlightWords: [] })]) }),
@@ -362,7 +424,7 @@ describe("project files", () => {
     });
 
     const migrated = parseProject(JSON.stringify(raw));
-    expect(migrated.schemaVersion).toBe(22);
+    expect(migrated.schemaVersion).toBe(24);
     expect(migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "video-13")).toMatchObject({ mask: { shape: "circle", focusX: 50, focusY: 50 } });
   });
 
@@ -377,7 +439,7 @@ describe("project files", () => {
     });
 
     const migrated = parseProject(JSON.stringify(raw));
-    expect(migrated.schemaVersion).toBe(22);
+    expect(migrated.schemaVersion).toBe(24);
     expect(migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "video-14")).toMatchObject({ presentationCues: [] });
   });
 
@@ -392,7 +454,7 @@ describe("project files", () => {
       recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0, sceneBackground: { preset: "white-frame", primaryColor: "#ffffff", secondaryColor: "#f5f5f5", borderColor: "#111111", intensity: 0.7 } }
     });
     const migrated = parseProject(JSON.stringify(raw));
-    expect(migrated.schemaVersion).toBe(22);
+    expect(migrated.schemaVersion).toBe(24);
     expect(migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "scene")).toMatchObject({ kind: "scene", trackId: "scene-main", background: { preset: "white-frame" } });
   });
 
@@ -404,7 +466,7 @@ describe("project files", () => {
     raw.tracks.push({ id: "audio-main", kind: "audio", name: "音频", locked: false, muted: false, hidden: false, clips: [] });
 
     const migrated = parseProject(JSON.stringify(raw));
-    expect(migrated.schemaVersion).toBe(22);
+    expect(migrated.schemaVersion).toBe(24);
     expect(migrated.tracks.some((track) => track.kind === "image" && track.name === "贴图")).toBe(true);
     expect(migrated.tracks.filter((track) => track.kind === "audio").map((track) => [track.name, track.audioRole])).toEqual([
       ["配音", "voice"], ["背景音乐", "music"], ["音效", "sound"]
@@ -459,7 +521,7 @@ describe("project files", () => {
 
     const migrated = parseProject(JSON.stringify(raw));
     const clip = migrated.tracks.flatMap((track) => track.clips).find((item) => item.id === "generated-9");
-    expect(migrated.schemaVersion).toBe(22);
+    expect(migrated.schemaVersion).toBe(24);
     expect(clip?.kind === "generated" ? clip.scenes[0].additionalEffects : undefined).toEqual([]);
   });
 
@@ -476,7 +538,7 @@ describe("project files", () => {
     const migrated = parseProject(JSON.stringify(raw));
     const video = migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "legacy-video");
     const effect = migrated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "legacy-effect");
-    expect(migrated.schemaVersion).toBe(22);
+    expect(migrated.schemaVersion).toBe(24);
     expect(migrated.tracks.find((track) => track.kind === "video")?.name).toBe("视频");
     expect(video).toMatchObject({ kind: "video", role: "a-roll", cameraOffsetUs: 0, cameraDurationUs: 2_000_000, mask: { shape: "rectangle", focusX: 50, focusY: 50 }, transition: { preset: "none" } });
     expect(effect).toMatchObject({ kind: "effect", backdrop: { enabled: true, color: "#111316", opacity: 0.64 } });

@@ -1,4 +1,4 @@
-import { createEmptyProject, DEFAULT_MOTION_THEME, DEFAULT_PRESENTER_SAFE_AREA, projectEndUs, type ChapterProgressPosition, type ChapterProgressPreset, type ChapterProgressStyle, type EditorProject, type EffectClip, type MotionColorRole, type MotionFont, type MotionSkin, type MotionStyle, type MotionTheme, type PresenterSafeAreaPosition, type SceneClip } from "@/domain/project";
+import { createEmptyProject, DEFAULT_MOTION_THEME, DEFAULT_PRESENTER_SAFE_AREA, projectEndUs, VIDEO_TRANSITION_PRESETS, type ChapterProgressPosition, type ChapterProgressPreset, type ChapterProgressStyle, type EditorProject, type EffectClip, type MotionColorRole, type MotionFont, type MotionSkin, type MotionStyle, type MotionTheme, type PresenterSafeAreaPosition, type SceneClip, type VideoTransition } from "@/domain/project";
 import { OVERLAY_STUDIO_BASE_FONT_SIZE, OVERLAY_STUDIO_EFFECT_IDS, allEffects, effectById, remapEffectTextParams, type EffectParams, type EffectSoundCue, type SceneBackgroundSpec } from "@/domain/effects";
 import { presenterMotionSafeArea, resolveMotionLayout, type MotionLayoutLayer, type OccupiedMotionLayoutLayer } from "@/domain/motionLayout";
 import { cameraMotionForPreset } from "@/domain/camera";
@@ -6,6 +6,7 @@ import { DEFAULT_TRANSFORM } from "@/domain/transforms";
 import { migrateLegacyGeneratedEffectLayout } from "@/domain/sceneEffects";
 import { DEFAULT_EFFECT_BACKDROP, DEFAULT_VIDEO_FOCUS, DEFAULT_VIDEO_MASK, DEFAULT_VIDEO_TRANSITION } from "@/domain/videoPresentation";
 import { CHAPTER_PROGRESS_PRESETS, DEFAULT_CHAPTER_PROGRESS, DEFAULT_SUBTITLE_STYLE } from "@/domain/videoDecorations";
+import { isEasingName } from "@/domain/easing";
 
 function normalizeEffectSoundCues(value: unknown): EffectSoundCue[] {
   if (!Array.isArray(value)) return [];
@@ -52,7 +53,24 @@ const motionStyles: readonly MotionStyle[] = ["minimal", "editorial"];
 const motionFonts: readonly MotionFont[] = ["sans", "display"];
 const motionColorRoles: readonly MotionColorRole[] = ["data", "opinion", "warning", "auxiliary", "custom"];
 const presenterSafeAreaPositions: readonly PresenterSafeAreaPosition[] = ["none", "left", "center", "right"];
-const supportedProjectSchemaVersions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22] as const;
+const supportedProjectSchemaVersions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24] as const;
+
+function normalizeVideoTransition(value: unknown, durationUs: number): VideoTransition {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ...DEFAULT_VIDEO_TRANSITION };
+  const candidate = value as Record<string, unknown>;
+  const preset = typeof candidate.preset === "string" && VIDEO_TRANSITION_PRESETS.includes(candidate.preset as VideoTransition["preset"])
+    ? candidate.preset as VideoTransition["preset"]
+    : DEFAULT_VIDEO_TRANSITION.preset;
+  const normalizedDurationUs = typeof candidate.durationUs === "number" && Number.isFinite(candidate.durationUs) && candidate.durationUs > 0
+    ? Math.max(50_000, Math.min(durationUs, Math.round(candidate.durationUs)))
+    : Math.min(durationUs, DEFAULT_VIDEO_TRANSITION.durationUs);
+  const easing = typeof candidate.easing === "string" && isEasingName(candidate.easing)
+    ? candidate.easing
+    : DEFAULT_VIDEO_TRANSITION.easing;
+  const fromClipIdCandidate = typeof candidate.fromClipId === "string" ? candidate.fromClipId.trim() : "";
+  const fromClipId = fromClipIdCandidate && fromClipIdCandidate.length <= 256 ? fromClipIdCandidate : undefined;
+  return { preset, durationUs: normalizedDurationUs, easing, fromClipId };
+}
 
 function isGeneratedOverlayStudioEffect(clip: EffectClip) {
   return OVERLAY_STUDIO_EFFECT_IDS.includes(clip.effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number])
@@ -196,7 +214,7 @@ export function parseProject(contents: string): EditorProject {
       fadeInUs: clip.fadeInUs ?? 0,
       fadeOutUs: clip.fadeOutUs ?? 0,
       role: clip.role ?? "music"
-    } : clip.kind === "video" ? { ...clip, camera: clip.camera ?? cameraMotionForPreset("none"), cameraOffsetUs: clip.cameraOffsetUs ?? 0, cameraDurationUs: clip.cameraDurationUs ?? clip.durationUs, zIndex: clip.zIndex ?? (track.id === "video-main" ? 0 : 10), transform: clip.transform ?? { ...DEFAULT_TRANSFORM }, transformKeyframes: clip.transformKeyframes ?? [], layoutPreset: clip.layoutPreset ?? (track.id === "video-main" ? "full" : "picture-in-picture-top-right"), role: clip.role ?? (track.id === "video-main" ? "a-roll" : "b-roll"), mask: { ...DEFAULT_VIDEO_MASK, ...clip.mask }, transition: { ...DEFAULT_VIDEO_TRANSITION, ...clip.transition }, focus: clip.focus ? { ...DEFAULT_VIDEO_FOCUS, ...clip.focus } : undefined, presentationCues: (clip.presentationCues ?? []).map((cue) => ({ ...cue, offsetUs: Math.max(0, Math.min(clip.durationUs - 1, cue.offsetUs)), transitionDurationUs: cue.transitionDurationUs <= 0 ? 0 : Math.max(100_000, Math.min(clip.durationUs - cue.offsetUs, cue.transitionDurationUs)), transform: { ...DEFAULT_TRANSFORM, ...cue.transform }, mask: { ...DEFAULT_VIDEO_MASK, ...cue.mask }, focus: { ...DEFAULT_VIDEO_FOCUS, ...cue.focus }, camera: cue.camera ?? cameraMotionForPreset("none"), fit: cue.fit ?? "cover" })).sort((left, right) => left.offsetUs - right.offsetUs) }
+    } : clip.kind === "video" ? { ...clip, camera: clip.camera ?? cameraMotionForPreset("none"), cameraOffsetUs: clip.cameraOffsetUs ?? 0, cameraDurationUs: clip.cameraDurationUs ?? clip.durationUs, zIndex: clip.zIndex ?? (track.id === "video-main" ? 0 : 10), transform: clip.transform ?? { ...DEFAULT_TRANSFORM }, transformKeyframes: clip.transformKeyframes ?? [], layoutPreset: clip.layoutPreset ?? (track.id === "video-main" ? "full" : "picture-in-picture-top-right"), role: clip.role ?? (track.id === "video-main" ? "a-roll" : "b-roll"), mask: { ...DEFAULT_VIDEO_MASK, ...clip.mask }, transition: normalizeVideoTransition(clip.transition, clip.durationUs), focus: clip.focus ? { ...DEFAULT_VIDEO_FOCUS, ...clip.focus } : undefined, presentationCues: (clip.presentationCues ?? []).map((cue) => ({ ...cue, offsetUs: Math.max(0, Math.min(clip.durationUs - 1, cue.offsetUs)), transitionDurationUs: cue.transitionDurationUs <= 0 ? 0 : Math.max(100_000, Math.min(clip.durationUs - cue.offsetUs, cue.transitionDurationUs)), transform: { ...DEFAULT_TRANSFORM, ...cue.transform }, mask: { ...DEFAULT_VIDEO_MASK, ...cue.mask }, focus: { ...DEFAULT_VIDEO_FOCUS, ...cue.focus }, camera: cue.camera ?? cameraMotionForPreset("none"), fit: cue.fit ?? "cover" })).sort((left, right) => left.offsetUs - right.offsetUs) }
       : clip.kind === "scene" ? {
         ...clip,
         opacity: Number.isFinite(clip.opacity) ? Math.max(0, Math.min(1, clip.opacity)) : 1,
@@ -276,7 +294,7 @@ export function parseProject(contents: string): EditorProject {
         secondaryMediaVolume: scene.secondaryMediaVolume ?? 0,
         mediaLayoutPreset: scene.mediaLayoutPreset ?? "full"
       })) }
-      : clip.kind === "image" ? { ...clip, transform: clip.transform ?? { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, entrance: clip.entrance ?? "pop", speed: clip.speed ?? 1 }
+      : clip.kind === "image" ? { ...clip, transform: clip.transform ?? { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, entrance: clip.entrance ?? "pop", speed: clip.speed ?? 1, transition: normalizeVideoTransition(clip.transition, clip.durationUs) }
         : clip)
   })) as EditorProject["tracks"];
   for (const fallbackTrack of fallback.tracks) {
@@ -318,7 +336,7 @@ export function parseProject(contents: string): EditorProject {
   const project = {
     ...fallback,
     ...candidate,
-    schemaVersion: 22 as const,
+    schemaVersion: 24 as const,
     canvas: { ...fallback.canvas, ...candidate.canvas },
     presenterSafeArea: {
       position: typeof candidate.presenterSafeArea?.position === "string" && presenterSafeAreaPositions.includes(candidate.presenterSafeArea.position as PresenterSafeAreaPosition)
