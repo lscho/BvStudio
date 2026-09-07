@@ -9,11 +9,107 @@ beforeEach(() => {
 });
 
 describe("Timeline interactions", () => {
-  it("shows independent scene and effect tracks", () => {
+  it("shows overlapping compositions on separate collapsible rows without grouping their selection", () => {
+    useEditorStore.getState().setPlayhead(0);
+    useEditorStore.getState().addComposition("background-stripes");
+    useEditorStore.getState().addComposition("background-dots");
+    const clips = useEditorStore.getState().project.tracks.flatMap(t => t.clips);
     render(<Timeline />);
-    expect(screen.getByText("场景")).toBeInTheDocument();
+    const first = screen.getByRole("button", { name: "斜向条纹" });
+    fireEvent.pointerDown(first, { pointerId: 8, clientX: 150 });
+    fireEvent.pointerUp(first, { pointerId: 8, clientX: 150 });
+    expect(useEditorStore.getState().selectedClipIds).toEqual([clips[0].id]);
+    fireEvent.click(screen.getByRole("button", { name: "折叠动效轨道" }));
+    expect(screen.queryByRole("button", { name: "斜向条纹" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开动效轨道" }));
+    expect(screen.getByRole("button", { name: "点阵律动" })).toBeInTheDocument();
+  });
+  it("selects a group from contextual tools and can focus or return to one member", () => {
+    useEditorStore.getState().addComposition("scene-focus-stack");
+    const clips = useEditorStore.getState().project.tracks.flatMap(t => t.clips);
+    render(<Timeline />);
+    fireEvent.click(screen.getByRole("button", { name: "选择整组动效" }));
+    expect(useEditorStore.getState().selectedClipIds).toHaveLength(clips.length);
+    const first = screen.getByRole("button", { name: clips[0].label });
+    fireEvent.pointerDown(first, { pointerId: 9, clientX: 150 });
+    fireEvent.pointerUp(first, { pointerId: 9, clientX: 150 });
+    expect(useEditorStore.getState().selectedClipIds).toEqual([clips[0].id]);
+    const project = useEditorStore.getState().project;
+    fireEvent.click(screen.getByRole("button", { name: "聚焦场景组" }));
+    expect(screen.queryByRole("button", { name: "字幕锁定" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: clips[0].label })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "返回完整时间线" }));
+    expect(screen.getByRole("button", { name: "字幕锁定" })).toBeInTheDocument();
+    expect(useEditorStore.getState().project).toBe(project);
+  });
+  it("moves selected group members together but trims only the dragged member", () => {
+    useEditorStore.getState().addComposition("scene-focus-stack");
+    const clips = useEditorStore.getState().project.tracks.flatMap(t => t.clips);
+    const { container } = render(<Timeline />);
+    fireEvent.click(screen.getByRole("button", { name: "切换吸附" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择整组动效" }));
+    const first = screen.getByRole("button", { name: clips[0].label });
+    fireEvent.pointerDown(first, { pointerId: 13, clientX: 150 });
+    fireEvent.pointerMove(first, { pointerId: 13, clientX: 174 });
+    expect(useEditorStore.getState().project.tracks.flatMap(t => t.clips).map(c => c.startUs)).toEqual(clips.map(c => c.startUs));
+    expect(container.querySelectorAll(".track-row")).toHaveLength(9);
+    fireEvent.pointerUp(first, { pointerId: 13, clientX: 174 });
+    expect(useEditorStore.getState().project.tracks.flatMap(t => t.clips).map(c => c.startUs)).toEqual(clips.map(c => c.startUs + 1_000_000));
+    const edge = first.querySelector(".resize-handle.end")!;
+    fireEvent.pointerDown(edge, { pointerId: 14, clientX: 174 });
+    fireEvent.pointerMove(first, { pointerId: 14, clientX: 150 });
+    fireEvent.pointerUp(first, { pointerId: 14, clientX: 150 });
+    expect(useEditorStore.getState().project.tracks.flatMap(t => t.clips).map(c => c.durationUs)).toEqual(clips.map((c, i) => c.durationUs - (i === 0 ? 1_000_000 : 0)));
+  });
+  it("uses absolute microseconds when seeking in a focused group", () => {
+    useEditorStore.getState().addComposition("scene-focus-stack");
+    const { container } = render(<Timeline />);
+    fireEvent.click(screen.getByRole("button", { name: "聚焦场景组" }));
+    const inner = container.querySelector<HTMLElement>(".timeline-inner")!;
+    inner.getBoundingClientRect = () => ({ x: 100, y: 0, left: 100, top: 0, right: 900, bottom: 200, width: 800, height: 200, toJSON: () => ({}) });
+    fireEvent.click(inner, { clientX: 100 });
+    expect(useEditorStore.getState().playheadUs).toBe(7_000_000);
+    fireEvent.keyDown(inner, { key: "Escape" });
+    expect(screen.queryByRole("button", { name: "返回完整时间线" })).not.toBeInTheDocument();
+  });
+  it("seeks into focus and restores the full timeline viewport without changing the project", () => {
+    useEditorStore.getState().addComposition("scene-focus-stack");
+    useEditorStore.getState().setPlayhead(0);
+    const project = useEditorStore.getState().project;
+    const { container } = render(<Timeline />);
+    const scroll = container.querySelector<HTMLElement>(".timeline-scroll")!;
+    const body = container.querySelector<HTMLElement>(".timeline-body")!;
+    Object.defineProperty(scroll, "clientWidth", { configurable: true, value: 400 });
+    scroll.scrollLeft = 300;
+    body.scrollTop = 24;
+    fireEvent.click(screen.getByRole("button", { name: "聚焦场景组" }));
+    expect(useEditorStore.getState().playheadUs).toBe(8_000_000);
+    expect(scroll.scrollLeft).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "放大时间线" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回完整时间线" }));
+    expect(useEditorStore.getState().zoom).toBe(1);
+    expect(scroll.scrollLeft).toBe(300);
+    expect(body.scrollTop).toBe(24);
+    expect(useEditorStore.getState().project).toBe(project);
+  });
+  it("resizes the timeline with keyboard controls and cleans up the workspace height", () => {
+    const { container, unmount } = render(<div className="editor-workspace"><Timeline /></div>);
+    const workspace = container.querySelector<HTMLElement>(".editor-workspace")!;
+    Object.defineProperty(workspace, "clientHeight", { value: 800 });
+    const handle = screen.getByRole("separator", { name: "调整时间线高度" });
+    fireEvent.keyDown(handle, { key: "ArrowUp" });
+    expect(workspace.style.getPropertyValue("--timeline-height")).toBe("160px");
+    fireEvent.keyDown(handle, { key: "ArrowUp" });
+    expect(workspace.style.getPropertyValue("--timeline-height")).toBe("184px");
+    unmount();
+    expect(workspace.style.getPropertyValue("--timeline-height")).toBe("");
+  });
+  it("shows effects without an independent scene track", () => {
+    render(<Timeline />);
+    expect(screen.queryByText("场景")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI 内容")).not.toBeInTheDocument();
     expect(screen.getByText("动效")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "场景锁定" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "场景锁定" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "动效锁定" })).toBeInTheDocument();
   });
 

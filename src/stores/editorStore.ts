@@ -1,8 +1,14 @@
 import { create } from "zustand";
-import { BUILTIN_EFFECTS, OVERLAY_STUDIO_EFFECT_IDS, effectById, effectParamsForText, recommendedEffectFontSizeForId } from "@/domain/effects";
+import { compositionLayer, mediaComposition, normalizeBindings, compositionBindingIssues, compositionSlots, compositionTimeUs, compositionRetimeBounds, sceneGroupRetimeRatio, slotAccepts, isBackgroundComposition, type CompositionBinding } from "@/domain/compositions";
+import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
+import { normalizeVideoMask } from "@/domain/videoFrame";
+import { normalizePresenterSafeArea } from "@/domain/presenterSafeArea";
+import { normalizeSubtitleTheme } from "@/domain/subtitleTheme";
+import { BUILTIN_EFFECTS, OVERLAY_STUDIO_EFFECT_IDS, compositionById, defaultEffectTransform, effectParamsForText, recommendedEffectFontSizeForId } from "@/domain/effects";
 import { cameraMotionForPreset } from "@/domain/camera";
 import { timedTextSegments } from "@/domain/captions";
 import { createGeneratedEffectLayers } from "@/domain/sceneEffects";
+import { sceneBackgroundComposition } from "@/domain/sceneBackground";
 import { presenterMotionSafeArea, resolveMotionLayout, type MotionLayoutLayer, type OccupiedMotionLayoutLayer } from "@/domain/motionLayout";
 import { motionColorRoleForEffect, motionThemeAccentColor } from "@/domain/motionTheme";
 import { DEFAULT_TRANSFORM, videoLayoutForPreset, visualTransformAt } from "@/domain/transforms";
@@ -13,7 +19,7 @@ import {
   type AudioRole,
   type ChapterProgressSettings,
   type EditorProject,
-  type EffectClip,
+  type CompositionClip,
   type GeneratedBlock,
   type ImageClip,
   type InsertMode,
@@ -29,7 +35,7 @@ import {
   type VideoPresentationCue,
   type VideoTransition
 } from "@/domain/project";
-import type { AiMotionMatch, AiVideoPlan } from "@/services/ai/schema";
+import type { AiMotionMatch, AiSoundMatch, AiVideoPlan } from "@/services/ai/schema";
 import { createVideoPresentationCue, DEFAULT_EFFECT_BACKDROP, DEFAULT_VIDEO_FOCUS, DEFAULT_VIDEO_MASK, DEFAULT_VIDEO_TRANSITION, selectedVisualTransitionCuts, videoPresentationAt } from "@/domain/videoPresentation";
 import { DEFAULT_SUBTITLE_STYLE, subtitleKeywordsForText } from "@/domain/videoDecorations";
 import { builtinSoundAssetId, builtinSoundEffectById } from "@/domain/soundEffects";
@@ -57,43 +63,15 @@ export interface MotionMatchApplySummary {
   skippedEffectCount: number;
 }
 
-const overlayStudioDefaultPosition: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT_IDS)[number], { x: number; y: number }>> = {
-  "quote-lockup": { x: 72, y: 50 },
-  "step-timeline": { x: 73, y: 50 },
-  "rank-bars": { x: 28, y: 50 },
-  "punch-pill": { x: 50, y: 82 },
-  "term-card": { x: 72, y: 50 },
-  "pin-board": { x: 78, y: 20 },
-  checklist: { x: 27, y: 50 },
-  "terminal-3d": { x: 50, y: 50 },
-  "ring-metric": { x: 50, y: 50 },
-  "versus-card": { x: 50, y: 50 },
-  "ui-callout": { x: 50, y: 50 },
-  "type-shift": { x: 50, y: 50 },
-  "blur-text": { x: 50, y: 50 },
-  odometer: { x: 50, y: 50 },
-  "focus-card": { x: 50, y: 50 },
-  "chapter-bar": { x: 50, y: 4 },
-  "caption-track": { x: 50, y: 86 },
-  "stat-proof": { x: 27, y: 50 },
-  "growth-curve": { x: 30, y: 50 },
-  "entity-chips": { x: 34, y: 72 }
-};
-
-function defaultEffectTransform(effectId: string) {
-  const position = overlayStudioDefaultPosition[effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]] ?? { x: 50, y: 30 };
-  return { ...position, scale: 1, rotation: 0, opacity: 1 };
-}
-
-function aiEffectScale(effectId: string, matchScale: number, hasChart: boolean) {
-  if (OVERLAY_STUDIO_EFFECT_IDS.includes(effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number])) return 1;
+function aiEffectScale(compositionId: string, matchScale: number, hasChart: boolean) {
+  if (OVERLAY_STUDIO_EFFECT_IDS.includes(compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number])) return 1;
   return Math.max(hasChart ? 0.8 : 0.65, Math.min(2.5, matchScale));
 }
 
-function effectMotionLayoutLayer(effect: EffectClip): MotionLayoutLayer {
+function effectMotionLayoutLayer(effect: CompositionClip): MotionLayoutLayer {
   return {
     id: effect.id,
-    effectId: effect.effectId,
+    compositionId: effect.compositionId,
     startUs: effect.startUs,
     durationUs: effect.durationUs,
     desiredX: effect.transform.x,
@@ -101,23 +79,23 @@ function effectMotionLayoutLayer(effect: EffectClip): MotionLayoutLayer {
     scale: effect.transform.scale,
     fontSize: effect.fontSize,
     text: effect.text,
-    recipe: effect.recipe ?? effectById(effect.effectId).recipe,
+    recipe: effect.recipe ?? compositionById(effect.compositionId).recipe,
     priority: "primary"
   };
 }
 
-function occupiedMotionLayoutLayer(effect: EffectClip): OccupiedMotionLayoutLayer {
+function occupiedMotionLayoutLayer(effect: CompositionClip): OccupiedMotionLayoutLayer {
   return {
     layer: effectMotionLayoutLayer(effect),
     placement: { x: effect.transform.x, y: effect.transform.y, scale: effect.transform.scale }
   };
 }
 
-function placeNewEffect(project: EditorProject, effect: EffectClip) {
+function placeNewEffect(project: EditorProject, effect: CompositionClip) {
   const safeArea = presenterMotionSafeArea(project.presenterSafeArea, effect.startUs, effect.durationUs);
   const occupiedLayers = project.tracks
     .flatMap((track) => track.clips)
-    .filter((clip): clip is EffectClip => clip.kind === "effect")
+    .filter((clip): clip is CompositionClip => clip.kind === "composition")
     .map(occupiedMotionLayoutLayer);
   const placement = resolveMotionLayout({
     canvas: project.canvas,
@@ -132,7 +110,7 @@ type AiMotionEntrySlot = "primary" | "secondary";
 
 interface AiMotionEntry {
   slot: AiMotionEntrySlot;
-  effectId: string;
+  compositionId: string;
   text: string;
   x: number;
   y: number;
@@ -153,22 +131,22 @@ function aiMotionLayoutId(captionIndex: number, slot: AiMotionEntrySlot) {
 }
 
 function aiMotionEntries(match: AiMotionMatch, captionText: string, useCaptionFallback: boolean): AiMotionEntry[] {
-  const primaryDefinition = match.primaryEffectId ? effectById(match.primaryEffectId) : null;
+  const primaryDefinition = match.primaryEffectId ? compositionById(match.primaryEffectId) : null;
   const primaryText = primaryDefinition?.recipe.sceneBackground
     ? ""
     : match.primaryText.trim() || (useCaptionFallback ? captionText : "");
   return [
-    primaryDefinition && (primaryText || primaryDefinition.recipe.sceneBackground)
-      ? { slot: "primary", effectId: primaryDefinition.id, text: primaryText, x: match.x, y: match.y, scale: match.scale, zIndex: 20 }
+    primaryDefinition && (primaryText || primaryDefinition.recipe.sceneBackground || Boolean(mediaComposition(primaryDefinition.id)))
+      ? { slot: "primary", compositionId: primaryDefinition.id, text: primaryText, x: match.x, y: match.y, scale: match.scale, zIndex: 20 }
       : null,
     match.secondaryEffectId && match.secondaryText?.trim()
-      ? { slot: "secondary", effectId: match.secondaryEffectId, text: match.secondaryText.trim(), x: match.secondaryX, y: match.secondaryY, scale: Math.min(1.5, match.scale), zIndex: 30 }
+      ? { slot: "secondary", compositionId: match.secondaryEffectId, text: match.secondaryText.trim(), x: match.secondaryX, y: match.secondaryY, scale: Math.min(1.5, match.scale), zIndex: 30 }
       : null
   ].filter((entry): entry is AiMotionEntry => Boolean(entry));
 }
 
-function materializedAiEffectRecipe(effectId: string, match: AiMotionMatch) {
-  const recipe = structuredClone(effectById(effectId).recipe);
+function materializedAiEffectRecipe(compositionId: string, match: AiMotionMatch) {
+  const recipe = structuredClone(compositionById(compositionId).recipe);
   if (recipe.chart && match.chart) {
     recipe.chart = recipe.chart.kind === "counter"
       ? { ...recipe.chart, endValue: match.chart.series[0] ?? 0, unit: match.chart.unit, suffix: match.chart.unit }
@@ -189,7 +167,7 @@ function resolveAiMotionPlacements(
   matches: readonly AiMotionMatch[],
   captions: readonly AiMotionCaptionSpan[],
   useCaptionFallback: boolean,
-  existingEffects: readonly EffectClip[]
+  existingEffects: readonly CompositionClip[]
 ) {
   const matchByCaption = new Map(matches.map((match) => [match.captionIndex, match]));
   const layers: MotionLayoutLayer[] = [];
@@ -202,17 +180,17 @@ function resolveAiMotionPlacements(
       : captionIndex;
     const endUs = captions[persistUntilCaptionIndex]?.endUs ?? caption.endUs;
     for (const entry of aiMotionEntries(match, caption.text, useCaptionFallback)) {
-      const recipe = materializedAiEffectRecipe(entry.effectId, match);
-      if (recipe.sceneBackground) continue;
+      const recipe = materializedAiEffectRecipe(entry.compositionId, match);
+      if (recipe.sceneBackground || mediaComposition(entry.compositionId)) continue;
       layers.push({
         id: aiMotionLayoutId(captionIndex, entry.slot),
-        effectId: entry.effectId,
+        compositionId: entry.compositionId,
         startUs: caption.startUs,
         durationUs: Math.max(100_000, endUs - caption.startUs),
         desiredX: entry.x,
         desiredY: entry.y,
-        scale: aiEffectScale(entry.effectId, entry.scale, Boolean(recipe.chart)),
-        fontSize: recommendedEffectFontSizeForId(entry.effectId, recipe, entry.text),
+        scale: aiEffectScale(entry.compositionId, entry.scale, Boolean(recipe.chart)),
+        fontSize: recommendedEffectFontSizeForId(entry.compositionId, recipe, entry.text),
         text: entry.text,
         recipe,
         priority: entry.slot
@@ -257,6 +235,9 @@ interface EditorState {
   past: EditorProject[];
   future: EditorProject[];
   selectClip: (clipId: string | null, additive?: boolean) => void;
+  selectSceneGroup: (groupId: string) => void;
+  retimeSceneGroup: (groupId: string, durationUs: number) => void;
+  retimeComposition: (clipId: string, durationUs: number) => void;
   setPlayhead: (timeUs: number) => void;
   setZoom: (zoom: number) => void;
   setRangeStart: (timeUs: number | null) => void;
@@ -266,7 +247,7 @@ interface EditorState {
   updatePresenterSafeArea: (settings: PresenterSafeAreaSettings) => void;
   updateMotionTheme: (patch: Partial<Omit<MotionTheme, "colors">> & { colors?: Partial<MotionTheme["colors"]> }) => void;
   updateChapterProgress: (patch: Partial<ChapterProgressSettings>) => void;
-  addEffect: (effectId: string) => void;
+  addComposition: (compositionId: string) => void;
   addVideo: (asset: MediaAsset) => void;
   addImage: (asset: MediaAsset) => void;
   addAudio: (asset: MediaAsset, role?: AudioRole, startUs?: number, sourceBlockId?: string) => void;
@@ -275,10 +256,12 @@ interface EditorState {
   updateAsset: (assetId: string, patch: Partial<MediaAsset>) => void;
   replaceProject: (project: EditorProject) => void;
   addGeneratedPlan: (plan: AiVideoPlan, prompt: string, mode: InsertMode, target?: { startUs: number; durationUs?: number }) => string;
-  applyMotionMatches: (subtitleIds: string[], matches: AiMotionMatch[], soundAssets?: MediaAsset[]) => MotionMatchApplySummary;
+  applyMotionMatches: (subtitleIds: string[], matches: AiMotionMatch[]) => MotionMatchApplySummary;
+  applySoundMatches: (subtitleIds: string[], matches: AiSoundMatch[], soundAssets?: MediaAsset[]) => number;
   alignGeneratedBlockDuration: (blockId: string, durationUs: number) => void;
   alignGeneratedSceneDurations: (blockId: string, durationsUs: number[], subtitleIds?: string[]) => void;
-  updateEffect: (clipId: string, patch: Partial<EffectClip>) => void;
+  updateComposition: (clipId: string, patch: Partial<CompositionClip>) => void;
+  bindCompositionAssets: (clipId: string, bindings: CompositionBinding[], importedAssets?: MediaAsset[]) => void;
   updateScene: (clipId: string, patch: Partial<SceneClip>) => void;
   updateVideo: (clipId: string, patch: Partial<VideoClip>) => void;
   applyTransitionToSelectedMaterials: (transition: VideoTransition) => void;
@@ -324,36 +307,49 @@ function findClip(project: EditorProject, clipId: string | null): TimelineClip |
 export function expandSceneGroupClipIds(project: EditorProject, clipIds: readonly string[]): string[] {
   const selected = new Set(clipIds);
   const groups = new Set(project.tracks.flatMap((track) => track.clips).flatMap((clip) => (
-    selected.has(clip.id) && (clip.kind === "effect" || clip.kind === "scene") && clip.sceneGroupId ? [clip.sceneGroupId] : []
+    selected.has(clip.id) && (clip.kind === "composition" || clip.kind === "scene") && clip.sceneGroupId ? [clip.sceneGroupId] : []
   )));
   if (!groups.size) return [...selected];
   for (const clip of project.tracks.flatMap((track) => track.clips)) {
-    if ((clip.kind === "effect" || clip.kind === "scene") && clip.sceneGroupId && groups.has(clip.sceneGroupId)) selected.add(clip.id);
+    if ((clip.kind === "composition" || clip.kind === "scene") && clip.sceneGroupId && groups.has(clip.sceneGroupId)) selected.add(clip.id);
   }
   return [...selected];
 }
 
-function stretchSceneGroup(project: EditorProject, clip: EffectClip | SceneClip, edge: "start" | "end", deltaUs: number) {
+function retimeCompositionData(clip: CompositionClip, durationUs: number) {
+  const ratio = durationUs / clip.durationUs;
+  if (mediaComposition(clip.compositionId)) {
+    clip.animationDurationUs = Math.round((clip.animationDurationUs ?? clip.durationUs * clip.speed) * ratio);
+    clip.sourceOffsetUs = Math.round((clip.sourceOffsetUs ?? 0) * ratio);
+  } else if (!clip.recipe?.sceneBackground) clip.speed = Math.max(0.25, Math.min(3, clip.speed / ratio));
+  clip.transformKeyframes = clip.transformKeyframes?.map(frame => ({ ...frame, offsetUs: Math.round(frame.offsetUs * ratio) }));
+  if (clip.dimAtUs !== undefined) clip.dimAtUs = Math.round(clip.dimAtUs * ratio);
+  clip.soundCues = clip.soundCues?.map(cue => ({ ...cue, offsetUs: Math.round(cue.offsetUs * ratio), durationUs: Math.max(50_000, Math.min(3_000_000, Math.round(cue.durationUs * ratio))) }));
+  clip.durationUs = durationUs;
+}
+
+function stretchSceneGroup(project: EditorProject, clip: CompositionClip | SceneClip, edge: "start" | "end", deltaUs: number) {
   if (!clip.sceneGroupId) return false;
   const members = project.tracks.flatMap((track) => track.clips.map((candidate) => ({ candidate, track })))
-    .filter((entry): entry is { candidate: EffectClip | SceneClip; track: TimelineTrack } => (
-      (entry.candidate.kind === "effect" || entry.candidate.kind === "scene") && entry.candidate.sceneGroupId === clip.sceneGroupId
+    .filter((entry): entry is { candidate: CompositionClip | SceneClip; track: TimelineTrack } => (
+      (entry.candidate.kind === "composition" || entry.candidate.kind === "scene") && entry.candidate.sceneGroupId === clip.sceneGroupId
     ));
-  if (members.length < 2 || members.some(({ candidate, track }) => candidate.locked || track.locked)) return members.length >= 2;
+  if (!members.length || members.some(({ candidate, track }) => candidate.locked || track.locked)) return true;
   const groupStartUs = Math.min(...members.map(({ candidate }) => candidate.startUs));
   const groupEndUs = Math.max(...members.map(({ candidate }) => candidate.startUs + candidate.durationUs));
   const spanUs = Math.max(100_000, groupEndUs - groupStartUs);
   const nextStartUs = edge === "start" ? Math.max(0, Math.min(groupEndUs - 100_000, groupStartUs + deltaUs)) : groupStartUs;
   const nextEndUs = edge === "end" ? Math.max(groupStartUs + 100_000, groupEndUs + deltaUs) : groupEndUs;
-  const ratio = (nextEndUs - nextStartUs) / spanUs;
+  const ratio = sceneGroupRetimeRatio(members.map(({ candidate }) => candidate), (nextEndUs - nextStartUs) / spanUs);
   for (const { candidate } of members) {
     candidate.startUs = Math.round(nextStartUs + (candidate.startUs - groupStartUs) * ratio);
+    if (candidate.kind === "composition") {
+      retimeCompositionData(candidate, Math.max(100_000, Math.round(candidate.durationUs * ratio)));
+      continue;
+    }
     candidate.durationUs = Math.max(100_000, Math.round(candidate.durationUs * ratio));
     if (candidate.dimAtUs !== undefined) candidate.dimAtUs = Math.round(candidate.dimAtUs * ratio);
     candidate.soundCues = candidate.soundCues?.map((cue) => ({ ...cue, offsetUs: Math.round(cue.offsetUs * ratio), durationUs: Math.max(50_000, Math.round(cue.durationUs * ratio)) }));
-    if (candidate.kind === "effect" && candidate.transformKeyframes?.length) {
-      candidate.transformKeyframes = candidate.transformKeyframes.map((frame) => ({ ...frame, offsetUs: Math.round(frame.offsetUs * ratio) }));
-    }
   }
   return true;
 }
@@ -414,7 +410,7 @@ function videoClipFields(project: EditorProject, startUs: number, placement: "au
   const first = active.length === 0;
   const preset = first && placement !== "overlay" ? "full" : "picture-in-picture-top-right";
   const layout = videoLayoutForPreset(preset, 1_000_000);
-  const zIndex = first ? 0 : Math.max(0, ...active.map((clip) => clip.zIndex ?? 0)) + 10;
+  const zIndex = first ? DEFAULT_VIDEO_LAYER : Math.max(DEFAULT_VIDEO_LAYER, ...active.map((clip) => clip.zIndex ?? DEFAULT_VIDEO_LAYER)) + 10;
   return {
     zIndex,
     transform: layout.transform,
@@ -427,7 +423,7 @@ function videoClipFields(project: EditorProject, startUs: number, placement: "au
   };
 }
 
-function splitVideoKeyframes(clip: VideoClip, atUs: number) {
+function splitVideoKeyframes(clip: VideoClip | CompositionClip, atUs: number) {
   const base = clip.transform ?? DEFAULT_TRANSFORM;
   const boundary = visualTransformAt(base, clip.transformKeyframes, atUs);
   const leading = [...(clip.transformKeyframes ?? []).filter((frame) => frame.offsetUs < atUs), { offsetUs: atUs, x: boundary.x, y: boundary.y, scale: boundary.scale, easing: "ease-in-out" as const }];
@@ -602,8 +598,8 @@ function replaceGeneratedCaptions(project: EditorProject, block: GeneratedBlock)
       track.clips.push({
         id: crypto.randomUUID(), trackId: track.id, kind: "subtitle", label: cue.text,
         startUs, durationUs: endUs - startUs, locked: false, text: cue.text,
-        sourceAssetId: block.id, sourceBlockId: block.id, color: "#ffffff", backgroundColor: "#000000", fontSize: 44, positionY: 88,
-        ...DEFAULT_SUBTITLE_STYLE
+        sourceAssetId: block.id, sourceBlockId: block.id, backgroundColor: "#000000", fontSize: 44, positionY: 88,
+        ...DEFAULT_SUBTITLE_STYLE, ...project.subtitleTheme
       });
     }
     sceneStartUs += scene.durationUs;
@@ -630,12 +626,38 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   }),
   selectClip: (selectedClipId, additive = false) => set((state) => {
     if (!selectedClipId) return { selectedClipId: null, selectedClipIds: [] };
-    const groupIds = expandSceneGroupClipIds(state.project, [selectedClipId]);
+    const groupIds = [selectedClipId];
     if (!additive) return { selectedClipId, selectedClipIds: groupIds };
     const selectedClipIds = groupIds.every((id) => state.selectedClipIds.includes(id))
       ? state.selectedClipIds.filter((id) => !groupIds.includes(id))
       : [...new Set([...state.selectedClipIds, ...groupIds])];
     return { selectedClipIds, selectedClipId: selectedClipIds.includes(selectedClipId) ? selectedClipId : selectedClipIds.at(-1) ?? null };
+  }),
+  selectSceneGroup: (groupId) => set((state) => {
+    const selectedClipIds = state.project.tracks.flatMap(track => track.clips).filter(clip => (clip.kind === "composition" || clip.kind === "scene") && clip.sceneGroupId === groupId).map(clip => clip.id);
+    return { selectedClipIds, selectedClipId: selectedClipIds[0] ?? null };
+  }),
+  retimeSceneGroup: (groupId, durationUs) => set((state) => {
+    if (!Number.isFinite(durationUs)) return state;
+    const members = state.project.tracks.flatMap(track => track.clips.map(clip => ({ clip, track }))).filter(({ clip }) => (clip.kind === "composition" || clip.kind === "scene") && clip.sceneGroupId === groupId);
+    if (!members.length || members.some(({ clip, track }) => clip.locked || track.locked)) return state;
+    const startUs = Math.min(...members.map(({ clip }) => clip.startUs));
+    const endUs = Math.max(...members.map(({ clip }) => clip.startUs + clip.durationUs));
+    return commit(state, project => {
+      const clip = findClip(project, members[0].clip.id);
+      if (clip?.kind === "composition" || clip?.kind === "scene") stretchSceneGroup(project, clip, "end", Math.max(250_000, Math.round(durationUs)) - (endUs - startUs));
+    });
+  }),
+  retimeComposition: (clipId, durationUs) => set((state) => {
+    const clip = findClip(state.project, clipId);
+    if (!clip || clip.kind !== "composition" || clip.locked || state.project.tracks.find(t => t.id === clip.trackId)?.locked || !Number.isFinite(durationUs)) return state;
+    const bounds = compositionRetimeBounds(clip);
+    const nextDurationUs = Math.max(bounds.min, Math.min(bounds.max, Math.round(durationUs)));
+    if (nextDurationUs === clip.durationUs) return state;
+    return commit(state, project => {
+      const next = findClip(project, clipId);
+      if (next?.kind === "composition") retimeCompositionData(next, nextDurationUs);
+    });
   }),
   setPlayhead: (playheadUs) => set({ playheadUs: Math.max(0, playheadUs) }),
   setZoom: (zoom) => set({ zoom: Math.min(3, Math.max(0.6, zoom)) }),
@@ -651,10 +673,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     };
   })),
   updatePresenterSafeArea: (settings) => set((state) => commit(state, (project) => {
-    project.presenterSafeArea = {
-      position: ["none", "left", "center", "right"].includes(settings.position) ? settings.position : "none",
-      widthPercent: Math.max(18, Math.min(60, Number.isFinite(settings.widthPercent) ? settings.widthPercent : 32))
-    };
+    project.presenterSafeArea = normalizePresenterSafeArea(settings);
   })),
   updateMotionTheme: (patch) => set((state) => commit(state, (project) => {
     project.motionTheme = {
@@ -678,8 +697,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         .sort((left, right) => left.startUs - right.startUs)
     };
   })),
-  addEffect: (effectId) => {
-    const definition = effectById(effectId);
+  addComposition: (compositionId) => {
+    const definition = compositionById(compositionId);
+    if (get().project.tracks.find((track) => track.kind === "composition")?.locked) return;
     const groupId = definition.kind === "scene" ? crypto.randomUUID() : undefined;
     const layers = definition.kind === "scene"
       ? createGeneratedEffectLayers([definition.id], definition.defaultText, definition.defaultAccentColor, definition.defaultDurationUs, "scene-template")
@@ -687,59 +707,62 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const id = layers[0]?.id ?? crypto.randomUUID();
     set((state) => ({
       ...commit(state, (project) => {
-        const track = project.tracks.find((candidate) => candidate.kind === "effect")!;
+        const track = project.tracks.find((candidate) => candidate.kind === "composition")!;
         const themeAccentColor = motionThemeAccentColor(project.motionTheme);
         if (definition.kind === "scene") {
           for (const layer of layers) {
-            const clip: EffectClip = {
-              id: layer.id, trackId: track.id, kind: "effect", label: `${definition.name} · ${effectById(layer.effectId).name}`,
+            const clip: CompositionClip = {
+              id: layer.id, trackId: track.id, kind: "composition", label: `${definition.name} · ${compositionById(layer.compositionId).name}`,
               startUs: state.playheadUs + layer.startOffsetUs, durationUs: layer.durationUs, locked: false,
-              effectId: layer.effectId, text: layer.text, color: layer.textColor, accentColor: themeAccentColor,
+              compositionId: layer.compositionId, text: layer.text, color: layer.textColor, accentColor: themeAccentColor,
               fontSize: layer.fontSize, speed: layer.speed, transform: layer.transform, recipe: layer.recipe,
               soundCues: layer.soundCues,
-              zIndex: layer.zIndex, sceneGroupId: groupId, sceneTemplateId: definition.id, matchQuery: layer.matchQuery,
-              colorRole: motionColorRoleForEffect(layer.effectId),
-              backdrop: { ...DEFAULT_EFFECT_BACKDROP, enabled: !OVERLAY_STUDIO_EFFECT_IDS.includes(layer.effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]) },
-              params: structuredClone(effectById(layer.effectId).defaultParams ?? {})
+              zIndex: 200 + layer.zIndex, sceneGroupId: groupId, sceneTemplateId: definition.id, matchQuery: layer.matchQuery,
+              colorRole: motionColorRoleForEffect(layer.compositionId),
+              backdrop: { ...DEFAULT_EFFECT_BACKDROP, enabled: !OVERLAY_STUDIO_EFFECT_IDS.includes(layer.compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]) },
+              params: structuredClone(compositionById(layer.compositionId).defaultParams ?? {})
             };
             track.clips.push(clip);
           }
         } else if (definition.recipe.sceneBackground) {
-          const sceneTrack = project.tracks.find((candidate) => candidate.kind === "scene")!;
+          const sceneTrack = track;
           const background = structuredClone(definition.recipe.sceneBackground);
           if (BUILTIN_EFFECTS.some((effect) => effect.id === definition.id)) background.borderColor = themeAccentColor;
           const clip: SceneClip = {
             id, trackId: sceneTrack.id, kind: "scene", label: definition.name, startUs: state.playheadUs,
-            durationUs: definition.defaultDurationUs, locked: false, effectId,
+            durationUs: definition.defaultDurationUs, locked: false, compositionId,
             background, opacity: 1,
             soundCues: structuredClone(definition.soundCues ?? [])
           };
-          sceneTrack.clips.push(clip);
+          sceneTrack.clips.push(sceneBackgroundComposition(clip));
         } else {
-          const clip: EffectClip = {
-            id, trackId: track.id, kind: "effect", label: definition.name, startUs: state.playheadUs,
-            durationUs: definition.defaultDurationUs, locked: false, effectId, text: definition.defaultText,
+          const clip: CompositionClip = {
+            id, trackId: track.id, kind: "composition", label: definition.name, startUs: state.playheadUs,
+            durationUs: definition.defaultDurationUs, locked: false, compositionId, text: definition.defaultText,
+            bindings: [], sourceOffsetUs: 0, animationDurationUs: definition.defaultDurationUs,
             color: definition.defaultColor, accentColor: themeAccentColor,
             fontSize: recommendedEffectFontSizeForId(definition.id, definition.recipe, definition.defaultText), speed: 1,
-            transform: defaultEffectTransform(effectId), recipe: structuredClone(definition.recipe), zIndex: 20,
+            transform: defaultEffectTransform(compositionId), recipe: structuredClone(definition.recipe), zIndex: compositionLayer({ compositionId, recipe: definition.recipe }),
             soundCues: structuredClone(definition.soundCues ?? []),
-            colorRole: motionColorRoleForEffect(effectId),
-            backdrop: { ...DEFAULT_EFFECT_BACKDROP, enabled: !OVERLAY_STUDIO_EFFECT_IDS.includes(effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]) },
+            colorRole: motionColorRoleForEffect(compositionId),
+            backdrop: { ...DEFAULT_EFFECT_BACKDROP, enabled: !OVERLAY_STUDIO_EFFECT_IDS.includes(compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]) },
             params: structuredClone(definition.defaultParams ?? {})
           };
-          placeNewEffect(project, clip);
+          if (!mediaComposition(definition.id)) placeNewEffect(project, clip);
+          else clip.transform = { ...DEFAULT_TRANSFORM };
           track.clips.push(clip);
         }
       }),
       selectedClipId: id,
-      selectedClipIds: [id]
+      selectedClipIds: [id],
+      ...(isBackgroundComposition(compositionId) ? { previewRequest: { id: (state.previewRequest?.id ?? 0) + 1, startUs: state.playheadUs, endUs: state.playheadUs + definition.defaultDurationUs } } : {})
     }));
   },
   addVideo: (asset) => {
     const id = crypto.randomUUID();
     set((state) => ({
       ...commit(state, (project) => {
-        const hasVisualContent = project.tracks.some((track) => ["video", "image", "generated", "scene", "effect"].includes(track.kind) && track.clips.length > 0);
+        const hasVisualContent = project.tracks.some((track) => ["video", "image", "generated", "scene", "composition"].includes(track.kind) && track.clips.length > 0);
         if (!hasVisualContent && asset.width && asset.height) {
           project.canvas = {
             width: Math.max(64, Math.min(7680, Math.round(asset.width / 2) * 2)),
@@ -762,7 +785,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           assetId: asset.id,
           sourceInUs: 0,
           playbackRate: 1,
-          fit: "cover",
+          fit: "contain",
           camera: cameraMotionForPreset("none"),
           ...videoClipFields(project, insertion.startUs)
         });
@@ -867,7 +890,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           const insertion = visualInsertion(project, state.selectedClipId, state.playheadUs, placement === "auto");
           if (asset.kind === "video") {
             const track = videoTrackForPlacement(project, insertion.startUs, placement, asset.durationUs, insertion.selected?.kind === "video" ? insertion.selected.trackId : undefined);
-            track.clips.push({ id, trackId: track.id, kind: "video", label: asset.name, startUs: insertion.startUs, durationUs: asset.durationUs, locked: false, assetId, sourceInUs: 0, playbackRate: 1, fit: "cover", camera: cameraMotionForPreset("none"), ...videoClipFields(project, insertion.startUs, placement) });
+            track.clips.push({ id, trackId: track.id, kind: "video", label: asset.name, startUs: insertion.startUs, durationUs: asset.durationUs, locked: false, assetId, sourceInUs: 0, playbackRate: 1, fit: "contain", camera: cameraMotionForPreset("none"), ...videoClipFields(project, insertion.startUs, placement) });
           } else if (asset.kind === "image") {
             const track = project.tracks.find((candidate) => candidate.kind === "image")!;
             track.clips.push({ id, trackId: track.id, kind: "image", label: asset.name, startUs: insertion.startUs, durationUs: asset.durationUs || 5_000_000, locked: false, assetId, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, entrance: "pop", speed: 1 });
@@ -933,10 +956,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           insertMode: mode,
           scenes: captions.map((caption, captionIndex) => {
             const match = matchByCaption.get(captionIndex);
-            const definition = effectById(match?.primaryEffectId ?? "quote-lockup");
+            const definition = compositionById(match?.primaryEffectId ?? "quote-lockup");
             return {
               id: crypto.randomUUID(), title: caption.text.slice(0, 80), narration: caption.text,
-              durationUs: Math.max(100_000, caption.endUs - caption.startUs), effectId: definition.id,
+              durationUs: Math.max(100_000, caption.endUs - caption.startUs), compositionId: definition.id,
               textColor: definition.defaultColor, accentColor: themeAccentColor,
               fontSize: recommendedEffectFontSizeForId(definition.id, definition.recipe, caption.text), speed: 1, transform: { x: match?.x ?? 50, y: match?.y ?? 30, scale: aiEffectScale(definition.id, match?.scale ?? 1, Boolean(definition.recipe.chart)), rotation: 0, opacity: 1 },
               mediaSourceInUs: 0, mediaFit: "cover", mediaVolume: 0, camera: cameraMotionForPreset(match?.cameraPreset ?? "none")
@@ -946,8 +969,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         track.clips.push(clip);
 
         const subtitleTrack = project.tracks.find((candidate) => candidate.kind === "subtitle")!;
-        const sceneTrack = project.tracks.find((candidate) => candidate.kind === "scene")!;
-        const effectTrack = project.tracks.find((candidate) => candidate.kind === "effect")!;
+        const sceneTrack = project.tracks.find((candidate) => candidate.kind === "composition")!;
+        const effectTrack = project.tracks.find((candidate) => candidate.kind === "composition")!;
         const motionCaptions = captions.map((caption) => ({
           startUs: startUs + caption.startUs,
           endUs: startUs + caption.endUs,
@@ -961,9 +984,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           motionCaptions,
           true,
           project.tracks
-            .filter((candidate) => candidate.kind === "effect" && !candidate.hidden)
+            .filter((candidate) => candidate.kind === "composition" && !candidate.hidden)
             .flatMap((candidate) => candidate.clips)
-            .filter((candidate): candidate is EffectClip => candidate.kind === "effect")
+            .filter((candidate): candidate is CompositionClip => candidate.kind === "composition")
         );
         captions.forEach((caption, captionIndex) => {
           const cueStartUs = startUs + caption.startUs;
@@ -978,36 +1001,36 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           subtitleTrack.clips.push({
             id: subtitleId, trackId: subtitleTrack.id, kind: "subtitle", label: caption.text,
             startUs: cueStartUs, durationUs: subtitleDurationUs, locked: false, text: caption.text,
-            sourceAssetId: id, sourceBlockId: id, color: "#ffffff", backgroundColor: "#000000", fontSize: 44, positionY: 88,
+            sourceAssetId: id, sourceBlockId: id, backgroundColor: "#000000", fontSize: 44, positionY: 88,
             ...DEFAULT_SUBTITLE_STYLE,
-            highlightWords: subtitleKeywordsForText(caption.text, matchByCaption.get(captionIndex)?.subtitleKeywords ?? []),
-            highlightColor: themeAccentColor
+            ...project.subtitleTheme,
+            highlightWords: subtitleKeywordsForText(caption.text, matchByCaption.get(captionIndex)?.subtitleKeywords ?? [])
           });
           const effectEntries = match ? aiMotionEntries(match, caption.text, true) : [];
           for (const entry of effectEntries.slice(0, 2)) {
             if (!match) break;
-            const definition = effectById(entry.effectId);
-            const recipe = materializedAiEffectRecipe(entry.effectId, match);
+            const definition = compositionById(entry.compositionId);
+            const recipe = materializedAiEffectRecipe(entry.compositionId, match);
             const placement = recipe.sceneBackground ? null : motionPlacements.get(aiMotionLayoutId(captionIndex, entry.slot));
             if (!recipe.sceneBackground && !placement) continue;
             const sceneGroupId = match?.motionGroupId ? `ai-motion:${id}:${match.motionGroupId}` : `ai-caption:${id}:${captionIndex}`;
-            const soundCues = entry.zIndex === 20 ? structuredClone(definition.soundCues ?? []) : [];
+            const soundCues: NonNullable<CompositionClip["soundCues"]> = [];
             if (recipe.sceneBackground) {
-              sceneTrack.clips.push({
+              sceneTrack.clips.push(sceneBackgroundComposition({
                 id: crypto.randomUUID(), trackId: sceneTrack.id, kind: "scene", label: `AI 场景 · ${definition.name}`,
-                startUs: cueStartUs, durationUs: cueDurationUs, locked: false, effectId: definition.id,
+                startUs: cueStartUs, durationUs: cueDurationUs, locked: false, compositionId: definition.id,
                 background: { ...structuredClone(recipe.sceneBackground), borderColor: themeAccentColor }, opacity: 1, soundCues, sceneGroupId, matchQuery: caption.text,
                 sourceBlockId: id, sourceSubtitleId: subtitleId
-              });
+              }));
             } else {
               if (!placement) continue;
               effectTrack.clips.push({
-                id: crypto.randomUUID(), trackId: effectTrack.id, kind: "effect", label: `AI 动效 · ${definition.name}`,
-                startUs: cueStartUs, durationUs: cueDurationUs, locked: false, effectId: definition.id, text: entry.text,
+                id: crypto.randomUUID(), trackId: effectTrack.id, kind: "composition", label: `AI 动效 · ${definition.name}`,
+                startUs: cueStartUs, durationUs: cueDurationUs, locked: false, compositionId: definition.id, text: entry.text,
                 color: definition.defaultColor, accentColor: themeAccentColor,
                 fontSize: recommendedEffectFontSizeForId(definition.id, recipe, entry.text), speed: 1,
                 transform: { x: placement.x, y: placement.y, scale: placement.scale, rotation: 0, opacity: 1 },
-                recipe, soundCues, zIndex: entry.zIndex, sceneGroupId, matchQuery: caption.text,
+                recipe, soundCues, zIndex: 200 + entry.zIndex, sceneGroupId, matchQuery: caption.text,
                 colorRole: motionColorRoleForEffect(definition.id),
                 sourceBlockId: id, sourceSubtitleId: subtitleId,
                 backdrop: effectBackdropForPreset(match?.backdropPreset ?? "none", themeAccentColor),
@@ -1020,8 +1043,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             if (!asset || asset.durationUs <= 0) return;
             const videoTrack = videoTrackForPlacement(project, cueStartUs, "auto", cueDurationUs);
             const layout = videoLayoutForPreset(layer.layoutPreset, cueDurationUs);
-            const activeZ = project.tracks.flatMap((candidate) => candidate.clips).filter((candidate): candidate is VideoClip => candidate.kind === "video" && cueStartUs < candidate.startUs + candidate.durationUs && cueStartUs + cueDurationUs > candidate.startUs).map((candidate) => candidate.zIndex ?? 0);
-            const zIndex = layer.layoutPreset === "full" && activeZ.length === 0 ? 0 : Math.max(layout.zIndex, activeZ.length ? Math.max(...activeZ) + 10 : layerIndex * 10);
+            const activeZ = project.tracks.flatMap((candidate) => candidate.clips).filter((candidate): candidate is VideoClip => candidate.kind === "video" && cueStartUs < candidate.startUs + candidate.durationUs && cueStartUs + cueDurationUs > candidate.startUs).map((candidate) => candidate.zIndex ?? DEFAULT_VIDEO_LAYER);
+            const zIndex = layer.layoutPreset === "full" && activeZ.length === 0 ? DEFAULT_VIDEO_LAYER : Math.max(layout.zIndex, activeZ.length ? Math.max(...activeZ) + 10 : DEFAULT_VIDEO_LAYER + layerIndex * 10);
             videoTrack.clips.push({
               id: crypto.randomUUID(), trackId: videoTrack.id, kind: "video", label: `AI 素材 · ${asset.name}`,
               startUs: cueStartUs, durationUs: cueDurationUs, locked: false, assetId: asset.id,
@@ -1046,7 +1069,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }));
     return id;
   },
-  applyMotionMatches: (subtitleIds, matches, soundAssets = []) => {
+  applyMotionMatches: (subtitleIds, matches) => {
     const summary: MotionMatchApplySummary = {
       requestedEffectCount: 0,
       effectCount: 0,
@@ -1069,20 +1092,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const anchor = subtitles[match.captionIndex];
         if (anchor) motionGroupSceneIds.set(match.motionGroupId, `ai-motion:${match.motionGroupId}:${anchor.id}`);
       }
-      const effectTrack = project.tracks.find((track) => track.kind === "effect")!;
-      const sceneTrack = project.tracks.find((track) => track.kind === "scene")!;
-      const soundTrack = project.tracks.find((track) => track.kind === "audio" && track.audioRole === "sound")
-        ?? project.tracks.find((track) => track.kind === "audio")!;
-      effectTrack.clips = effectTrack.clips.filter((clip) => clip.kind !== "effect" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
-      sceneTrack.clips = sceneTrack.clips.filter((clip) => clip.kind !== "scene" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
-      if (!soundTrack.locked) {
-        soundTrack.clips = soundTrack.clips.filter((clip) => clip.kind !== "audio" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
-        for (const asset of soundAssets) {
-          const existingAsset = project.assets.find((candidate) => candidate.id === asset.id);
-          if (existingAsset) Object.assign(existingAsset, asset);
-          else project.assets.push(asset);
-        }
-      }
+      const effectTrack = project.tracks.find((track) => track.kind === "composition")!;
+      const sceneTrack = effectTrack;
+      if (!effectTrack.locked) effectTrack.clips = effectTrack.clips.filter((clip) => clip.locked || clip.kind !== "composition" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
+      if (!sceneTrack.locked) sceneTrack.clips = sceneTrack.clips.filter((clip) => clip.locked || clip.kind !== "scene" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
       for (const track of project.tracks.filter((candidate) => candidate.kind === "video")) {
         track.clips = track.clips.filter((clip) => clip.kind !== "video" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
       }
@@ -1099,12 +1112,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         motionCaptions,
         false,
         project.tracks
-          .filter((candidate) => candidate.kind === "effect" && !candidate.hidden)
+          .filter((candidate) => candidate.kind === "composition" && !candidate.hidden)
           .flatMap((candidate) => candidate.clips)
-          .filter((candidate): candidate is EffectClip => candidate.kind === "effect")
+          .filter((candidate): candidate is CompositionClip => candidate.kind === "composition")
       );
 
-      const addMatchedVideo = (subtitle: SubtitleClip, durationUs: number, layer: AiMotionMatch["videoLayers"][number], labelPrefix: string) => {
+      const addMatchedVideo = (subtitle: SubtitleClip, durationUs: number, layer: AiMotionMatch["videoLayers"][number], labelPrefix: string, sourceVideo?: VideoClip) => {
         const asset = project.assets.find((candidate) => candidate.id === layer.assetId && candidate.kind === "video" && !candidate.missing);
         if (!asset || asset.durationUs <= 0) return;
         const track = videoTrackForPlacement(project, subtitle.startUs, "auto", durationUs);
@@ -1112,16 +1125,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const layout = videoLayoutForPreset(preset, durationUs);
         const boundedSourceInUs = Math.min(Math.max(0, Math.round(layer.sourceInSeconds * 1_000_000)), Math.max(0, asset.durationUs - 1));
         const availableUs = Math.max(1, asset.durationUs - boundedSourceInUs);
-        const playbackRate = Math.min(1, availableUs / durationUs);
-        const activeZ = project.tracks.flatMap((candidate) => candidate.clips).filter((candidate): candidate is VideoClip => candidate.kind === "video" && subtitle.startUs < candidate.startUs + candidate.durationUs && subtitle.startUs + durationUs > candidate.startUs).map((candidate) => candidate.zIndex ?? 0);
-        const zIndex = preset === "full" && activeZ.length === 0 ? 0 : Math.max(layout.zIndex, activeZ.length ? Math.max(...activeZ) + 10 : 10);
+        const playbackRate = Math.min(sourceVideo?.playbackRate ?? 1, availableUs / durationUs);
+        const activeZ = project.tracks.flatMap((candidate) => candidate.clips).filter((candidate): candidate is VideoClip => candidate.kind === "video" && subtitle.startUs < candidate.startUs + candidate.durationUs && subtitle.startUs + durationUs > candidate.startUs).map((candidate) => candidate.zIndex ?? DEFAULT_VIDEO_LAYER);
+        const zIndex = preset === "full" && activeZ.length === 0 ? DEFAULT_VIDEO_LAYER : Math.max(layout.zIndex, activeZ.length ? Math.max(...activeZ) + 10 : 30);
         track.clips.push({
           id: crypto.randomUUID(), trackId: track.id, kind: "video", label: `${labelPrefix} · ${asset.name}`,
           startUs: subtitle.startUs, durationUs, locked: false, assetId: asset.id,
-          sourceInUs: boundedSourceInUs, playbackRate, volume: layer.volume, fit: "cover", camera: cameraMotionForPreset(layer.cameraPreset),
-          zIndex, transform: layout.transform, transformKeyframes: layout.transformKeyframes,
+          sourceInUs: boundedSourceInUs, playbackRate, volume: layer.volume, fit: sourceVideo?.fit ?? "cover", camera: cameraMotionForPreset(layer.cameraPreset),
+          zIndex, transform: structuredClone(sourceVideo?.transform ?? layout.transform), transformKeyframes: layout.transformKeyframes,
           layoutPreset: preset, sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id,
-          role: layer.role, mask: { ...DEFAULT_VIDEO_MASK, shape: layer.shapePreset },
+          role: layer.role, mask: sourceVideo?.mask ? structuredClone(sourceVideo.mask) : { ...DEFAULT_VIDEO_MASK, shape: layer.shapePreset },
           transition: { ...DEFAULT_VIDEO_TRANSITION, preset: layer.transitionPreset },
           focus: layer.focus ? { ...DEFAULT_VIDEO_FOCUS, enabled: layer.focus.enabled, x: layer.focus.x, y: layer.focus.y, zoom: layer.focus.zoom, startOffsetUs: Math.round(layer.focus.startOffsetSeconds * 1_000_000), durationUs: Math.min(durationUs, Math.round(layer.focus.durationSeconds * 1_000_000)) } : undefined
         });
@@ -1136,52 +1149,54 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           : captionIndex;
         const endSubtitle = subtitles[persistUntilCaptionIndex] ?? subtitle;
         const matchDurationUs = Math.max(100_000, endSubtitle.startUs + endSubtitle.durationUs - subtitle.startUs);
-        subtitle.highlightWords = subtitleKeywordsForText(subtitle.text, match.subtitleKeywords ?? []);
-        subtitle.highlightColor = themeAccentColor;
-        const soundEffectId = match.soundEffectId;
-        if (soundEffectId && !soundTrack.locked) {
-          const definition = builtinSoundEffectById(soundEffectId);
-          const asset = project.assets.find((candidate) => candidate.id === builtinSoundAssetId(soundEffectId) && candidate.kind === "audio" && !candidate.missing);
-          if (definition && asset) {
-            soundTrack.clips.push({
-              id: crypto.randomUUID(), trackId: soundTrack.id, kind: "audio", label: `AI 音效 · ${definition.name}`,
-              startUs: subtitle.startUs, durationUs: asset.durationUs, locked: false, assetId: asset.id,
-              sourceInUs: 0, playbackRate: 1, volume: 1, fadeInUs: 0, fadeOutUs: Math.min(50_000, asset.durationUs), role: "sound",
-              sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id
-            });
-            summary.soundCount += 1;
-          }
+        if (!subtitle.locked && !project.tracks.find((track) => track.id === subtitle.trackId)?.locked) {
+          subtitle.highlightWords = subtitleKeywordsForText(subtitle.text, match.subtitleKeywords ?? []);
         }
         const entries = aiMotionEntries(match, subtitle.text, false);
         const selectedEntries = entries.slice(0, 2);
         summary.requestedEffectCount += selectedEntries.length;
         for (const entry of selectedEntries) {
-          const definition = effectById(entry.effectId);
-          const recipe = materializedAiEffectRecipe(entry.effectId, match);
+          const definition = compositionById(entry.compositionId);
+          if (effectTrack.locked || (definition.recipe.sceneBackground && sceneTrack.locked)) { summary.skippedEffectCount += 1; continue; }
+          if (mediaComposition(definition.id)) {
+            const bindings = normalizeBindings(match.compositionBindings);
+            if (compositionBindingIssues({ compositionId: definition.id, bindings }, project.assets).length) { summary.skippedEffectCount += 1; continue; }
+            const durationUs = definition.category === "展示" ? Math.max(2_000_000, Math.min(10_000_000, matchDurationUs)) : matchDurationUs;
+            effectTrack.clips.push({
+              id: crypto.randomUUID(), trackId: effectTrack.id, kind: "composition", label: `AI 动效 · ${definition.name}`,
+              startUs: subtitle.startUs, durationUs, animationDurationUs: durationUs, sourceOffsetUs: 0,
+              locked: false, compositionId: definition.id, bindings, text: "", color: definition.defaultColor,
+              accentColor: themeAccentColor, fontSize: 48, speed: 1, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 },
+              params: structuredClone(definition.defaultParams ?? {}), sourceSubtitleId: subtitle.id, zIndex: compositionLayer({ compositionId: definition.id, recipe: definition.recipe })
+            });
+            summary.effectCount += 1;
+            continue;
+          }
+          const recipe = materializedAiEffectRecipe(entry.compositionId, match);
           const placement = recipe.sceneBackground ? null : motionPlacements.get(aiMotionLayoutId(captionIndex, entry.slot));
           if (!recipe.sceneBackground && !placement) {
             summary.skippedEffectCount += 1;
             continue;
           }
           const sceneGroupId = match.motionGroupId ? motionGroupSceneIds.get(match.motionGroupId) : `ai-subtitle:${subtitle.id}`;
-          const soundCues = entry.zIndex === 20 ? structuredClone(definition.soundCues ?? []) : [];
+          const soundCues: NonNullable<CompositionClip["soundCues"]> = [];
           if (recipe.sceneBackground) {
-            sceneTrack.clips.push({
+            sceneTrack.clips.push(sceneBackgroundComposition({
               id: crypto.randomUUID(), trackId: sceneTrack.id, kind: "scene", label: `AI 场景 · ${definition.name}`,
-              startUs: subtitle.startUs, durationUs: matchDurationUs, locked: false, effectId: definition.id,
+              startUs: subtitle.startUs, durationUs: matchDurationUs, locked: false, compositionId: definition.id,
               background: { ...structuredClone(recipe.sceneBackground), borderColor: themeAccentColor }, opacity: 1, soundCues, sceneGroupId, matchQuery: subtitle.text,
               sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id
-            });
+            }));
             summary.sceneCount += 1;
           } else {
             if (!placement) continue;
             effectTrack.clips.push({
-              id: crypto.randomUUID(), trackId: effectTrack.id, kind: "effect", label: `AI 动效 · ${definition.name}`,
-              startUs: subtitle.startUs, durationUs: matchDurationUs, locked: false, effectId: definition.id, text: entry.text.trim(),
+              id: crypto.randomUUID(), trackId: effectTrack.id, kind: "composition", label: `AI 动效 · ${definition.name}`,
+              startUs: subtitle.startUs, durationUs: matchDurationUs, locked: false, compositionId: definition.id, text: entry.text.trim(),
               color: definition.defaultColor, accentColor: themeAccentColor,
               fontSize: recommendedEffectFontSizeForId(definition.id, recipe, entry.text.trim()), speed: 1,
               transform: { x: placement.x, y: placement.y, scale: placement.scale, rotation: 0, opacity: 1 }, recipe,
-              soundCues, zIndex: entry.zIndex, sceneGroupId, matchQuery: subtitle.text,
+              soundCues, zIndex: 200 + entry.zIndex, sceneGroupId, matchQuery: subtitle.text,
               colorRole: motionColorRoleForEffect(definition.id),
               sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id,
               backdrop: effectBackdropForPreset(match.backdropPreset ?? "none", themeAccentColor),
@@ -1196,15 +1211,56 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             clip.kind === "video" && clip.assetId === subtitle.sourceAssetId && !clip.sourceSubtitleId
             && clip.startUs <= subtitle.startUs && clip.startUs + clip.durationUs >= subtitle.startUs + matchDurationUs
           ));
-          if (sourceVideo) {
+          const sourceTrack = project.tracks.find((track) => track.id === sourceVideo?.trackId);
+          if (sourceVideo && !sourceVideo.locked && !sourceTrack?.locked && !sourceTrack?.hidden
+            && !sourceVideo.transformKeyframes?.length && !sourceVideo.presentationCues?.length) {
             const sourceInUs = sourceVideo.sourceInUs + Math.round((subtitle.startUs - sourceVideo.startUs) * sourceVideo.playbackRate);
-            addMatchedVideo(subtitle, matchDurationUs, { assetId: sourceVideo.assetId, role: sourceVideo.role ?? "a-roll", sourceInSeconds: sourceInUs / 1_000_000, layoutPreset: "full", shapePreset: sourceVideo.mask?.shape ?? "rectangle", transitionPreset: "none", cameraPreset: match.cameraPreset, volume: 0, focus: null }, "AI 运镜");
+            addMatchedVideo(subtitle, matchDurationUs, { assetId: sourceVideo.assetId, role: sourceVideo.role ?? "a-roll", sourceInSeconds: sourceInUs / 1_000_000, layoutPreset: "full", shapePreset: sourceVideo.mask?.shape ?? "rectangle", transitionPreset: "none", cameraPreset: match.cameraPreset, volume: 0, focus: null }, "AI 运镜", sourceVideo);
           }
         }
         matchedVideoLayers(match).forEach((layer) => addMatchedVideo(subtitle, matchDurationUs, layer, "AI 素材"));
       });
     }));
     return summary;
+  },
+  applySoundMatches: (subtitleIds, matches, soundAssets = []) => {
+    let count = 0;
+    const state = get();
+    const selectedIds = new Set(subtitleIds);
+    const soundTrack = state.project.tracks.find((track) => track.kind === "audio" && track.audioRole === "sound");
+    if (!selectedIds.size || !soundTrack || soundTrack.locked) return count;
+    const subtitles = state.project.tracks.flatMap((track) => track.clips)
+      .filter((clip): clip is SubtitleClip => clip.kind === "subtitle" && selectedIds.has(clip.id))
+      .sort((left, right) => left.startUs - right.startUs);
+    const lockedSubtitleIds = new Set(soundTrack.clips.filter((clip) => clip.locked).map((clip) => clip.sourceSubtitleId));
+    const editableIds = new Set(subtitles.filter((clip) => !lockedSubtitleIds.has(clip.id)).map((clip) => clip.id));
+    if (!editableIds.size) return count;
+    set((current) => commit(current, (project) => {
+      const track = project.tracks.find((candidate) => candidate.id === soundTrack.id)!;
+      track.clips = track.clips.filter((clip) => clip.locked || clip.kind !== "audio" || !clip.sourceSubtitleId || !editableIds.has(clip.sourceSubtitleId));
+      const seen = new Set<number>();
+      for (const match of matches) {
+        const subtitle = subtitles[match.captionIndex];
+        if (!subtitle || !editableIds.has(subtitle.id) || seen.has(match.captionIndex)) continue;
+        seen.add(match.captionIndex);
+        const definition = match.soundEffectId ? builtinSoundEffectById(match.soundEffectId) : undefined;
+        if (!definition) continue;
+        const assetId = builtinSoundAssetId(definition.id);
+        const asset = soundAssets.find((candidate) => candidate.id === assetId) ?? project.assets.find((candidate) => candidate.id === assetId);
+        if (!asset || asset.kind !== "audio" || asset.missing || !Number.isFinite(asset.durationUs) || asset.durationUs <= 0) continue;
+        const existing = project.assets.find((candidate) => candidate.id === assetId);
+        if (existing) Object.assign(existing, asset);
+        else project.assets.push(structuredClone(asset));
+        track.clips.push({
+          id: crypto.randomUUID(), trackId: track.id, kind: "audio", label: `AI 音效 · ${definition.name}`,
+          startUs: subtitle.startUs, durationUs: Math.round(asset.durationUs), locked: false, assetId,
+          sourceInUs: 0, playbackRate: 1, volume: 1, fadeInUs: 0, fadeOutUs: Math.min(50_000, Math.round(asset.durationUs)), role: "sound",
+          sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id
+        });
+        count += 1;
+      }
+    }));
+    return count;
   },
   alignGeneratedBlockDuration: (blockId, durationUs) => {
     const nextDurationUs = Math.max(100_000, Math.round(durationUs));
@@ -1218,7 +1274,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const related = (clip: TimelineClip) => clip.id === blockId
         || clip.sourceBlockId === blockId
         || (clip.kind === "subtitle" && clip.sourceAssetId === blockId)
-        || ((clip.kind === "scene" || clip.kind === "effect") && clip.sceneGroupId?.startsWith(`ai-caption:${blockId}:`));
+        || ((clip.kind === "scene" || clip.kind === "composition") && clip.sceneGroupId?.startsWith(`ai-caption:${blockId}:`));
       if (block.insertMode === "insert" && deltaUs !== 0) {
         for (const clip of project.tracks.flatMap((track) => track.clips)) {
           if (!related(clip) && clip.startUs >= previousEndUs) clip.startUs += deltaUs;
@@ -1229,7 +1285,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         clip.startUs = block.startUs + Math.round((clip.startUs - block.startUs) * ratio);
         clip.durationUs = Math.max(100_000, Math.round(clip.durationUs * ratio));
         if (clip.kind === "video") clip.playbackRate /= ratio;
-        if ((clip.kind === "video" || clip.kind === "effect") && clip.transformKeyframes?.length) {
+        if ((clip.kind === "video" || clip.kind === "composition") && clip.transformKeyframes?.length) {
           clip.transformKeyframes = clip.transformKeyframes.map((frame) => ({ ...frame, offsetUs: Math.round(frame.offsetUs * ratio) }));
         }
       }
@@ -1312,7 +1368,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         clip.startUs = nextStartUs;
         clip.durationUs = nextClipDurationUs;
         if (clip.kind === "video") clip.playbackRate /= ratio;
-        if ((clip.kind === "video" || clip.kind === "effect") && clip.transformKeyframes?.length) {
+        if ((clip.kind === "video" || clip.kind === "composition") && clip.transformKeyframes?.length) {
           clip.transformKeyframes = clip.transformKeyframes.map((frame) => ({ ...frame, offsetUs: Math.round(frame.offsetUs * ratio) }));
         }
         if (clip.kind === "video" && clip.presentationCues?.length) {
@@ -1343,21 +1399,62 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       block.durationUs = nextDurationUs;
     }));
   },
-  updateEffect: (clipId, patch) => set((state) => commit(state, (project) => {
-    const clip = findClip(project, clipId);
-    if (!clip || clip.kind !== "effect") return;
-    Object.assign(clip, patch);
-  })),
+  updateComposition: (clipId, patch) => set((state) => {
+    const existing = findClip(state.project, clipId);
+    if (!existing || existing.kind !== "composition" || existing.locked || state.project.tracks.find((track) => track.id === existing.trackId)?.locked) return state;
+    return commit(state, (project) => {
+      const clip = findClip(project, clipId);
+      if (!clip || clip.kind !== "composition") return;
+      Object.assign(clip, patch);
+      clip.zIndex = compositionLayer(clip);
+      clip.speed = Math.max(0.25, Math.min(3, Number.isFinite(clip.speed) ? clip.speed : 1));
+      clip.durationUs = Math.max(100_000, Math.round(Number.isFinite(clip.durationUs) ? clip.durationUs : existing.durationUs));
+      if (patch.durationUs !== undefined && mediaComposition(clip.compositionId)?.category === "展示") clip.durationUs = Math.max(2_000_000, Math.min(10_000_000, clip.durationUs));
+      clip.startUs = Math.max(0, Math.round(Number.isFinite(clip.startUs) ? clip.startUs : existing.startUs));
+      if (patch.bindings) clip.bindings = normalizeBindings(patch.bindings);
+      if (patch.durationUs !== undefined && mediaComposition(clip.compositionId)) clip.animationDurationUs = Math.round(clip.durationUs * clip.speed + (clip.sourceOffsetUs ?? 0));
+    });
+  }),
+  bindCompositionAssets: (clipId, bindings, importedAssets = []) => set((state) => {
+    const existing = findClip(state.project, clipId);
+    if (!existing || existing.kind !== "composition" || existing.locked || state.project.tracks.find((track) => track.id === existing.trackId)?.locked) return state;
+    const normalized = normalizeBindings(bindings);
+    const slots = compositionSlots(existing.compositionId);
+    if (!slots.length) throw new Error("这个动效没有素材槽");
+    const assets = [...state.project.assets, ...importedAssets];
+    for (const binding of normalized) {
+      const slot = slots.find((candidate) => candidate.id === binding.slotId);
+      if (!slot || binding.assetIds.length > slot.maxItems || binding.assetIds.some((id) => !slotAccepts(slot, assets.find((asset) => asset.id === id)?.kind))) throw new Error("素材类型或数量不符合槽位要求");
+    }
+    const becameReady = compositionBindingIssues(existing, state.project.assets).length > 0
+      && compositionBindingIssues({ ...existing, bindings: normalized }, assets).length === 0;
+    return {
+      ...commit(state, (project) => {
+        const clip = findClip(project, clipId);
+        if (!clip || clip.kind !== "composition") return;
+        for (const asset of importedAssets) if (!project.assets.some((candidate) => candidate.id === asset.id)) project.assets.push(asset);
+        clip.bindings = normalized;
+      }),
+      ...(becameReady ? { playheadUs: existing.startUs, previewRequest: { id: (state.previewRequest?.id ?? 0) + 1, startUs: existing.startUs, endUs: existing.startUs + existing.durationUs } } : {})
+    };
+  }),
   updateScene: (clipId, patch) => set((state) => commit(state, (project) => {
     const clip = findClip(project, clipId);
     if (!clip || clip.kind !== "scene") return;
     Object.assign(clip, patch);
   })),
-  updateVideo: (clipId, patch) => set((state) => commit(state, (project) => {
-    const clip = findClip(project, clipId);
-    if (!clip || clip.kind !== "video") return;
-    Object.assign(clip, patch);
-  })),
+  updateVideo: (clipId, patch) => set((state) => {
+    const clip = findClip(state.project, clipId);
+    if (!clip || clip.kind !== "video" || clip.locked || state.project.tracks.find((track) => track.id === clip.trackId)?.locked) return state;
+    return commit(state, (project) => {
+      const target = findClip(project, clipId);
+      if (target?.kind === "video") {
+        Object.assign(target, patch);
+        target.zIndex = normalizeLayer(target.zIndex, DEFAULT_VIDEO_LAYER);
+        if (patch.mask) target.mask = normalizeVideoMask(patch.mask);
+      }
+    });
+  }),
   applyTransitionToSelectedMaterials: (transition) => set((state) => {
     const targets = selectedVisualTransitionCuts(state.project, state.selectedClipIds);
     if (!targets.length) return state;
@@ -1386,23 +1483,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     else cues.push(cue);
     clip.presentationCues = cues.sort((left, right) => left.offsetUs - right.offsetUs);
   })),
-  updateVideoPresentationCue: (clipId, cueId, patch) => set((state) => commit(state, (project) => {
-    const clip = findClip(project, clipId);
-    if (!clip || clip.kind !== "video" || clip.locked) return;
-    const cue = clip.presentationCues?.find((candidate) => candidate.id === cueId);
-    if (!cue) return;
-    Object.assign(cue, patch);
-    cue.offsetUs = Math.max(0, Math.min(clip.durationUs - 1, Math.round(cue.offsetUs)));
-    cue.transitionDurationUs = cue.transitionDurationUs <= 0
-      ? 0
-      : Math.max(100_000, Math.min(clip.durationUs - cue.offsetUs, Math.round(cue.transitionDurationUs)));
-    cue.focus = {
-      ...cue.focus,
-      startOffsetUs: cue.offsetUs,
-      durationUs: Math.max(100_000, Math.min(clip.durationUs - cue.offsetUs, Math.round(cue.focus.durationUs)))
-    };
-    clip.presentationCues?.sort((left, right) => left.offsetUs - right.offsetUs);
-  })),
+  updateVideoPresentationCue: (clipId, cueId, patch) => set((state) => {
+    const source = findClip(state.project, clipId);
+    if (!source || source.kind !== "video" || source.locked || state.project.tracks.find((track) => track.id === source.trackId)?.locked) return state;
+    return commit(state, (project) => {
+      const clip = findClip(project, clipId);
+      if (!clip || clip.kind !== "video" || clip.locked) return;
+      const cue = clip.presentationCues?.find((candidate) => candidate.id === cueId);
+      if (!cue) return;
+      Object.assign(cue, patch);
+      if (patch.mask) cue.mask = normalizeVideoMask(patch.mask);
+      cue.offsetUs = Math.max(0, Math.min(clip.durationUs - 1, Math.round(cue.offsetUs)));
+      cue.transitionDurationUs = cue.transitionDurationUs <= 0
+        ? 0
+        : Math.max(100_000, Math.min(clip.durationUs - cue.offsetUs, Math.round(cue.transitionDurationUs)));
+      cue.focus = {
+        ...cue.focus,
+        startOffsetUs: cue.offsetUs,
+        durationUs: Math.max(100_000, Math.min(clip.durationUs - cue.offsetUs, Math.round(cue.focus.durationUs)))
+      };
+      clip.presentationCues?.sort((left, right) => left.offsetUs - right.offsetUs);
+    });
+  }),
   removeVideoPresentationCue: (clipId, cueId) => set((state) => commit(state, (project) => {
     const clip = findClip(project, clipId);
     if (!clip || clip.kind !== "video" || clip.locked) return;
@@ -1459,9 +1561,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           id: crypto.randomUUID(), trackId: subtitleTrack.id, kind: "subtitle", label: segment.text.trim(),
           startUs: Math.round(video.startUs + (overlapStart - sourceStart) / video.playbackRate),
           durationUs: Math.max(100_000, Math.round((overlapEnd - overlapStart) / video.playbackRate)),
-          locked: false, text: segment.text.trim(), sourceAssetId: assetId, color: "#ffffff",
+          locked: false, text: segment.text.trim(), sourceAssetId: assetId,
           backgroundColor: "#000000", fontSize: 44, positionY: 88,
-          ...DEFAULT_SUBTITLE_STYLE
+          ...DEFAULT_SUBTITLE_STYLE, ...project.subtitleTheme
         };
         subtitleTrack.clips.push(clip);
       }
@@ -1473,6 +1575,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     Object.assign(clip, patch);
   })),
   updateSubtitleAppearance: (clipId, patch) => set((state) => commit(state, (project) => {
+    if (clipId === null && (patch.color !== undefined || patch.highlightColor !== undefined)) {
+      project.subtitleTheme = normalizeSubtitleTheme({ ...project.subtitleTheme, ...patch });
+    }
     for (const track of project.tracks) {
       if (track.kind !== "subtitle" || track.locked) continue;
       for (const clip of track.clips) {
@@ -1484,7 +1589,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   moveClips: (clipIds, deltaUs) => {
     if (!clipIds.length || Math.abs(deltaUs) < 1) return;
     set((state) => commit(state, (project) => {
-      const selected = new Set(expandSceneGroupClipIds(project, clipIds));
+      const selected = new Set(clipIds);
       const clips = project.tracks.flatMap((track) => track.locked ? [] : track.clips).filter((clip) => selected.has(clip.id) && !clip.locked);
       const minimumStart = clips.reduce((minimum, clip) => Math.min(minimum, clip.startUs), Number.POSITIVE_INFINITY);
       const boundedDelta = Math.max(deltaUs, -minimumStart);
@@ -1497,7 +1602,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const clip = findClip(project, clipId);
       const track = clip ? project.tracks.find((candidate) => candidate.id === clip.trackId) : undefined;
       if (!clip || clip.locked || track?.locked) return;
-      if ((clip.kind === "effect" || clip.kind === "scene") && stretchSceneGroup(project, clip, edge, deltaUs)) return;
       const minimumDuration = clip.kind === "subtitle" ? 100_000 : 250_000;
       if (edge === "start") {
         const actualDelta = Math.min(deltaUs, clip.durationUs - minimumDuration);
@@ -1506,6 +1610,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const presentationBoundary = clip.kind === "video" && boundedDelta > 0 ? videoPresentationAt(clip, boundedDelta) : undefined;
         clip.startUs += boundedDelta;
         clip.durationUs -= boundedDelta;
+        if (clip.kind === "composition") {
+          if (clip.transformKeyframes?.length) clip.transformKeyframes = splitVideoKeyframes(clip, boundedDelta).trailing;
+          if (clip.dimAtUs !== undefined) clip.dimAtUs = Math.max(0, clip.dimAtUs - boundedDelta);
+          clip.soundCues = clip.soundCues?.filter(cue => cue.offsetUs >= boundedDelta).map(cue => ({ ...cue, offsetUs: cue.offsetUs - boundedDelta }));
+          clip.sourceOffsetUs = compositionTimeUs(clip, boundedDelta);
+          clip.animationDurationUs ??= Math.round((clip.durationUs + boundedDelta) * clip.speed);
+        }
         if (isSourceClip(clip)) clip.sourceInUs = Math.max(0, Math.round(clip.sourceInUs + boundedDelta * clip.playbackRate));
         if (clip.kind === "video") {
           clip.cameraOffsetUs = Math.max(0, (clip.cameraOffsetUs ?? 0) + boundedDelta);
@@ -1560,6 +1671,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             trailing.label = `${clip.label}（后段）`;
             trailing.startUs = playheadUs;
             trailing.durationUs = clip.durationUs - firstDuration;
+            if (clip.kind === "composition" && trailing.kind === "composition") {
+              if (trailing.dimAtUs !== undefined) trailing.dimAtUs = Math.max(0, trailing.dimAtUs - firstDuration);
+              trailing.soundCues = clip.soundCues?.filter(cue => cue.offsetUs >= firstDuration).map(cue => ({ ...cue, offsetUs: cue.offsetUs - firstDuration }));
+              clip.soundCues = clip.soundCues?.filter(cue => cue.offsetUs < firstDuration);
+              if (clip.transformKeyframes?.length) {
+                const keyframes = splitVideoKeyframes(clip, firstDuration);
+                clip.transformKeyframes = keyframes.leading;
+                trailing.transformKeyframes = keyframes.trailing;
+              }
+              clip.animationDurationUs ??= Math.round(clip.durationUs * clip.speed);
+              trailing.animationDurationUs = clip.animationDurationUs;
+              trailing.sourceOffsetUs = compositionTimeUs(clip, firstDuration);
+            }
             if (isSourceClip(trailing)) trailing.sourceInUs = Math.round(trailing.sourceInUs + firstDuration * trailing.playbackRate);
             if (clip.kind === "video" && trailing.kind === "video") {
               const trailingPresentation = videoPresentationAt(clip, firstDuration);
@@ -1608,6 +1732,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!clipboard.length) return;
     const minimumStart = Math.min(...clipboard.map((clip) => clip.startUs));
     const created: string[] = [];
+    const groupIds = new Map<string, string>();
     set((state) => ({
       ...commit(state, (project) => {
         for (const source of clipboard) {
@@ -1617,6 +1742,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           clip.id = crypto.randomUUID();
           clip.startUs = Math.round(state.playheadUs + source.startUs - minimumStart);
           clip.locked = false;
+          if ((clip.kind === "composition" || clip.kind === "scene") && clip.sceneGroupId) {
+            if (!groupIds.has(clip.sceneGroupId)) groupIds.set(clip.sceneGroupId, crypto.randomUUID());
+            clip.sceneGroupId = groupIds.get(clip.sceneGroupId);
+          }
           if (clip.kind === "generated") clip.scenes = clip.scenes.map((scene) => ({ ...scene, id: crypto.randomUUID() }));
           track.clips.push(clip);
           created.push(clip.id);

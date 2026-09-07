@@ -1,6 +1,7 @@
 import { EASING_NAMES, eased as evaluateEasing, type EasingName } from "@/domain/easing";
+import { FOCUS_CARD_SLOTS, MEDIA_COMPOSITIONS, type CompositionSlot } from "@/domain/compositions";
 
-export type EffectCategory = "标题" | "强调" | "卡片" | "标注" | "数据" | "布局" | "场景";
+export type EffectCategory = "标题" | "强调" | "卡片" | "标注" | "数据" | "布局" | "场景" | "背景" | "展示";
 export type EffectLayout = "highlight" | "number" | "panel" | "underline" | "frame";
 export type EffectEntrance = "slide-left" | "fade-up" | "pop" | "none";
 export type EffectAnimationEasing = EasingName;
@@ -78,7 +79,9 @@ export interface SceneBackgroundSpec {
   intensity: number;
 }
 
-export interface EffectDefinition {
+export interface CompositionDefinition {
+  renderer?: "react" | "three" | "canvas";
+  slots?: readonly CompositionSlot[];
   id: string;
   name: string;
   category: EffectCategory;
@@ -88,18 +91,18 @@ export interface EffectDefinition {
   defaultText: string;
   defaultColor: string;
   defaultAccentColor: string;
-  defaultParams?: EffectParams;
+  defaultParams?: CompositionParams;
   recipe: EffectRecipe;
   soundCues?: EffectSoundCue[];
-  kind?: "effect" | "scene";
+  kind?: "composition" | "scene";
   sceneLayers?: SceneEffectTemplateLayer[];
 }
 
-export type EffectParamValue = string | number | boolean;
-export type EffectParams = Record<string, EffectParamValue>;
+export type CompositionParamValue = string | number | boolean;
+export type CompositionParams = Record<string, CompositionParamValue>;
 
 export interface SceneEffectTemplateLayer {
-  effectId: string;
+  compositionId: string;
   text?: string;
   x: number;
   y: number;
@@ -112,7 +115,7 @@ export interface SceneEffectTemplateLayer {
   durationRatio?: number;
 }
 
-const CORE_EFFECTS: readonly EffectDefinition[] = [
+const CORE_EFFECTS: readonly CompositionDefinition[] = [
   {
     id: "title-highlight",
     name: "标题强调",
@@ -199,7 +202,7 @@ const CORE_EFFECTS: readonly EffectDefinition[] = [
 ] as const;
 
 /** Procedural data-driven effects; pixels are generated per frame from the chart spec. */
-const CHART_EFFECTS: readonly EffectDefinition[] = [
+const CHART_EFFECTS: readonly CompositionDefinition[] = [
   {
     id: "data-counter",
     name: "数字结论",
@@ -351,7 +354,7 @@ function familyAnimation(presentation: typeof EFFECT_PRESENTATIONS[number], fami
   };
 }
 
-function familyEffect(family: EffectFamily, presentation: typeof EFFECT_PRESENTATIONS[number], familyIndex: number): EffectDefinition {
+function familyEffect(family: EffectFamily, presentation: typeof EFFECT_PRESENTATIONS[number], familyIndex: number): CompositionDefinition {
   const framed = presentation.layout === "frame";
   return {
     id: `${family.id}-${presentation.id}`,
@@ -378,15 +381,15 @@ function familyEffect(family: EffectFamily, presentation: typeof EFFECT_PRESENTA
 
 const FAMILY_EFFECTS = EFFECT_FAMILIES.flatMap((family, familyIndex) => EFFECT_PRESENTATIONS.map((presentation) => familyEffect(family, presentation, familyIndex)));
 
-const SCENE_EFFECTS: readonly EffectDefinition[] = [
+const SCENE_EFFECTS: readonly CompositionDefinition[] = [
   {
     id: "scene-focus-stack", name: "重点信息组合", category: "场景", kind: "scene", description: "主标题、数字与结论标注组合", tags: ["场景", "组合", "重点", "数据", "字幕", "观点"],
     defaultDurationUs: 4_000_000, defaultText: "核心观点", defaultColor: "#ffffff", defaultAccentColor: "#ffb84d",
     recipe: { layout: "frame", entrance: "fade-up", paddingX: 24, paddingY: 18, borderWidth: 1, borderRadius: 3, backgroundOpacity: 0.72 },
     sceneLayers: [
-      { effectId: "title-highlight", x: 50, y: 27, fontSize: 62, zIndex: 30 },
-      { effectId: "number-pop", text: "42%", x: 50, y: 52, scale: 0.9, fontSize: 76, zIndex: 20, startRatio: 0.12 },
-      { effectId: "underline-sweep", text: "关键结论", x: 50, y: 73, scale: 0.8, fontSize: 38, zIndex: 10, startRatio: 0.28 }
+      { compositionId: "title-highlight", x: 50, y: 27, fontSize: 62, zIndex: 30 },
+      { compositionId: "number-pop", text: "42%", x: 50, y: 52, scale: 0.9, fontSize: 76, zIndex: 20, startRatio: 0.12 },
+      { compositionId: "underline-sweep", text: "关键结论", x: 50, y: 73, scale: 0.8, fontSize: 38, zIndex: 10, startRatio: 0.28 }
     ]
   },
   {
@@ -394,8 +397,8 @@ const SCENE_EFFECTS: readonly EffectDefinition[] = [
     defaultDurationUs: 4_500_000, defaultText: "让重要内容被看见", defaultColor: "#ffffff", defaultAccentColor: "#ff7b72",
     recipe: { layout: "frame", entrance: "fade-up", paddingX: 28, paddingY: 20, borderWidth: 2, borderRadius: 3, backgroundOpacity: 0.86 },
     sceneLayers: [
-      { effectId: "quote-card", x: 50, y: 46, fontSize: 48, zIndex: 20 },
-      { effectId: "keyword-underline", text: "核心结论", x: 50, y: 72, scale: 0.75, fontSize: 34, zIndex: 30, startRatio: 0.22 }
+      { compositionId: "quote-card", x: 50, y: 46, fontSize: 48, zIndex: 20 },
+      { compositionId: "keyword-underline", text: "核心结论", x: 50, y: 72, scale: 0.75, fontSize: 34, zIndex: 30, startRatio: 0.22 }
     ]
   },
   {
@@ -403,9 +406,9 @@ const SCENE_EFFECTS: readonly EffectDefinition[] = [
     defaultDurationUs: 5_000_000, defaultText: "第一步：明确目标", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
     recipe: { layout: "panel", entrance: "slide-left", paddingX: 22, paddingY: 16, borderWidth: 4, borderRadius: 3, backgroundOpacity: 0.82 },
     sceneLayers: [
-      { effectId: "steps-highlight", text: "方法拆解", x: 50, y: 25, fontSize: 50, zIndex: 30 },
-      { effectId: "bullet-reveal", x: 38, y: 54, scale: 0.85, fontSize: 40, zIndex: 20, startRatio: 0.14 },
-      { effectId: "steps-underline", text: "照着做即可", x: 63, y: 76, scale: 0.72, fontSize: 32, zIndex: 10, startRatio: 0.32 }
+      { compositionId: "steps-highlight", text: "方法拆解", x: 50, y: 25, fontSize: 50, zIndex: 30 },
+      { compositionId: "bullet-reveal", x: 38, y: 54, scale: 0.85, fontSize: 40, zIndex: 20, startRatio: 0.14 },
+      { compositionId: "steps-underline", text: "照着做即可", x: 63, y: 76, scale: 0.72, fontSize: 32, zIndex: 10, startRatio: 0.32 }
     ]
   },
   {
@@ -413,9 +416,9 @@ const SCENE_EFFECTS: readonly EffectDefinition[] = [
     defaultDurationUs: 4_000_000, defaultText: "注意这个常见误区", defaultColor: "#ffffff", defaultAccentColor: "#ff6b6b",
     recipe: { layout: "panel", entrance: "slide-left", paddingX: 22, paddingY: 14, borderWidth: 4, borderRadius: 3, backgroundOpacity: 0.8 },
     sceneLayers: [
-      { effectId: "warning-impact", text: "注意", x: 22, y: 28, fontSize: 68, zIndex: 30 },
-      { effectId: "warning-panel", x: 50, y: 53, fontSize: 42, zIndex: 20, startRatio: 0.12 },
-      { effectId: "warning-underline", text: "避免踩坑", x: 62, y: 75, scale: 0.72, fontSize: 32, zIndex: 10, startRatio: 0.3 }
+      { compositionId: "warning-impact", text: "注意", x: 22, y: 28, fontSize: 68, zIndex: 30 },
+      { compositionId: "warning-panel", x: 50, y: 53, fontSize: 42, zIndex: 20, startRatio: 0.12 },
+      { compositionId: "warning-underline", text: "避免踩坑", x: 62, y: 75, scale: 0.72, fontSize: 32, zIndex: 10, startRatio: 0.3 }
     ]
   },
   {
@@ -423,9 +426,9 @@ const SCENE_EFFECTS: readonly EffectDefinition[] = [
     defaultDurationUs: 4_000_000, defaultText: "今天聊一个重要话题", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
     recipe: { layout: "frame", entrance: "none", paddingX: 28, paddingY: 20, borderWidth: 2, borderRadius: 3, backgroundOpacity: 0.3 },
     sceneLayers: [
-      { effectId: "intro-frame", x: 50, y: 48, scale: 1.15, fontSize: 58, zIndex: 10 },
-      { effectId: "intro-highlight", x: 50, y: 42, fontSize: 60, zIndex: 30, startRatio: 0.08 },
-      { effectId: "intro-underline", text: "从这里开始", x: 50, y: 66, scale: 0.7, fontSize: 30, zIndex: 20, startRatio: 0.24 }
+      { compositionId: "intro-frame", x: 50, y: 48, scale: 1.15, fontSize: 58, zIndex: 10 },
+      { compositionId: "intro-highlight", x: 50, y: 42, fontSize: 60, zIndex: 30, startRatio: 0.08 },
+      { compositionId: "intro-underline", text: "从这里开始", x: 50, y: 66, scale: 0.7, fontSize: 30, zIndex: 20, startRatio: 0.24 }
     ]
   },
   {
@@ -433,16 +436,16 @@ const SCENE_EFFECTS: readonly EffectDefinition[] = [
     defaultDurationUs: 4_500_000, defaultText: "之前 vs 现在", defaultColor: "#ffffff", defaultAccentColor: "#b59cff",
     recipe: { layout: "frame", entrance: "fade-up", paddingX: 26, paddingY: 18, borderWidth: 2, borderRadius: 3, backgroundOpacity: 0.76 },
     sceneLayers: [
-      { effectId: "compare-highlight", x: 50, y: 25, fontSize: 50, zIndex: 30 },
-      { effectId: "compare-impact", text: "VS", x: 50, y: 50, scale: 0.8, fontSize: 76, zIndex: 20, startRatio: 0.12 },
-      { effectId: "compare-frame", text: "差异一目了然", x: 50, y: 75, scale: 0.78, fontSize: 34, zIndex: 10, startRatio: 0.28 }
+      { compositionId: "compare-highlight", x: 50, y: 25, fontSize: 50, zIndex: 30 },
+      { compositionId: "compare-impact", text: "VS", x: 50, y: 50, scale: 0.8, fontSize: 76, zIndex: 20, startRatio: 0.12 },
+      { compositionId: "compare-frame", text: "差异一目了然", x: 50, y: 75, scale: 0.78, fontSize: 34, zIndex: 10, startRatio: 0.28 }
     ]
   }
 ] as const;
 
-const LEGACY_EFFECTS: readonly EffectDefinition[] = [...CORE_EFFECTS, ...CHART_EFFECTS, ...FAMILY_EFFECTS, ...SCENE_EFFECTS];
+const LEGACY_EFFECTS: readonly CompositionDefinition[] = [...CORE_EFFECTS, ...CHART_EFFECTS, ...FAMILY_EFFECTS, ...SCENE_EFFECTS];
 
-const KNOWLEDGE_EFFECTS: readonly EffectDefinition[] = [
+const KNOWLEDGE_EFFECTS: readonly CompositionDefinition[] = [
   {
     id: "knowledge-concept-map", name: "概念图谱", category: "卡片", description: "拆解核心概念与最多三个关联要点；文案格式：概念｜要点一｜要点二｜要点三", tags: ["知识", "科普", "概念", "定义", "原理", "拆解", "是什么"],
     defaultDurationUs: 4_200_000, defaultText: "核心概念｜关键机制｜实际影响｜应用场景", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
@@ -470,7 +473,7 @@ const KNOWLEDGE_EFFECTS: readonly EffectDefinition[] = [
   }
 ] as const;
 
-const TALKING_HEAD_EFFECTS: readonly EffectDefinition[] = [
+const TALKING_HEAD_EFFECTS: readonly CompositionDefinition[] = [
   {
     id: "quote-lockup", name: "金句定格", category: "卡片", description: "金句逐行揭示并保留署名", tags: ["口播", "金句", "引用", "观点", "逐行", "总结"],
     defaultDurationUs: 4_500_000, defaultText: "多行金句｜逐行揭示｜停在画面上", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
@@ -557,8 +560,9 @@ const TALKING_HEAD_EFFECTS: readonly EffectDefinition[] = [
   },
   {
     id: "focus-card", name: "人物聚焦卡", category: "布局", description: "为口播人物预留取景框并在另一侧逐条呈现要点", tags: ["口播", "人物", "聚焦", "运镜", "要点", "画中画"],
+    slots: FOCUS_CARD_SLOTS,
     defaultDurationUs: 8_000_000, defaultText: "本段要点一｜本段要点二", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
-    defaultParams: { theme: "dark", bg: "dark", side: "left", items: "本段要点一|本段要点二", stepMs: 600, showRing: true, camDX: 0, camDY: 0, camW: 700, camH: 700, offsetX: 0, offsetY: 0 },
+    defaultParams: { theme: "dark", bg: "dark", side: "left", items: "本段要点一|本段要点二", stepMs: 600, moveMs: 720, showRing: true, camDX: 0, camDY: 0, camW: 700, camH: 700, offsetX: 0, offsetY: 0 },
     recipe: { layout: "frame", entrance: "none", paddingX: 26, paddingY: 22, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.72 }
   },
   {
@@ -598,7 +602,35 @@ export const OVERLAY_STUDIO_EFFECT_IDS = [
   "type-shift", "blur-text", "odometer", "focus-card", "chapter-bar", "caption-track", "stat-proof", "growth-curve", "entity-chips", "pin-board"
 ] as const;
 
-const TEST_EFFECTS: readonly EffectDefinition[] = [
+const overlayStudioDefaultPosition: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT_IDS)[number], { x: number; y: number }>> = {
+  "quote-lockup": { x: 72, y: 50 },
+  "step-timeline": { x: 73, y: 50 },
+  "rank-bars": { x: 28, y: 50 },
+  "punch-pill": { x: 50, y: 82 },
+  "term-card": { x: 72, y: 50 },
+  "pin-board": { x: 78, y: 20 },
+  checklist: { x: 27, y: 50 },
+  "terminal-3d": { x: 50, y: 50 },
+  "ring-metric": { x: 50, y: 50 },
+  "versus-card": { x: 50, y: 50 },
+  "ui-callout": { x: 50, y: 50 },
+  "type-shift": { x: 50, y: 50 },
+  "blur-text": { x: 50, y: 50 },
+  odometer: { x: 50, y: 50 },
+  "focus-card": { x: 50, y: 50 },
+  "chapter-bar": { x: 50, y: 4 },
+  "caption-track": { x: 50, y: 86 },
+  "stat-proof": { x: 27, y: 50 },
+  "growth-curve": { x: 30, y: 50 },
+  "entity-chips": { x: 34, y: 72 }
+};
+
+export function defaultEffectTransform(compositionId: string) {
+  const position = overlayStudioDefaultPosition[compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]] ?? { x: 50, y: 30 };
+  return { ...position, scale: 1, rotation: 0, opacity: 1 };
+}
+
+const TEST_EFFECTS: readonly CompositionDefinition[] = [
   {
     id: "test-title-slide", name: "标题滑入", category: "标题", description: "简洁标题从左侧进入", tags: ["标题", "开场", "主题"],
     defaultDurationUs: 2_500_000, defaultText: "输入标题", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
@@ -675,51 +707,58 @@ const TEST_EFFECTS: readonly EffectDefinition[] = [
   }))
 ] as const;
 
-export const BUILTIN_EFFECTS: readonly EffectDefinition[] = [...TALKING_HEAD_EFFECTS];
+const removedStandaloneFeatureIds = new Set(["chapter-bar", "caption-track"]);
+const REMOVED_STANDALONE_EFFECTS = TALKING_HEAD_EFFECTS.filter((effect) => removedStandaloneFeatureIds.has(effect.id));
+
+export const BUILTIN_EFFECTS: readonly CompositionDefinition[] = [
+  ...TALKING_HEAD_EFFECTS.filter((effect) => !removedStandaloneFeatureIds.has(effect.id)),
+  ...MEDIA_COMPOSITIONS
+];
 export const OVERLAY_STUDIO_BASE_FONT_SIZE = 48;
 
 // Old project files may still reference these IDs, but they are intentionally hidden from
 // the library, local retrieval, AI candidates, and newly created projects.
-const ARCHIVED_BUILTIN_EFFECTS: readonly EffectDefinition[] = [
+const ARCHIVED_BUILTIN_EFFECTS: readonly CompositionDefinition[] = [
+  ...REMOVED_STANDALONE_EFFECTS,
   ...TEST_EFFECTS,
   ...KNOWLEDGE_EFFECTS,
   ...LEGACY_EFFECTS
 ];
 
-let installedEffects: EffectDefinition[] = [];
+let installedEffects: CompositionDefinition[] = [];
 
-export function setInstalledEffects(effects: EffectDefinition[]) {
+export function setInstalledEffects(effects: CompositionDefinition[]) {
   installedEffects = effects;
 }
 
-export function allEffects(): EffectDefinition[] {
+export function allCompositions(): CompositionDefinition[] {
   return [...BUILTIN_EFFECTS, ...installedEffects];
 }
 
-export function effectById(id: string): EffectDefinition {
-  return allEffects().find((effect) => effect.id === id)
+export function compositionById(id: string): CompositionDefinition {
+  return allCompositions().find((effect) => effect.id === id)
     ?? ARCHIVED_BUILTIN_EFFECTS.find((effect) => effect.id === id)
     ?? BUILTIN_EFFECTS[0];
 }
 
 /** Maps AI or pasted structured copy into a component effect's primary editable field. */
-export function effectParamsForText(effectId: string, text: string): EffectParams {
-  const params = structuredClone(effectById(effectId).defaultParams ?? {});
+export function effectParamsForText(compositionId: string, text: string): CompositionParams {
+  const params = structuredClone(compositionById(compositionId).defaultParams ?? {});
   const normalized = text.replaceAll("｜", "|").trim();
   const parts = normalized.split("|").map((part) => part.trim()).filter(Boolean);
-  if (effectId === "pin-board") {
+  if (compositionId === "pin-board") {
     params.title = parts[0] ?? "";
     params.subtitle = "";
     params.items = parts.slice(1).join("|");
     return params;
   }
-  if (effectId === "checklist") {
+  if (compositionId === "checklist") {
     params.title = parts[0] ?? "";
     params.items = parts.slice(1).join("|");
     params.checked = Math.min(3, Math.max(0, parts.length - 1));
     return params;
   }
-  if (effectId === "versus-card") {
+  if (compositionId === "versus-card") {
     params.aKicker = "";
     params.aSub = "";
     params.bKicker = "";
@@ -729,12 +768,12 @@ export function effectParamsForText(effectId: string, text: string): EffectParam
     if (parts[2]) params.bSub = parts[2];
     return params;
   }
-  if (effectId === "entity-chips") {
+  if (compositionId === "entity-chips") {
     params.note = "";
     params.chips = parts[0] ? `light|${parts[0]}|${parts[1] ?? ""}${parts[2] ? `\ndark|${parts[2]}|${parts[3] ?? ""}` : ""}` : "";
     return params;
   }
-  if (effectId === "stat-proof") {
+  if (compositionId === "stat-proof") {
     params.kicker = "";
     params.kickerZh = "";
     params.footEn = "";
@@ -752,24 +791,24 @@ export function effectParamsForText(effectId: string, text: string): EffectParam
     if (parts[2]) params.footZh = parts[2];
     return params;
   }
-  if (effectId === "term-card") {
+  if (compositionId === "term-card") {
     params.en = "";
     params.term = parts[0] ?? normalized;
     params.definition = parts.slice(1).join("，");
     return params;
   }
-  if (effectId === "step-timeline") {
+  if (compositionId === "step-timeline") {
     params.title = parts.length > 1 ? parts[0] : "";
     params.steps = parts.length > 1 ? parts.slice(1).join("|") : normalized;
     params.revealed = Math.min(6, parts.length > 1 ? parts.length - 1 : Number(Boolean(normalized)));
     return params;
   }
-  if (effectId === "rank-bars") {
+  if (compositionId === "rank-bars") {
     params.title = "";
     params.rows = normalized;
     return params;
   }
-  if (effectId === "ring-metric" || effectId === "odometer") {
+  if (compositionId === "ring-metric" || compositionId === "odometer") {
     params.kicker = "";
     params.value = 0;
     params.unit = "";
@@ -784,15 +823,15 @@ export function effectParamsForText(effectId: string, text: string): EffectParam
     }
     return params;
   }
-  if (effectId === "growth-curve") {
+  if (compositionId === "growth-curve") {
     params.kicker = "";
     params.kickerZh = "";
     params.caption = "";
     params.points = normalized;
     return params;
   }
-  if (effectId === "quote-lockup") params.author = "";
-  if (effectId === "terminal-3d") params.file = "";
+  if (compositionId === "quote-lockup") params.author = "";
+  if (compositionId === "terminal-3d") params.file = "";
   const fields: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT_IDS)[number], string>> = {
     "quote-lockup": "quote",
     "step-timeline": "steps",
@@ -810,7 +849,7 @@ export function effectParamsForText(effectId: string, text: string): EffectParam
     "caption-track": "lines",
     "growth-curve": "points"
   };
-  const field = fields[effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]];
+  const field = fields[compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]];
   if (field && normalized) params[field] = normalized;
   return params;
 }
@@ -838,10 +877,10 @@ const effectTextParamKeys: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT_IDS)[num
   "growth-curve": ["kicker", "kickerZh", "points", "caption"]
 };
 
-export function remapEffectTextParams(effectId: string, text: string, current: EffectParams): EffectParams {
-  const keys = effectTextParamKeys[effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]];
+export function remapEffectTextParams(compositionId: string, text: string, current: CompositionParams): CompositionParams {
+  const keys = effectTextParamKeys[compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]];
   if (!keys) return current;
-  const mapped = effectParamsForText(effectId, text);
+  const mapped = effectParamsForText(compositionId, text);
   const next = { ...current };
   for (const key of keys) {
     if (mapped[key] !== undefined) next[key] = mapped[key];
@@ -850,8 +889,8 @@ export function remapEffectTextParams(effectId: string, text: string, current: E
   return next;
 }
 
-export function recommendedEffectFontSizeForId(effectId: string, recipe: EffectRecipe, text = ""): number {
-  return OVERLAY_STUDIO_EFFECT_IDS.includes(effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number])
+export function recommendedEffectFontSizeForId(compositionId: string, recipe: EffectRecipe, text = ""): number {
+  return OVERLAY_STUDIO_EFFECT_IDS.includes(compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number])
     ? OVERLAY_STUDIO_BASE_FONT_SIZE
     : recommendedEffectFontSize(recipe, text);
 }
@@ -882,9 +921,9 @@ export function effectiveEffectFontSize(fontSize: number, recipe: EffectRecipe, 
   return fontSize;
 }
 
-export function effectSelectionsForText(text: string, limit = 3): EffectDefinition[] {
+export function effectSelectionsForText(text: string, limit = 3): CompositionDefinition[] {
   const ranked = retrieveEffects(text, Math.max(limit * 3, 6));
-  const selected: EffectDefinition[] = [];
+  const selected: CompositionDefinition[] = [];
   for (const effect of ranked) {
     if (selected.some((item) => item.id === effect.id || (item.kind === "scene" && effect.kind === "scene"))) continue;
     selected.push(effect);
@@ -1031,8 +1070,8 @@ function cosineScore(query: Map<string, number>, document: Map<string, number>, 
 }
 
 /** Fully local hybrid semantic retrieval; only the selected definitions are sent to the cloud model. */
-export function retrieveEffects(query: string, limit = 4): EffectDefinition[] {
-  const effects = allEffects();
+export function retrieveEffects(query: string, limit = 4): CompositionDefinition[] {
+  const effects = allCompositions();
   const documents = effects.map((effect) => termFrequency([effect.name, effect.category, effect.description, ...effect.tags].join(" ")));
   const documentFrequency = new Map<string, number>();
   for (const document of documents) for (const token of document.keys()) documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);

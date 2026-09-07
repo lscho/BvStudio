@@ -1,24 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { BUILTIN_EFFECTS, OVERLAY_STUDIO_EFFECT_IDS, clockControlledRecipe, effectAnimationState, effectById, effectParamsForText, effectiveEffectFontSize, recommendedEffectFontSize, recommendedEffectFontSizeForId, remapEffectTextParams, retrieveEffects, type EffectRecipe } from "@/domain/effects";
+import { BUILTIN_EFFECTS, OVERLAY_STUDIO_EFFECT_IDS, clockControlledRecipe, effectAnimationState, compositionById, effectParamsForText, effectiveEffectFontSize, recommendedEffectFontSize, recommendedEffectFontSizeForId, remapEffectTextParams, retrieveEffects, type EffectRecipe } from "@/domain/effects";
 
 describe("effect font sizing", () => {
   it("uses a readable display size for short impact text and tapers long copy", () => {
-    const impact = effectById("data-impact").recipe;
+    const impact = compositionById("data-impact").recipe;
     expect(recommendedEffectFontSize(impact, "42%")).toBe(96);
     expect(recommendedEffectFontSize(impact, "这是一个较长的冲击文字内容")).toBeLessThan(96);
-    expect(recommendedEffectFontSize(effectById("warning-panel").recipe, "注意风险")).toBeLessThan(96);
+    expect(recommendedEffectFontSize(compositionById("warning-panel").recipe, "注意风险")).toBeLessThan(96);
   });
 
   it("repairs legacy number defaults without overriding deliberate custom sizes", () => {
-    const impact = effectById("data-impact").recipe;
+    const impact = compositionById("data-impact").recipe;
     expect(effectiveEffectFontSize(56, impact, "42%")).toBe(96);
     expect(effectiveEffectFontSize(40, impact, "42%")).toBe(40);
-    expect(effectiveEffectFontSize(56, effectById("warning-panel").recipe, "注意风险")).toBe(56);
+    expect(effectiveEffectFontSize(56, compositionById("warning-panel").recipe, "注意风险")).toBe(56);
   });
 
   it("uses the reference component's shared 48px sizing baseline", () => {
-    expect(recommendedEffectFontSizeForId("term-card", effectById("term-card").recipe, "术语")).toBe(48);
-    expect(recommendedEffectFontSizeForId("growth-curve", effectById("growth-curve").recipe, "增长趋势")).toBe(48);
+    expect(recommendedEffectFontSizeForId("term-card", compositionById("term-card").recipe, "术语")).toBe(48);
+    expect(recommendedEffectFontSizeForId("growth-curve", compositionById("growth-curve").recipe, "增长趋势")).toBe(48);
   });
 });
 
@@ -37,9 +37,9 @@ describe("retrieveEffects", () => {
   });
 
   it("exposes only the migrated Overlay Studio effects as built-ins", () => {
-    expect(BUILTIN_EFFECTS).toHaveLength(20);
+    expect(BUILTIN_EFFECTS).toHaveLength(28);
     expect(new Set(BUILTIN_EFFECTS.map((effect) => effect.id)).size).toBe(BUILTIN_EFFECTS.length);
-    expect(new Set(BUILTIN_EFFECTS.map((effect) => effect.id))).toEqual(new Set(OVERLAY_STUDIO_EFFECT_IDS));
+    expect(new Set(BUILTIN_EFFECTS.map((effect) => effect.id))).toEqual(new Set([...OVERLAY_STUDIO_EFFECT_IDS.filter((id) => id !== "chapter-bar" && id !== "caption-track"), "poster-wall-3d", "image-duet-3d", "motion-zoom", "slide-gallery", "card-stack", "split-reveal", "background-stripes", "background-grid", "background-dots", "background-contours"]));
     expect(BUILTIN_EFFECTS.every((effect) => !effect.kind && !effect.recipe.sceneBackground)).toBe(true);
   });
 
@@ -47,9 +47,13 @@ describe("retrieveEffects", () => {
     expect(BUILTIN_EFFECTS.some((effect) => effect.id === "test-title-slide")).toBe(false);
     expect(BUILTIN_EFFECTS.some((effect) => effect.id === "warning-panel")).toBe(false);
     expect(BUILTIN_EFFECTS.some((effect) => effect.id === "scene-focus-stack")).toBe(false);
-    expect(effectById("test-title-slide").id).toBe("test-title-slide");
-    expect(effectById("warning-panel").id).toBe("warning-panel");
-    expect(effectById("scene-focus-stack").id).toBe("scene-focus-stack");
+    expect(BUILTIN_EFFECTS.some((effect) => effect.id === "chapter-bar")).toBe(false);
+    expect(BUILTIN_EFFECTS.some((effect) => effect.id === "caption-track")).toBe(false);
+    expect(compositionById("test-title-slide").id).toBe("test-title-slide");
+    expect(compositionById("warning-panel").id).toBe("warning-panel");
+    expect(compositionById("scene-focus-stack").id).toBe("scene-focus-stack");
+    expect(compositionById("chapter-bar").id).toBe("chapter-bar");
+    expect(compositionById("caption-track").id).toBe("caption-track");
   });
 
   it("maps generated copy into the reference effect parameter structure", () => {

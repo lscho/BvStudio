@@ -1,5 +1,7 @@
 import { measureChartBox } from "@/domain/chartEffects";
 import { OVERLAY_STUDIO_BASE_FONT_SIZE, OVERLAY_STUDIO_EFFECT_IDS, type EffectRecipe } from "@/domain/effects";
+import type { PresenterSafeAreaSettings } from "@/domain/project";
+import { presenterSafeAreaGeometry } from "@/domain/presenterSafeArea";
 
 export interface MotionLayoutCanvas {
   width: number;
@@ -15,7 +17,7 @@ export interface MotionLayoutRect {
 
 export interface MotionLayoutLayer {
   id: string;
-  effectId?: string;
+  compositionId?: string;
   startUs: number;
   durationUs: number;
   desiredX: number;
@@ -37,11 +39,6 @@ export interface MotionLayoutSafeArea {
   startUs: number;
   durationUs: number;
   rect: MotionLayoutRect;
-}
-
-export interface MotionLayoutPresenterSafeArea {
-  position: "none" | "left" | "center" | "right";
-  widthPercent: number;
 }
 
 export interface OccupiedMotionLayoutLayer {
@@ -94,21 +91,16 @@ function clamp(value: number, minimum: number, maximum: number) {
 }
 
 export function presenterMotionSafeArea(
-  settings: MotionLayoutPresenterSafeArea,
+  settings: PresenterSafeAreaSettings,
   startUs: number,
   durationUs: number
 ): MotionLayoutSafeArea | null {
   if (settings.position === "none") return null;
-  const width = clamp(settings.widthPercent, 18, 60);
-  const left = settings.position === "left"
-    ? 3
-    : settings.position === "right"
-      ? 97 - width
-      : 50 - width / 2;
+  const area = presenterSafeAreaGeometry(settings);
   return {
     startUs,
     durationUs: Math.max(100_000, durationUs),
-    rect: { left, top: 6, right: left + width, bottom: 78 }
+    rect: { left: area.xPercent, top: area.yPercent, right: area.xPercent + area.widthPercent, bottom: area.yPercent + area.heightPercent }
   };
 }
 
@@ -146,8 +138,8 @@ function measuredTextBox(text: string, fontSize: number, maximumWidth: number) {
 }
 
 function layerPixelSize(layer: MotionLayoutLayer, canvas: MotionLayoutCanvas, scale: number) {
-  const componentFootprint = layer.effectId
-    ? overlayStudioFootprints[layer.effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]]
+  const componentFootprint = layer.compositionId
+    ? overlayStudioFootprints[layer.compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]]
     : undefined;
   if (componentFootprint) {
     const fontScale = layer.fontSize / OVERLAY_STUDIO_BASE_FONT_SIZE;
@@ -234,7 +226,7 @@ function placementAt(layer: MotionLayoutLayer, canvas: MotionLayoutCanvas, scale
 }
 
 function candidateScales(layer: MotionLayoutLayer) {
-  const componentEffect = Boolean(layer.effectId && OVERLAY_STUDIO_EFFECT_IDS.includes(layer.effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]));
+  const componentEffect = Boolean(layer.compositionId && OVERLAY_STUDIO_EFFECT_IDS.includes(layer.compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]));
   const minimumScale = componentEffect ? 0.45 : layer.recipe.chart ? minimumChartScale : minimumTextScale;
   return [...new Set([1, 0.9, 0.85, 0.8, 0.7, 0.6, 0.5, 0.4]
     .map((factor) => layer.scale * factor)

@@ -1,8 +1,10 @@
-import type { EffectEntrance, EffectParams, EffectRecipe, EffectSoundCue, SceneBackgroundSpec } from "@/domain/effects";
+import type { EffectEntrance, CompositionParams, EffectRecipe, EffectSoundCue, SceneBackgroundSpec } from "@/domain/effects";
 import type { CameraMotion } from "@/domain/camera";
 import type { EasingName } from "@/domain/easing";
+import type { CompositionBinding } from "@/domain/compositions";
+import { DEFAULT_SUBTITLE_THEME, type SubtitleTheme } from "@/domain/subtitleTheme";
 
-export type TrackKind = "video" | "image" | "generated" | "scene" | "effect" | "subtitle" | "audio";
+export type TrackKind = "video" | "image" | "generated" | "scene" | "composition" | "subtitle" | "audio";
 export type InsertMode = "insert" | "replace" | "overlay";
 export type VideoRole = "a-roll" | "b-roll" | "presenter" | "screen" | "supporting" | "unspecified";
 export type VideoShape = "rectangle" | "rounded" | "circle" | "ellipse" | "square" | "portrait";
@@ -11,6 +13,8 @@ export type VideoTransitionPreset = (typeof VIDEO_TRANSITION_PRESETS)[number];
 export type VideoMotionPresetId = "full-screen" | "zoom-to-full" | "presenter-circle-bottom-right" | "picture-in-picture-top-right" | "split-left" | "split-right" | "slow-push-in" | "screen-magnify" | "screen-spotlight" | "screen-focus";
 
 export interface VideoMask {
+  widthPercent?: number;
+  heightPercent?: number;
   shape: VideoShape;
   radius: number;
   feather: number;
@@ -66,11 +70,19 @@ export type MotionSkin = "dark" | "light";
 export type MotionStyle = "minimal" | "editorial";
 export type MotionFont = "sans" | "display";
 export type MotionColorRole = "data" | "opinion" | "warning" | "auxiliary" | "custom";
-export type PresenterSafeAreaPosition = "none" | "left" | "center" | "right";
+export type PresenterSafeAreaPosition = "none" | "left" | "center" | "right" | "custom";
 
-export interface PresenterSafeAreaSettings {
-  position: PresenterSafeAreaPosition;
+export type PresenterSafeAreaSettings = {
+  position: Exclude<PresenterSafeAreaPosition, "custom">;
   widthPercent: number;
+} | CustomPresenterSafeArea;
+
+export interface CustomPresenterSafeArea {
+  position: "custom";
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
 }
 
 export const DEFAULT_PRESENTER_SAFE_AREA: PresenterSafeAreaSettings = {
@@ -200,9 +212,12 @@ export interface AudioClip extends BaseClip {
   role: AudioRole;
 }
 
-export interface EffectClip extends BaseClip {
-  kind: "effect";
-  effectId: string;
+export interface CompositionClip extends BaseClip {
+  kind: "composition";
+  compositionId: string;
+  bindings?: CompositionBinding[];
+  sourceOffsetUs?: number;
+  animationDurationUs?: number;
   text: string;
   color: string;
   accentColor: string;
@@ -210,7 +225,7 @@ export interface EffectClip extends BaseClip {
   speed: number;
   transform: TransformProps;
   recipe?: EffectRecipe;
-  params?: EffectParams;
+  params?: CompositionParams;
   soundCues?: EffectSoundCue[];
   zIndex?: number;
   sceneGroupId?: string;
@@ -225,7 +240,7 @@ export interface EffectClip extends BaseClip {
 
 export interface SceneClip extends BaseClip {
   kind: "scene";
-  effectId: string;
+  compositionId: string;
   background: SceneBackgroundSpec;
   opacity: number;
   soundCues?: EffectSoundCue[];
@@ -237,7 +252,7 @@ export interface SceneClip extends BaseClip {
 
 export interface GeneratedEffectLayer {
   id: string;
-  effectId: string;
+  compositionId: string;
   text: string;
   textColor: string;
   accentColor: string;
@@ -259,7 +274,7 @@ export interface GeneratedScene {
   title: string;
   narration: string;
   durationUs: number;
-  effectId: string;
+  compositionId: string;
   textColor: string;
   accentColor: string;
   fontSize: number;
@@ -342,7 +357,7 @@ export interface ChapterProgressSettings {
   chapters: ChapterMarker[];
 }
 
-export type TimelineClip = VideoClip | ImageClip | AudioClip | SceneClip | EffectClip | GeneratedBlock | SubtitleClip;
+export type TimelineClip = VideoClip | ImageClip | AudioClip | SceneClip | CompositionClip | GeneratedBlock | SubtitleClip;
 
 export interface TimelineTrack {
   id: string;
@@ -356,7 +371,7 @@ export interface TimelineTrack {
 }
 
 export interface EditorProject {
-  schemaVersion: 24;
+  schemaVersion: 30;
   id: string;
   name: string;
   createdAt: string;
@@ -366,6 +381,7 @@ export interface EditorProject {
   chapterProgress: ChapterProgressSettings;
   presenterSafeArea: PresenterSafeAreaSettings;
   motionTheme: MotionTheme;
+  subtitleTheme: SubtitleTheme;
   assets: MediaAsset[];
   tracks: TimelineTrack[];
 }
@@ -373,7 +389,7 @@ export interface EditorProject {
 export function createEmptyProject(): EditorProject {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 24,
+    schemaVersion: 30,
     id: crypto.randomUUID(),
     name: "未命名项目",
     createdAt: now,
@@ -396,13 +412,13 @@ export function createEmptyProject(): EditorProject {
     },
     presenterSafeArea: { ...DEFAULT_PRESENTER_SAFE_AREA },
     motionTheme: structuredClone(DEFAULT_MOTION_THEME),
+    subtitleTheme: { ...DEFAULT_SUBTITLE_THEME },
     assets: [],
     tracks: [
       { id: "video-layer-1", kind: "video", name: "视频", locked: false, muted: false, hidden: false, clips: [] },
       { id: "image-main", kind: "image", name: "贴图", locked: false, muted: false, hidden: false, clips: [] },
       { id: "generated-main", kind: "generated", name: "AI 内容", locked: false, muted: false, hidden: false, clips: [] },
-      { id: "scene-main", kind: "scene", name: "场景", locked: false, muted: false, hidden: false, clips: [] },
-      { id: "effect-main", kind: "effect", name: "动效", locked: false, muted: false, hidden: false, clips: [] },
+      { id: "effect-main", kind: "composition", name: "动效", locked: false, muted: false, hidden: false, clips: [] },
       { id: "subtitle-main", kind: "subtitle", name: "字幕", locked: false, muted: false, hidden: false, clips: [] },
       { id: "audio-voice", kind: "audio", name: "配音", audioRole: "voice", locked: false, muted: false, hidden: false, clips: [] },
       { id: "audio-music", kind: "audio", name: "背景音乐", audioRole: "music", locked: false, muted: false, hidden: false, clips: [] },

@@ -2,6 +2,33 @@ import { describe, expect, it } from "vitest";
 import { mergeLeadingCaptionFragments, splitCaptionText, subtitlesForMotionMatch, timedTextSegments } from "@/domain/captions";
 import type { SubtitleClip } from "@/domain/project";
 
+describe("splitCaptionText", () => {
+  it("prefers clause boundaries over cutting through a name or a product list", () => {
+    const text = "大家好，我是众康云养老科技有限公司的负责人王鹏，我们公司主要的产品有软件、硬件以及智慧养老平台。";
+    const cues = splitCaptionText(text);
+    expect(cues.join("")).toBe(text);
+    expect(cues.some((cue) => cue.endsWith("王"))).toBe(false);
+    expect(cues.some((cue) => cue.startsWith("鹏"))).toBe(false);
+    expect(cues.every((cue) => !/^[，。！？、；：]/u.test(cue))).toBe(true);
+    expect(splitCaptionText("我们的软件主要面向养老院、社区以及家庭，包含小程序、客户端、APP等。"))
+      .toEqual(["我们的软件主要面向养老院、社区以及家庭，", "包含小程序、客户端、APP等。"]);
+  });
+
+  it("keeps sentence punctuation and closing quotes with the preceding text", () => {
+    expect(splitCaptionText("他说：“今天开始。”下一句！"))
+      .toEqual(["他说：“今天开始。”", "下一句！"]);
+    expect(splitCaptionText("一二三四五六七八九十。下一句", 10))
+      .toEqual(["一二三四五六七八九十。", "下一句"]);
+  });
+
+  it("recognizes English sentences without breaking decimals or words", () => {
+    expect(splitCaptionText("Version 2.5 is ready. Next sentence!"))
+      .toEqual(["Version 2.5 is ready.", "Next sentence!"]);
+    const cues = splitCaptionText("The transcription service preserves complete words", 10);
+    expect(cues.join(" ")).toBe("The transcription service preserves complete words");
+  });
+});
+
 describe("timedTextSegments", () => {
   it("splits punctuation-aware captions and covers the requested duration exactly", () => {
     const segments = timedTextSegments("第一句很短。第二句内容更长一些！最后一句。", 6_000_000, 10);

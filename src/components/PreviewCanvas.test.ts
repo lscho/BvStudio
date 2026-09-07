@@ -1,7 +1,7 @@
 import { createElement } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { PreviewCanvas, moveEffectTransform, previewAudioGain, previewNativeAudioVolume, resizeEffectTransform, videoTargetPoint } from "@/components/PreviewCanvas";
+import { PreviewCanvas, moveEffectTransform, previewAudioGain, previewCanvasLength, previewNativeAudioVolume, resizeEffectTransform, videoTargetPoint } from "@/components/PreviewCanvas";
 import { createEmptyProject } from "@/domain/project";
 import type { AiProviderConfig } from "@/services/ai/provider";
 import { useEditorStore } from "@/stores/editorStore";
@@ -17,13 +17,161 @@ beforeEach(() => {
 });
 
 describe("PreviewCanvas effect manipulation", () => {
-  it("opens presenter settings from the toolbar when avoidance is not configured", () => {
+  it("places background library previews below a cropped video and timeline foreground graphics", () => {
+    useEditorStore.getState().addVideo({ id: "portrait", name: "portrait.mp4", kind: "video", durationUs: 8_000_000, objectUrl: "blob:portrait" });
+    const id = useEditorStore.getState().selectedClipId!;
+    useEditorStore.getState().updateVideo(id, { fit: "cover", mask: { shape: "rectangle", radius: 0, feather: 0, borderWidth: 0, borderColor: "#ffffff", focusX: 65, focusY: 50, widthPercent: 25, heightPercent: 80 } });
+    useEditorStore.getState().addComposition("punch-pill");
+    const { container } = render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false, effectPreview: { compositionId: "background-grid", requestId: 1 } }));
+    expect(container.querySelector(".effect-preview-composition")).toHaveStyle({ zIndex: 0 });
+    expect(container.querySelector(".video-layer")).toHaveStyle({ zIndex: 20, width: "25%", height: "80%" });
+    expect(container.querySelector(".video-content video")).toHaveStyle({ objectFit: "cover", objectPosition: "65% 50%" });
+    expect(container.querySelector(".component-punch-pill")).toHaveStyle({ zIndex: 220 });
+  });
+
+  it("previews contained video framing and disables canvas handles on locked tracks", () => {
+    useEditorStore.getState().addVideo({ id: "portrait", name: "portrait.mp4", kind: "video", width: 1080, height: 1920, durationUs: 8_000_000, objectUrl: "blob:portrait" });
+    const id = useEditorStore.getState().selectedClipId!;
+    useEditorStore.getState().updateCanvas({ ...useEditorStore.getState().project.canvas, width: 1920, height: 1080 });
+    useEditorStore.getState().updateVideo(id, { transform: { ...transform, scale: 0.6 }, mask: { shape: "rectangle", radius: 0, feather: 0, borderWidth: 0, borderColor: "#ffffff", focusX: 50, focusY: 50, widthPercent: 80, heightPercent: 25 } });
+    const { container } = render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
+    expect(container.querySelector(".video-content video")).toHaveStyle({ objectFit: "contain" });
+    expect(container.querySelector(".video-layer")).toHaveStyle({ width: "31.640625%", height: "100%" });
+    expect(container.querySelector(".video-layer")?.getAttribute("style")).toContain("scale(0.6)");
+    expect(container.querySelectorAll(".video-layer .canvas-resize-handle")).toHaveLength(8);
+    const track = useEditorStore.getState().project.tracks.find((candidate) => candidate.clips.some((clip) => clip.id === id))!;
+    act(() => useEditorStore.getState().setTrackState(track.id, { locked: true }));
+    expect(container.querySelectorAll(".video-layer .canvas-resize-handle")).toHaveLength(0);
+  });
+
+  it("positions material compositions and hides resize handles when locked", () => {
+    useEditorStore.getState().addComposition("poster-wall-3d");
+    const id = useEditorStore.getState().selectedClipId!;
+    useEditorStore.getState().updateComposition(id, { transform: { x: 25, y: 70, scale: 0.5, rotation: 30, opacity: 0.8 } });
+    const view = render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
+    const overlay = screen.getByRole("button", { name: "选择 3D 海报墙" }).parentElement?.parentElement;
+    expect(overlay).toHaveStyle({ left: "25%", top: "70%", opacity: "0.8", transform: "translate(-50%, -50%) scale(0.5) rotate(30deg)" });
+    expect(overlay?.querySelectorAll(".canvas-resize-handle")).toHaveLength(8);
+    view.unmount();
+    useEditorStore.getState().updateComposition(id, { locked: true });
+    render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
+    expect(screen.getByRole("button", { name: "选择 3D 海报墙" }).parentElement?.parentElement?.querySelectorAll(".canvas-resize-handle")).toHaveLength(0);
+  });
+
+  it("renders a transient library preview without adding a timeline composition", () => {
+    const onCloseEffectPreview = vi.fn();
+    const { container } = render(createElement(PreviewCanvas, {
+      aiProvider,
+      onNeedSettings: vi.fn(),
+      onImport: vi.fn(),
+      onGenerate: vi.fn(),
+      playing: false,
+      effectPreview: { compositionId: "punch-pill", requestId: 1 },
+      onCloseEffectPreview
+    }));
+
+    expect(container.querySelector(".effect-library-preview .component-punch-pill")).toHaveTextContent("一句金句，定格三秒");
+    expect(screen.getByText("预览 · 金句强调条")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "关闭动效预览" }));
+    expect(onCloseEffectPreview).toHaveBeenCalledOnce();
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips).toHaveLength(0);
+  });
+
+  it("uses a temporary demonstration image for a focus-card preview", () => {
+    const { container } = render(createElement(PreviewCanvas, {
+      aiProvider,
+      onNeedSettings: vi.fn(),
+      onImport: vi.fn(),
+      onGenerate: vi.fn(),
+      playing: false,
+      effectPreview: { compositionId: "focus-card", requestId: 1 }
+    }));
+
+    expect(container.querySelector(".component-focus-card")).toBeInTheDocument();
+    expect(container.querySelector(".focus-card-media-frame img")).toHaveAttribute("src", expect.stringContaining("data:image/svg+xml"));
+    expect(useEditorStore.getState().project.assets).toEqual([]);
+  });
+
+  it("lets an active focus card take over its linked timeline video", () => {
+    const project = createEmptyProject();
+    project.assets.push({ id: "presenter", name: "presenter.mp4", kind: "video", durationUs: 10_000_000, objectUrl: "blob:presenter" });
+    project.tracks.find((track) => track.kind === "video")!.clips.push({
+      id: "presenter-video", trackId: "video-main", kind: "video", label: "人物", startUs: 0, durationUs: 10_000_000,
+      locked: false, assetId: "presenter", sourceInUs: 0, playbackRate: 1, volume: 1, fit: "cover",
+      camera: { preset: "none", startScale: 1, endScale: 1, startX: 0, endX: 0, startY: 0, endY: 0, easing: "linear" }
+    });
+    project.tracks.find((track) => track.kind === "composition")!.clips.push({
+      id: "focus", trackId: "effect-main", kind: "composition", label: "人物聚焦卡", startUs: 2_000_000, durationUs: 6_000_000,
+      locked: false, compositionId: "focus-card", bindings: [{ slotId: "presenter", assetIds: ["presenter"] }], text: "要点一｜要点二",
+      color: "#ffffff", accentColor: "#5fa8ff", fontSize: 48, speed: 1,
+      transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }
+    });
+    useEditorStore.setState({ ...useEditorStore.getState(), project, playheadUs: 2_400_000 });
+
+    const { container } = render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
+    expect(container.querySelectorAll(".video-layer")).toHaveLength(0);
+    expect(container.querySelectorAll(".focus-card-linked-media")).toHaveLength(1);
+  });
+
+  it("isolates a library preview from existing timeline graphics", () => {
+    useEditorStore.getState().addComposition("punch-pill");
+    const project = useEditorStore.getState().project;
+    project.motionTheme.skin = "light";
+    useEditorStore.setState({ ...useEditorStore.getState(), project });
+    const { container } = render(createElement(PreviewCanvas, {
+      aiProvider,
+      onNeedSettings: vi.fn(),
+      onImport: vi.fn(),
+      onGenerate: vi.fn(),
+      playing: false,
+      effectPreview: { compositionId: "punch-pill", requestId: 1 }
+    }));
+
+    expect(container.querySelectorAll(".component-punch-pill")).toHaveLength(1);
+    expect(container.querySelector(".effect-preview-sample-backdrop")).toHaveClass("motion-light");
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips).toHaveLength(1);
+  });
+
+  it("uses canvas-relative effect type size without a preview-only pixel floor", () => {
+    expect(previewCanvasLength(48, 1920)).toBe("2.5cqw");
+    expect(previewCanvasLength(48, 1920, 10)).toBe("clamp(10px, 2.5cqw, 48px)");
+  });
+  it("creates an editable presenter area in one click and keeps avoidance when hidden", () => {
     render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
 
     const presenterButton = screen.getByRole("button", { name: "设置人物避让区" });
     expect(presenterButton).toBeEnabled();
     fireEvent.click(presenterButton);
-    expect(screen.getByRole("heading", { name: "画布与动效主题" })).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "移动人物避让区" })).toBeVisible();
+    const settings = useEditorStore.getState().project.presenterSafeArea;
+    expect(settings.position).not.toBe("none");
+    const historyLength = useEditorStore.getState().past.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "隐藏人物避让框" }));
+    expect(screen.queryByRole("button", { name: "移动人物避让区" })).not.toBeInTheDocument();
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual(settings);
+    fireEvent.click(screen.getByRole("button", { name: "显示人物避让框" }));
+    expect(screen.getByRole("button", { name: "移动人物避让区" })).toBeVisible();
+    expect(useEditorStore.getState().past).toHaveLength(historyLength);
+
+    fireEvent.click(screen.getByRole("button", { name: "清除人物避让区" }));
+    expect(useEditorStore.getState().project.presenterSafeArea.position).toBe("none");
+    act(() => useEditorStore.getState().undo());
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual(settings);
+    expect(screen.getByRole("button", { name: "移动人物避让区" })).toBeVisible();
+  });
+
+  it("hides presenter editing during playback and library previews", () => {
+    const props = { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false };
+    const view = render(createElement(PreviewCanvas, props));
+    fireEvent.click(screen.getByRole("button", { name: "设置人物避让区" }));
+    view.rerender(createElement(PreviewCanvas, { ...props, playing: true }));
+    expect(screen.queryByRole("button", { name: "移动人物避让区" })).not.toBeInTheDocument();
+    view.rerender(createElement(PreviewCanvas, { ...props, effectPreview: { compositionId: "punch-pill", requestId: 1 } }));
+    expect(screen.queryByRole("button", { name: "移动人物避让区" })).not.toBeInTheDocument();
+    view.rerender(createElement(PreviewCanvas, props));
+    expect(screen.getByRole("button", { name: "移动人物避让区" })).toBeVisible();
   });
 
   it("moves an effect in canvas-relative percentages", () => {

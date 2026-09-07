@@ -24,6 +24,25 @@ describe("fallbackSegments", () => {
 });
 
 describe("captionSegments", () => {
+  it("preserves natural cloud cue boundaries instead of merging clauses again", () => {
+    const text = "我们提供软件与硬件，服务养老院以及社区，让家属及时了解情况。";
+    const cues = captionSegments({ ...transcript([{ startSeconds: 4, endSeconds: 10, text }]), device: "cloud:mimo-v2.5-asr" }, 12_000_000);
+    expect(cues.map((cue) => cue.text)).toEqual(["我们提供软件与硬件，服务养老院以及社区，", "让家属及时了解情况。"]);
+    expect(cues[0].startSeconds).toBe(4);
+    expect(cues.at(-1)?.endSeconds).toBe(10);
+    expect(cues[1].startSeconds).toBe(cues[0].endSeconds);
+  });
+
+  it("validates coarse cloud intervals before estimating caption times", () => {
+    const cues = captionSegments({ ...transcript([
+      { startSeconds: 2, endSeconds: 20, text: "第一句。第二句！" },
+      { startSeconds: Number.NaN, endSeconds: 4, text: "无效" }
+    ]), device: "cloud:test" }, 6_000_000);
+    expect(cues.map((cue) => cue.text)).toEqual(["第一句。", "第二句！"]);
+    expect(cues[0].startSeconds).toBe(2);
+    expect(cues.at(-1)?.endSeconds).toBe(6);
+  });
+
   it("turns coarse cloud ASR chunks into readable timed sentence cues", () => {
     const cues = captionSegments({
       language: "zh",

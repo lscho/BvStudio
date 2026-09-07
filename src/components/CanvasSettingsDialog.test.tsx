@@ -43,29 +43,27 @@ describe("CanvasSettingsDialog", () => {
     expect(useEditorStore.getState().project.canvas).toMatchObject({ fpsNumerator: 60_000, fpsDenominator: 1_000 });
   });
 
-  it("applies a theme palette and keeps every semantic color individually editable", () => {
+  it("only edits canvas settings and preserves the effect tab theme", () => {
     const project = useEditorStore.getState().project;
     render(<CanvasSettingsDialog open onOpenChange={vi.fn()} canvas={project.canvas} assets={project.assets} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /浅色主题/ }));
-    fireEvent.change(screen.getByLabelText("动效观点颜色"), { target: { value: "#3456d1" } });
+    expect(screen.getByRole("dialog", { name: "画布设置" })).toBeInTheDocument();
+    expect(screen.queryByText("动效主题")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /浅色主题/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "应用画布" }));
 
-    expect(useEditorStore.getState().project.motionTheme).toMatchObject({
-      skin: "light",
-      colors: { text: "#1b1d21", surface: "#f7f8fa", data: "#2563eb", opinion: "#3456d1", warning: "#2563eb", auxiliary: "#2563eb" }
-    });
+    expect(useEditorStore.getState().project.motionTheme).toEqual(project.motionTheme);
   });
 
-  it("updates the presenter safe area used by automatic motion layout", () => {
+  it("preserves the presenter area edited directly on the canvas", () => {
+    const settings = { position: "custom" as const, xPercent: 12, yPercent: 16, widthPercent: 36, heightPercent: 65 };
+    useEditorStore.getState().updatePresenterSafeArea(settings);
     const project = useEditorStore.getState().project;
     render(<CanvasSettingsDialog open onOpenChange={vi.fn()} canvas={project.canvas} assets={project.assets} />);
 
-    fireEvent.keyDown(screen.getByRole("combobox", { name: "人物位置" }), { key: "Enter" });
-    fireEvent.click(screen.getByRole("option", { name: "人物在右侧" }));
-    fireEvent.change(screen.getByRole("slider", { name: "人物区域宽度" }), { target: { value: "40" } });
+    fireEvent.click(screen.getByText("竖屏 9:16").closest("button")!);
     fireEvent.click(screen.getByRole("button", { name: "应用画布" }));
 
-    expect(useEditorStore.getState().project.presenterSafeArea).toEqual({ position: "right", widthPercent: 40 });
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual(settings);
   });
 });

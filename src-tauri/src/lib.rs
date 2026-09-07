@@ -1,7 +1,9 @@
 mod ai;
 mod asr;
 mod audio;
+mod composition_frames;
 mod effects;
+mod license;
 mod media;
 mod secrets;
 mod speech;
@@ -12,6 +14,7 @@ pub fn run() {
         .manage(asr::AsrManagerState::default())
         .manage(ai::AiRequestState::default())
         .manage(media::ExportManagerState::default())
+        .manage(composition_frames::CompositionFrameState::default())
         .manage(speech::SpeechRequestState::default())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
@@ -44,6 +47,9 @@ pub fn run() {
             media::generate_proxy_media,
             media::extract_media_audio,
             media::export_render_plan,
+            composition_frames::begin_composition_frames,
+            composition_frames::append_composition_frame,
+            composition_frames::release_composition_frames,
             media::cancel_export_job,
             media::save_project_file,
             media::read_project_file,
@@ -68,7 +74,9 @@ pub fn run() {
             effects::inspect_effect_package,
             effects::list_effect_packages,
             effects::install_effect_package,
-            effects::uninstall_effect_package
+            effects::uninstall_effect_package,
+            license::get_device_id,
+            license::get_device_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running BVideo Studio");

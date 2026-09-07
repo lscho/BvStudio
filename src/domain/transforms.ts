@@ -57,28 +57,28 @@ export function videoLayoutForPreset(id: VideoLayoutPresetId, durationUs: number
     "bottom-left": { x: 18, y: 80, scale: 0.3 },
     "bottom-right": { x: 82, y: 80, scale: 0.3 }
   };
-  if (id === "full") return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [], zIndex: 0 };
+  if (id === "full") return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [], zIndex: 20 };
   if (id === "reveal-center") {
     const endUs = Math.min(800_000, Math.max(100_000, Math.round(durationUs * 0.25)));
-    return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [{ offsetUs: 0, x: 50, y: 50, scale: 0.12, easing: "ease-out" }, { offsetUs: endUs, x: 50, y: 50, scale: 1, easing: "ease-out" }], zIndex: 10 };
+    return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [{ offsetUs: 0, x: 50, y: 50, scale: 0.12, easing: "ease-out" }, { offsetUs: endUs, x: 50, y: 50, scale: 1, easing: "ease-out" }], zIndex: 30 };
   }
   if (id === "split-left" || id === "split-right") {
     const target = { x: id === "split-left" ? 25 : 75, y: 50, scale: 0.5 };
     const endUs = Math.min(700_000, Math.max(160_000, Math.round(durationUs * 0.2)));
-    return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [{ offsetUs: 0, x: 50, y: 50, scale: 1, easing: "ease-in-out" }, { offsetUs: endUs, ...target, easing: "ease-in-out" }], zIndex: 10 };
+    return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [{ offsetUs: 0, x: 50, y: 50, scale: 1, easing: "ease-in-out" }, { offsetUs: endUs, ...target, easing: "ease-in-out" }], zIndex: 30 };
   }
   if (id === "presenter-bottom-right") {
     const target = { x: 84, y: 80, scale: 0.26 };
     const endUs = Math.min(650_000, Math.max(150_000, Math.round(durationUs * 0.2)));
-    return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [{ offsetUs: 0, x: 92, y: 88, scale: 0.08, easing: "back-out" }, { offsetUs: endUs, ...target, easing: "back-out" }], zIndex: 30 };
+    return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [{ offsetUs: 0, x: 92, y: 88, scale: 0.08, easing: "back-out" }, { offsetUs: endUs, ...target, easing: "back-out" }], zIndex: 50 };
   }
   const cornerName = id.replace("picture-in-picture-", "").replace("shrink-", "");
   const corner = corners[cornerName] ?? corners["top-right"];
   const transform = { ...DEFAULT_TRANSFORM, ...corner };
-  if (id.startsWith("picture-in-picture")) return { transform, transformKeyframes: [], zIndex: 10 };
+  if (id.startsWith("picture-in-picture")) return { transform, transformKeyframes: [], zIndex: 30 };
   if (id.startsWith("shrink")) {
     const endUs = Math.min(1_200_000, Math.max(200_000, Math.round(durationUs * 0.28)));
-    return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [{ offsetUs: 0, x: 50, y: 50, scale: 1, easing: "ease-in-out" }, { offsetUs: endUs, ...corner, easing: "ease-in-out" }], zIndex: 10 };
+    return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [{ offsetUs: 0, x: 50, y: 50, scale: 1, easing: "ease-in-out" }, { offsetUs: endUs, ...corner, easing: "ease-in-out" }], zIndex: 30 };
   }
-  return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [], zIndex: 10 };
+  return { transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [], zIndex: 30 };
 }

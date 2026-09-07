@@ -213,6 +213,9 @@ pub struct RenderOverlay {
     /// Per-frame RGBA PNGs (base64) for procedural overlays such as charts; replaces the static image.
     sequence_frames_base64: Option<Vec<String>>,
     sequence_fps: Option<f64>,
+    sequence_id: Option<String>,
+    #[serde(skip)]
+    sequence_path: Option<PathBuf>,
     image_path: Option<String>,
     target_width_px: Option<u32>,
     scale: Option<f64>,
@@ -248,6 +251,8 @@ pub struct RenderAnimatedProgress {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderVideoMask {
+    width_percent: Option<f64>,
+    height_percent: Option<f64>,
     shape: String,
     radius: f64,
     feather: f64,
@@ -728,6 +733,35 @@ pub fn media_tool_status(app: AppHandle) -> MediaToolStatus {
     }
 }
 
+fn display_video_dimensions(video: Option<&Value>) -> (u32, u32) {
+    let Some(video) = video else {
+        return (0, 0);
+    };
+    let width = video["width"].as_u64().unwrap_or(0) as u32;
+    let height = video["height"].as_u64().unwrap_or(0) as u32;
+    let parse_rotation = |value: &Value| {
+        value
+            .as_f64()
+            .or_else(|| value.as_str().and_then(|value| value.parse::<f64>().ok()))
+            .filter(|value| value.is_finite())
+    };
+    let rotation = video["side_data_list"]
+        .as_array()
+        .and_then(|entries| {
+            entries
+                .iter()
+                .find_map(|entry| parse_rotation(&entry["rotation"]))
+        })
+        .or_else(|| parse_rotation(&video["tags"]["rotate"]))
+        .unwrap_or(0.0)
+        .rem_euclid(360.0);
+    if (rotation - 90.0).abs() < 0.5 || (rotation - 270.0).abs() < 0.5 {
+        (height, width)
+    } else {
+        (width, height)
+    }
+}
+
 #[tauri::command]
 pub fn probe_media(app: AppHandle, path: String) -> Result<MediaProbe, String> {
     let source = ensure_source(&path)?;
@@ -778,14 +812,11 @@ pub fn probe_media(app: AppHandle, path: String) -> Result<MediaProbe, String> {
     let mut rate_parts = rate.split('/').filter_map(|part| part.parse::<u32>().ok());
     let fps_numerator = rate_parts.next().unwrap_or(30).max(1);
     let fps_denominator = rate_parts.next().unwrap_or(1).max(1);
+    let (width, height) = display_video_dimensions(video);
     Ok(MediaProbe {
         duration_us: (duration.max(0.0) * 1_000_000.0).round() as u64,
-        width: video
-            .and_then(|stream| stream["width"].as_u64())
-            .unwrap_or(0) as u32,
-        height: video
-            .and_then(|stream| stream["height"].as_u64())
-            .unwrap_or(0) as u32,
+        width,
+        height,
         fps_numerator,
         fps_denominator,
         video_codec: video
@@ -1523,6 +1554,50 @@ fn focus_camera_filter_for(
     Some(format!("zoompan=z='1+{zoom:.9}*({amount})':x='(iw-iw/zoom)*{focus_x:.9}':y='(ih-ih/zoom)*{focus_y:.9}':d=1:s={width}x{height}:fps={fps:.9}"))
 }
 
+fn video_frame_size(mask: Option<&RenderVideoMask>, width: u32, height: u32) -> (u32, u32) {
+    let dimension = |size: u32, percent: Option<f64>| {
+        let percent = percent
+            .filter(|value| value.is_finite())
+            .unwrap_or(100.0)
+            .clamp(5.0, 100.0);
+        ((size as f64 * percent / 100.0 / 2.0).floor() as u32 * 2).max(2)
+    };
+    let width = dimension(width, mask.and_then(|mask| mask.width_percent));
+    let height = dimension(height, mask.and_then(|mask| mask.height_percent));
+    if mask.is_some_and(|mask| matches!(mask.shape.as_str(), "circle" | "square")) {
+        (width.min(height), width.min(height))
+    } else {
+        (width, height)
+    }
+}
+
+fn video_fit_filter(
+    fit: Option<&str>,
+    mask: Option<&RenderVideoMask>,
+    width: u32,
+    height: u32,
+) -> String {
+    let position = |value: Option<f64>| {
+        value
+            .filter(|value| value.is_finite())
+            .unwrap_or(50.0)
+            .clamp(0.0, 100.0)
+            / 100.0
+    };
+    let x = position(mask.map(|mask| mask.focus_x));
+    let y = position(mask.map(|mask| mask.focus_y));
+    if fit == Some("contain") {
+        format!("format=rgba,scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)*{x:.9}:(oh-ih)*{y:.9}:color=black@0,setsar=1")
+    } else {
+        format!("scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}:(iw-ow)*{x:.9}:(ih-oh)*{y:.9},setsar=1")
+    }
+}
+
+fn alpha_preserving_camera_filter(filter: &str, label: &str) -> String {
+    // zoompan drops alpha, so apply the same motion to a separate opacity plane.
+    format!("split=2[{label}rgbin][{label}ain];[{label}rgbin]{filter}[{label}rgb];[{label}ain]alphaextract,{filter},format=gray[{label}a];[{label}rgb][{label}a]alphamerge")
+}
+
 fn video_mask_filters(mask: Option<&RenderVideoMask>) -> Vec<String> {
     let Some(mask) = mask else { return Vec::new() };
     let border_width = mask.border_width.clamp(0.0, 40.0);
@@ -1799,6 +1874,9 @@ fn render_overlays(
                 .unwrap_or_default();
             let image_path = if is_image {
                 ensure_source(overlay.image_path.as_deref().ok_or("贴图图层缺少源路径")?)?
+            } else if let Some(path) = &overlay.sequence_path {
+                command.args(["-framerate", &framerate]);
+                path.clone()
             } else if sequence.is_empty() {
                 let path = job_dir.join(format!("overlay-{index}.png"));
                 let data = overlay
@@ -1823,7 +1901,7 @@ fn render_overlays(
                 command.args(["-framerate", &framerate]);
                 dir.join("%05d.png")
             };
-            if is_image || sequence.is_empty() {
+            if is_image || (sequence.is_empty() && overlay.sequence_path.is_none()) {
                 command.args(["-loop", "1", "-framerate", &framerate]);
             }
             command
@@ -1854,33 +1932,46 @@ fn render_overlays(
         if is_video {
             let rate = overlay.playback_rate.unwrap_or(1.0).clamp(0.25, 4.0);
             source_filters.push(format!("setpts=(PTS-STARTPTS)/{rate:.6}"));
-            let fit = if overlay.fit.as_deref() == Some("contain") {
-                format!("scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:black", plan.width, plan.height, plan.width, plan.height)
-            } else {
-                format!(
-                    "scale={}:{}:force_original_aspect_ratio=increase,crop={}:{}",
-                    plan.width, plan.height, plan.width, plan.height
-                )
-            };
-            source_filters.push(fit);
+            let (frame_width, frame_height) =
+                video_frame_size(overlay.mask.as_ref(), plan.width, plan.height);
+            source_filters.push(video_fit_filter(
+                overlay.fit.as_deref(),
+                overlay.mask.as_ref(),
+                frame_width,
+                frame_height,
+            ));
+            let preserve_alpha = overlay.fit.as_deref() == Some("contain");
             if let Some(camera) = overlay.camera.as_ref().and_then(|camera| {
                 camera_filter_for(
                     camera,
                     overlay.camera_duration_us.unwrap_or(overlay.duration_us),
                     overlay.camera_offset_us.unwrap_or(0),
-                    plan.width,
-                    plan.height,
+                    frame_width,
+                    frame_height,
                     plan.fps.clamp(1.0, 120.0),
                 )
             }) {
-                source_filters.push(camera);
+                source_filters.push(if preserve_alpha {
+                    alpha_preserving_camera_filter(&camera, &format!("cam{index}"))
+                } else {
+                    camera
+                });
             } else {
                 source_filters.push(format!("fps={:.6}", plan.fps.clamp(1.0, 120.0)));
             }
             if let Some(focus) = overlay.focus.as_ref().and_then(|focus| {
-                focus_camera_filter_for(focus, plan.width, plan.height, plan.fps.clamp(1.0, 120.0))
+                focus_camera_filter_for(
+                    focus,
+                    frame_width,
+                    frame_height,
+                    plan.fps.clamp(1.0, 120.0),
+                )
             }) {
-                source_filters.push(focus);
+                source_filters.push(if preserve_alpha {
+                    alpha_preserving_camera_filter(&focus, &format!("focus{index}"))
+                } else {
+                    focus
+                });
             }
             source_filters.push("format=rgba".into());
             source_filters.push(format!(
@@ -1973,6 +2064,14 @@ fn render_overlays(
             source_filters.push("format=rgba".into());
         }
         if is_focus {
+            let (frame_width, frame_height) =
+                video_frame_size(overlay.mask.as_ref(), plan.width, plan.height);
+            let factor = overlay.scale.unwrap_or(1.0).clamp(0.05, 5.0);
+            source_filters.push(format!(
+                "scale={}:{}",
+                (frame_width as f64 * factor).round().max(2.0) as u32,
+                (frame_height as f64 * factor).round().max(2.0) as u32
+            ));
             if overlay
                 .transition
                 .as_ref()
@@ -2245,11 +2344,11 @@ fn render_overlays(
         &seconds(total_duration_us),
     ]);
     apply_video_encoder(&mut command, encoder, VideoEncodingStage::Final);
+    // The explicit project duration is authoritative; -shortest can drop buffered video on FFmpeg 6.
     command
         .args([
             "-c:a",
             "copy",
-            "-shortest",
             "-movflags",
             "+faststart",
             "-progress",
@@ -2526,10 +2625,21 @@ fn execute_export(
 pub async fn export_render_plan(
     app: AppHandle,
     state: State<'_, ExportManagerState>,
-    plan: RenderPlan,
+    frames: State<'_, crate::composition_frames::CompositionFrameState>,
+    mut plan: RenderPlan,
     job_id: String,
     on_event: Channel<ExportJobEvent>,
 ) -> Result<String, String> {
+    for overlay in &mut plan.overlays {
+        if let Some(id) = &overlay.sequence_id {
+            let fps = overlay.sequence_fps.unwrap_or(plan.fps);
+            if !fps.is_finite() || !(1.0..=120.0).contains(&fps) {
+                return Err("动效帧率无效".into());
+            }
+            let expected = (overlay.duration_us as f64 / 1_000_000.0 * fps).ceil() as usize;
+            overlay.sequence_path = Some(frames.resolve(id, expected)?);
+        }
+    }
     if plan.width == 0 || plan.height == 0 || plan.width > 7680 || plan.height > 4320 {
         return Err("导出画布尺寸无效".into());
     }
@@ -2654,6 +2764,41 @@ mod tests {
     }
 
     #[test]
+    fn display_video_dimensions_follow_rotation_metadata() {
+        let encoded = serde_json::json!({ "width": 1920, "height": 1080 });
+        assert_eq!(display_video_dimensions(Some(&encoded)), (1920, 1080));
+
+        let tag_rotation = serde_json::json!({
+            "width": 1920,
+            "height": 1080,
+            "tags": { "rotate": "90" }
+        });
+        assert_eq!(display_video_dimensions(Some(&tag_rotation)), (1080, 1920));
+
+        let display_matrix_rotation = serde_json::json!({
+            "width": 1920,
+            "height": 1080,
+            "tags": { "rotate": "0" },
+            "side_data_list": [{ "side_data_type": "Display Matrix", "rotation": -90 }]
+        });
+        assert_eq!(
+            display_video_dimensions(Some(&display_matrix_rotation)),
+            (1080, 1920)
+        );
+
+        let upside_down = serde_json::json!({
+            "width": 1920,
+            "height": 1080,
+            "side_data_list": [{ "rotation": 180 }]
+        });
+        assert_eq!(display_video_dimensions(Some(&upside_down)), (1920, 1080));
+        assert_eq!(
+            display_video_dimensions(Some(&serde_json::json!({ "width": "bad" }))),
+            (0, 0)
+        );
+    }
+
+    #[test]
     fn voice_audio_is_normalized_before_user_volume_is_applied() {
         assert_eq!(
             audio_mastering_filters("voice"),
@@ -2754,8 +2899,224 @@ mod tests {
     }
 
     #[test]
+    fn exports_video_containers_over_a_background_when_ffmpeg_is_available() -> Result<(), String> {
+        let ffmpeg = PathBuf::from("ffmpeg");
+        if Command::new(&ffmpeg).arg("-version").output().is_err() {
+            return Ok(());
+        }
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let job_dir = env::temp_dir().join(format!("bvideo-container-test-{stamp}"));
+        fs::create_dir_all(&job_dir).map_err(|error| error.to_string())?;
+        let source = job_dir.join("portrait.mp4");
+        let fixture = Command::new(&ffmpeg)
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=100x180:r=24:d=0.5",
+                "-c:v",
+                "libx264",
+            ])
+            .arg(&source)
+            .output()
+            .map_err(|error| error.to_string())?;
+        assert!(
+            fixture.status.success(),
+            "{}",
+            String::from_utf8_lossy(&fixture.stderr)
+        );
+        for (index, fit) in ["contain", "contain", "cover"].iter().enumerate() {
+            let output = job_dir.join(format!("result-{index}.mp4"));
+            let width_percent = if index == 2 { 25 } else { 100 };
+            let camera_scale = if index == 1 { 1.2 } else { 1.0 };
+            let plan: RenderPlan = serde_json::from_value(serde_json::json!({
+                "width": 320, "height": 180, "fps": 24, "format": "mp4", "outputPath": output, "encoder": "software",
+                "segments": [{ "kind": "generated", "durationUs": 500000, "color": "#00ff00" }],
+                "audios": [],
+                "overlays": [{ "kind": "video", "path": source, "startUs": 0, "durationUs": 500000,
+                    "x": 50, "y": 50, "scale": 1, "zIndex": 20, "fit": fit,
+                    "camera": { "startScale": camera_scale, "endScale": camera_scale, "startX": 0, "endX": 0, "startY": 0, "endY": 0, "easing": "linear" },
+                    "mask": { "shape": "rectangle", "widthPercent": width_percent, "heightPercent": 80,
+                        "radius": 0, "feather": 0, "borderWidth": 0, "borderColor": "#ffffff" }
+                }]
+            })).map_err(|error| error.to_string())?;
+            execute_export(&ffmpeg, &plan, &job_dir, &output, &ExportReporter::silent())?;
+            let frame = Command::new(&ffmpeg)
+                .args(["-v", "error", "-ss", "0.2", "-i"])
+                .arg(&output)
+                .args([
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "pipe:1",
+                ])
+                .output()
+                .map_err(|error| error.to_string())?;
+            assert!(
+                frame.status.success(),
+                "{}",
+                String::from_utf8_lossy(&frame.stderr)
+            );
+            assert_eq!(frame.stdout.len(), 320 * 180 * 3);
+            let pixel =
+                |x: usize, y: usize| &frame.stdout[(y * 320 + x) * 3..(y * 320 + x) * 3 + 3];
+            assert!(
+                pixel(20, 90)[1] > 200 && pixel(20, 90)[0] < 30,
+                "background must show through the container padding"
+            );
+            assert!(
+                pixel(160, 90)[0] > 200 && pixel(160, 90)[1] < 30,
+                "video must remain visible"
+            );
+            assert!(
+                pixel(160, 5)[1] > 200,
+                "container height must clip the video"
+            );
+        }
+        fs::remove_dir_all(job_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn video_container_dimensions_are_bounded_and_square_masks_remain_square() -> Result<(), String>
+    {
+        let mask: RenderVideoMask = serde_json::from_value(serde_json::json!({
+            "shape": "rectangle", "radius": 0, "feather": 0, "borderWidth": 0,
+            "borderColor": "#ffffff", "widthPercent": 25, "heightPercent": 80
+        }))
+        .map_err(|error| error.to_string())?;
+        assert_eq!(video_frame_size(Some(&mask), 1920, 1080), (480, 864));
+        let square = RenderVideoMask {
+            shape: "circle".into(),
+            ..mask
+        };
+        assert_eq!(video_frame_size(Some(&square), 1920, 1080), (480, 480));
+        let invalid = RenderVideoMask {
+            width_percent: Some(f64::NAN),
+            height_percent: Some(-1.0),
+            ..square
+        };
+        assert_eq!(video_frame_size(Some(&invalid), 1920, 1080), (54, 54));
+        Ok(())
+    }
+
+    #[test]
+    fn video_container_filters_preserve_transparency_and_selected_crop() -> Result<(), String> {
+        let ffmpeg = PathBuf::from("ffmpeg");
+        if Command::new(&ffmpeg).arg("-version").output().is_err() {
+            return Ok(());
+        }
+        let mask: RenderVideoMask = serde_json::from_value(serde_json::json!({
+            "shape": "rectangle", "radius": 0, "feather": 0, "borderWidth": 0,
+            "borderColor": "#ffffff", "focusX": 100, "focusY": 50
+        }))
+        .map_err(|error| error.to_string())?;
+        for moving in [false, true] {
+            let mut filter = video_fit_filter(Some("contain"), Some(&mask), 160, 90);
+            if moving {
+                let camera = RenderCameraMotion {
+                    start_scale: 1.2,
+                    end_scale: 1.2,
+                    start_x: 0.0,
+                    end_x: 0.0,
+                    start_y: 0.0,
+                    end_y: 0.0,
+                    easing: "linear".into(),
+                };
+                let motion = camera_filter_for(&camera, 1_000_000, 0, 160, 90, 24.0)
+                    .ok_or("missing camera filter")?;
+                filter.push_str(&format!(
+                    ",{}",
+                    alpha_preserving_camera_filter(&motion, "test")
+                ));
+            }
+            let frame = Command::new(&ffmpeg)
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=red:s=50x90:r=24:d=0.1",
+                    "-filter_complex",
+                    &filter,
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgba",
+                    "pipe:1",
+                ])
+                .output()
+                .map_err(|error| error.to_string())?;
+            assert!(
+                frame.status.success(),
+                "{}",
+                String::from_utf8_lossy(&frame.stderr)
+            );
+            assert_eq!(frame.stdout.len(), 160 * 90 * 4);
+            let alpha = |x: usize, y: usize| frame.stdout[(y * 160 + x) * 4 + 3];
+            assert!(
+                alpha(10, 45) < 5,
+                "contain padding must stay transparent during camera motion"
+            );
+            assert!(
+                alpha(150, 45) > 250,
+                "right-aligned content must stay opaque"
+            );
+        }
+        let filter = video_fit_filter(Some("cover"), Some(&mask), 40, 90);
+        let frame = Command::new(&ffmpeg)
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=160x90:r=24:d=0.1,drawbox=x=80:y=0:w=80:h=90:color=blue:t=fill",
+                "-vf",
+                &filter,
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ])
+            .output()
+            .map_err(|error| error.to_string())?;
+        assert!(
+            frame.status.success(),
+            "{}",
+            String::from_utf8_lossy(&frame.stderr)
+        );
+        assert_eq!(frame.stdout.len(), 40 * 90 * 3);
+        assert!(
+            frame
+                .stdout
+                .chunks_exact(3)
+                .all(|pixel| pixel[2] > 200 && pixel[0] < 30),
+            "cover must crop the selected right side"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn circular_video_mask_uses_the_selected_crop_focus() {
         let filters = video_mask_filters(Some(&RenderVideoMask {
+            width_percent: None,
+            height_percent: None,
             shape: "circle".into(),
             radius: 50.0,
             feather: 0.0,
@@ -2900,7 +3261,7 @@ mod tests {
             .unwrap()
             .status
             .success());
-        let plan = RenderPlan {
+        let mut plan = RenderPlan {
             width: 320,
             height: 180,
             fps: 60.0,
@@ -2998,6 +3359,8 @@ mod tests {
                     }),
                     image_data_base64: Some(BASE64.encode(fs::read(&wide_fixture).unwrap())),
                     sequence_frames_base64: None,
+                    sequence_id: None,
+                    sequence_path: None,
                     sequence_fps: None,
                     image_path: None,
                     target_width_px: None,
@@ -3041,6 +3404,8 @@ mod tests {
                         BASE64.encode(fs::read(&fixture).unwrap()),
                         BASE64.encode(fs::read(&fixture).unwrap()),
                     ]),
+                    sequence_id: None,
+                    sequence_path: None,
                     sequence_fps: Some(60.0),
                     image_path: None,
                     target_width_px: None,
@@ -3077,6 +3442,8 @@ mod tests {
                     }),
                     image_data_base64: None,
                     sequence_frames_base64: None,
+                    sequence_id: None,
+                    sequence_path: None,
                     sequence_fps: None,
                     image_path: Some(fixture.to_string_lossy().into_owned()),
                     target_width_px: Some(32),
@@ -3118,6 +3485,8 @@ mod tests {
                     recipe: None,
                     image_data_base64: None,
                     sequence_frames_base64: None,
+                    sequence_id: None,
+                    sequence_path: None,
                     sequence_fps: None,
                     image_path: None,
                     target_width_px: None,
@@ -3158,6 +3527,8 @@ mod tests {
                     camera_offset_us: Some(0),
                     camera_duration_us: Some(500_000),
                     mask: Some(RenderVideoMask {
+                        width_percent: None,
+                        height_percent: None,
                         shape: "circle".into(),
                         radius: 50.0,
                         feather: 0.0,
@@ -3322,6 +3693,30 @@ mod tests {
             visible_width >= 80,
             "animated wide overlay was cropped to {visible_width}px"
         );
+        let sequence_dir = job_dir.join("composition-sequence");
+        assert!(fs::create_dir(&sequence_dir).is_ok());
+        for index in 0..30 {
+            assert!(fs::copy(&fixture, sequence_dir.join(format!("{index:05}.png"))).is_ok());
+        }
+        let streamed: Result<RenderOverlay, _> = serde_json::from_value(serde_json::json!({
+            "kind": "composition", "startUs": 0, "durationUs": 500000,
+            "x": 50, "y": 50, "sequenceFps": 60, "opacity": 1, "scale": 1
+        }));
+        assert!(streamed.is_ok());
+        if let Ok(mut overlay) = streamed {
+            overlay.sequence_path = Some(sequence_dir.join("%05d.png"));
+            plan.overlays = vec![overlay];
+        }
+        let streamed_output = job_dir.join("streamed.mp4");
+        let streamed_result = execute_export(
+            &ffmpeg,
+            &plan,
+            &job_dir,
+            &streamed_output,
+            &ExportReporter::silent(),
+        );
+        assert!(streamed_result.is_ok(), "{streamed_result:?}");
+        assert!(fs::metadata(&streamed_output).is_ok_and(|metadata| metadata.len() > 1000));
         let _ = fs::remove_dir_all(job_dir);
     }
 

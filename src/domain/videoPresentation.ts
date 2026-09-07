@@ -3,8 +3,9 @@ import type { CameraMotion } from "@/domain/camera";
 import type { EditorProject, EffectBackdrop, ImageClip, TransformProps, VideoClip, VideoFocusEffect, VideoMask, VideoMotionPresetId, VideoPresentationCue, VideoRole, VideoTransition, VideoTransitionPreset } from "@/domain/project";
 import { eased } from "@/domain/easing";
 import { DEFAULT_TRANSFORM, videoLayoutForPreset, visualTransformAt } from "@/domain/transforms";
+import { DEFAULT_VIDEO_MASK, normalizeVideoMask } from "@/domain/videoFrame";
 
-export const DEFAULT_VIDEO_MASK: VideoMask = { shape: "rectangle", radius: 0, feather: 0, borderWidth: 0, borderColor: "#ffffff", focusX: 50, focusY: 50 };
+export { DEFAULT_VIDEO_MASK } from "@/domain/videoFrame";
 export const DEFAULT_VIDEO_TRANSITION: VideoTransition = { preset: "none", durationUs: 500_000, easing: "ease-in-out" };
 export const DEFAULT_VIDEO_FOCUS: VideoFocusEffect = { enabled: false, startOffsetUs: 0, durationUs: 1_500_000, x: 50, y: 50, zoom: 1.8, radius: 14, feather: 6, dimOpacity: 0.58, showCursor: true };
 export const DEFAULT_EFFECT_BACKDROP: EffectBackdrop = { enabled: true, color: "#111316", opacity: 0.64, blur: 8, paddingX: 18, paddingY: 10, radius: 4 };
@@ -143,7 +144,7 @@ function presentationAt(clip: VideoClip, localUs: number, cueLimit: number): Vid
   const progress = cue.transitionDurationUs <= 0 ? 1 : (localUs - cue.offsetUs) / cue.transitionDurationUs;
   return {
     transform: progress < 1 ? interpolateTransform(from.transform, cue.transform, progress) : { ...cue.transform },
-    mask: { ...cue.mask },
+    mask: normalizeVideoMask(cue.mask),
     focus: { ...cue.focus },
     camera: cue.camera,
     cameraStartOffsetUs: cue.offsetUs,
@@ -170,7 +171,7 @@ export function videoMotionPresetPatch(id: VideoMotionPresetId, clip: VideoClip)
     fit: "cover" as const
   };
   if (id === "full-screen") {
-    return { ...reset, role: "a-roll", layoutPreset: "full", transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [], zIndex: 0 };
+    return { ...reset, role: "a-roll", layoutPreset: "full", transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [], zIndex: 20 };
   }
   if (id === "zoom-to-full") {
     const endUs = Math.min(900_000, Math.max(200_000, Math.round(clip.durationUs * 0.22)));
@@ -184,7 +185,7 @@ export function videoMotionPresetPatch(id: VideoMotionPresetId, clip: VideoClip)
         { offsetUs: endUs, x: 50, y: 50, scale: 1, easing: "ease-in-out" }
       ],
       transition: { ...DEFAULT_VIDEO_TRANSITION, preset: "zoom", durationUs: endUs },
-      zIndex: 10
+      zIndex: 30
     };
   }
   if (id === "presenter-circle-bottom-right") {
@@ -218,7 +219,7 @@ export function videoMotionPresetPatch(id: VideoMotionPresetId, clip: VideoClip)
     };
   }
   if (id === "slow-push-in") {
-    return { ...reset, role: "a-roll", layoutPreset: "full", transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [], camera: cameraMotionForPreset("push-in"), zIndex: 0 };
+    return { ...reset, role: "a-roll", layoutPreset: "full", transform: { ...DEFAULT_TRANSFORM }, transformKeyframes: [], camera: cameraMotionForPreset("push-in"), zIndex: 20 };
   }
   const focus = id === "screen-magnify"
     ? { ...DEFAULT_VIDEO_FOCUS, enabled: true, durationUs: clip.durationUs, zoom: 2.25, radius: 18, feather: 7, dimOpacity: 0, showCursor: false }
@@ -233,12 +234,12 @@ export function videoMotionPresetPatch(id: VideoMotionPresetId, clip: VideoClip)
     transformKeyframes: [],
     focus,
     volume: 0,
-    zIndex: 0
+    zIndex: 20
   };
 }
 
 export function videoMask(clip: VideoClip): VideoMask {
-  return { ...DEFAULT_VIDEO_MASK, ...clip.mask };
+  return normalizeVideoMask(clip.mask);
 }
 
 export type VisualTransitionClip = VideoClip | ImageClip;

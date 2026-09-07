@@ -2,6 +2,25 @@ import { describe, expect, it } from "vitest";
 import { aiTimedScriptSchema, createAiMotionMatchesSchema, createMotionMatchesJsonSchema } from "@/services/ai/schema";
 
 describe("two-stage AI schemas", () => {
+  it("accepts mixed showcase inputs and input-free backgrounds but rejects unknown media", () => {
+    const schema = createAiMotionMatchesSchema(["motion-zoom", "background-stripes"], ["video"], ["image"]);
+    const match = { captionIndex: 0, primaryEffectId: "motion-zoom", primaryText: "", secondaryEffectId: null, secondaryText: null,
+      accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 50, secondaryY: 50, cameraPreset: "none", chart: null,
+      compositionBindings: [{ slotId: "media", assetIds: ["image", "video"] }] };
+    expect(schema.parse({ matches: [match] }).matches[0].compositionBindings).toEqual(match.compositionBindings);
+    expect(() => schema.parse({ matches: [{ ...match, compositionBindings: [{ slotId: "media", assetIds: ["image", "audio"] }] }] })).toThrow();
+    expect(schema.parse({ matches: [{ ...match, primaryEffectId: "background-stripes", compositionBindings: [] }] }).matches[0].compositionBindings).toEqual([]);
+  });
+  it("validates picture composition slots separately from video layers", () => {
+    const schema = createAiMotionMatchesSchema(["poster-wall-3d"], ["video"], ["a", "b"]);
+    const match = { captionIndex: 0, primaryEffectId: "poster-wall-3d", primaryText: "", secondaryEffectId: null, secondaryText: null,
+      accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 50, secondaryY: 50, cameraPreset: "none", chart: null,
+      compositionBindings: [{ slotId: "posters", assetIds: ["b", "a"] }] };
+    expect(schema.parse({ matches: [match] }).matches[0].compositionBindings).toEqual(match.compositionBindings);
+    expect(() => schema.parse({ matches: [{ ...match, compositionBindings: [] }] })).toThrow("素材槽");
+    expect(() => schema.parse({ matches: [{ ...match, compositionBindings: [{ slotId: "posters", assetIds: ["a", "video"] }] }] })).toThrow("图片槽不能绑定视频");
+    expect(() => schema.parse({ matches: [{ ...match, secondaryEffectId: "poster-wall-3d" }] })).toThrow("主动效");
+  });
   it("accepts an article with timed captions before motion matching", () => {
     const value = { title: "设计系统介绍", article: "文章正文", narration: "口播正文", captions: [{ startSeconds: 0, endSeconds: 3, text: "统一团队语言。" }] };
     expect(aiTimedScriptSchema.parse(value)).toEqual(value);

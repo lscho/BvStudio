@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { AudioWaveform, Check, Cloud, Gauge, KeyRound, LoaderCircle, PlugZap, X } from "lucide-react";
+import { AudioWaveform, Check, Cloud, Copy, Gauge, Gift, KeyRound, LoaderCircle, PlugZap, ShieldCheck, Sparkles, X } from "lucide-react";
+import { useLicenseStore } from "@/stores/licenseStore";
 import { browserApiKey, hasApiKey, providerEndpoint, saveApiKey, verifyProviderConfiguration, type AiProtocol } from "@/services/ai/provider";
 import { Select } from "@/components/Select";
 import { DEFAULT_SETTINGS, type PersistedSettings } from "@/services/storage";
@@ -35,7 +36,18 @@ const asrLanguageOptions = [
 ];
 
 export function AiSettingsDialog({ open, settings, onOpenChange, onSave }: Props) {
-  const [section, setSection] = useState<"provider" | "media" | "speech">("provider");
+  const [section, setSection] = useState<"provider" | "media" | "speech" | "license">("provider");
+  const [cardKey, setCardKey] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [redeemNotice, setRedeemNotice] = useState("");
+  const [redeemError, setRedeemError] = useState("");
+
+  const deviceId = useLicenseStore((state) => state.deviceId);
+  const vipStatus = useLicenseStore((state) => state.status);
+  const isRedeeming = useLicenseStore((state) => state.isRedeeming);
+  const initializeLicense = useLicenseStore((state) => state.initialize);
+  const redeemLicense = useLicenseStore((state) => state.redeem);
+  const resetLicense = useLicenseStore((state) => state.resetLicense);
   const [draft, setDraft] = useState(settings.aiProvider);
   const [speechDraft, setSpeechDraft] = useState(settings.cloudSpeech ?? DEFAULT_SETTINGS.cloudSpeech);
   const [mediaDraft, setMediaDraft] = useState(settings.media ?? DEFAULT_SETTINGS.media);
@@ -64,6 +76,11 @@ export function AiSettingsDialog({ open, settings, onOpenChange, onSave }: Props
     setProviderModels([]);
     setProviderStatus(null);
     setSection("provider");
+    setCardKey("");
+    setCopied(false);
+    setRedeemNotice("");
+    setRedeemError("");
+    void initializeLicense();
     void hasApiKey().then(setKeySaved);
     void hasSpeechApiKey().then(setSpeechKeySaved);
     if (isDesktopRuntime()) void getMediaToolStatus().then(setMediaStatus).catch(() => setMediaStatus(null));
@@ -173,7 +190,7 @@ export function AiSettingsDialog({ open, settings, onOpenChange, onSave }: Props
           <div className="settings-dialog-header">
             <span className="eyebrow">PREFERENCES</span>
             <Dialog.Title>客户端设置</Dialog.Title>
-            <Dialog.Description id="ai-settings-description">文案模型、云端语音与媒体能力统一在当前客户端配置。</Dialog.Description>
+            <Dialog.Description id="ai-settings-description">文案模型、云端语音、媒体引擎与会员授权统一在当前客户端配置。</Dialog.Description>
           </div>
           <form className="settings-form" onSubmit={submit}>
             <div className="settings-layout">
@@ -181,6 +198,7 @@ export function AiSettingsDialog({ open, settings, onOpenChange, onSave }: Props
                 <button type="button" className={section === "provider" ? "active" : ""} onClick={() => setSection("provider")}><Cloud size={17} /><span><strong>云端模型</strong><small>协议、模型与凭证</small></span></button>
                 <button type="button" className={section === "speech" ? "active" : ""} onClick={() => setSection("speech")}><AudioWaveform size={17} /><span><strong>云端语音</strong><small>MiMo TTS 与 ASR</small></span></button>
                 <button type="button" className={section === "media" ? "active" : ""} onClick={() => setSection("media")}><Gauge size={17} /><span><strong>媒体与导出</strong><small>FFmpeg 与代理</small></span></button>
+                <button type="button" className={section === "license" ? "active" : ""} onClick={() => setSection("license")}><ShieldCheck size={17} /><span><strong>会员与授权</strong><small>硬件码与卡密兑换</small></span></button>
               </nav>
               <section className="settings-pane">
                 {section === "provider" && <div className="settings-section-panel">
@@ -207,6 +225,121 @@ export function AiSettingsDialog({ open, settings, onOpenChange, onSave }: Props
                   <label><span>语音 API Key</span><div className="secret-input"><KeyRound size={15} /><input type="password" autoComplete="off" value={speechApiKey} onChange={(event) => setSpeechApiKey(event.target.value)} placeholder={speechKeySaved ? "已保存在本地凭证目录，留空则不修改" : "输入 MiMo API Key"} /></div></label>
                   {speechKeySaved && <p className="success-text"><Check size={14} />TTS 与 ASR 凭证已保存</p>}
                   <div className="inline-check"><button className="button secondary" type="button" disabled={checkingSpeech} onClick={() => void checkSpeech()}>{checkingSpeech ? <LoaderCircle className="spin" size={14} /> : <PlugZap size={14} />}{checkingSpeech ? "检测中" : "检测云端语音"}</button>{speechStatus && <small>{speechStatus}</small>}</div>
+                </div>}
+                {section === "license" && <div className="settings-section-panel">
+                  <div className="settings-pane-heading">
+                    <h3>会员与授权</h3>
+                    <p>管理客户端会员授权。输入卡密兑换即可升级为 Pro 专业版。</p>
+                  </div>
+                  <div className="license-identity-card">
+                    <div className="license-identity-header">
+                      <span className="license-identity-label">当前身份</span>
+                      <div className="license-tier-group">
+                        <span className={`license-tier-chip ${vipStatus.isVip ? "inactive" : "active-free"}`}>
+                          Free
+                        </span>
+                        <span className={`license-tier-chip ${vipStatus.isVip ? "active-pro" : "inactive"}`}>
+                          <Sparkles size={12} />
+                          Pro
+                        </span>
+                      </div>
+                    </div>
+                    <div className="license-identity-desc">
+                      {vipStatus.isVip ? (
+                        <p className="license-pro-info">
+                          已激活 Pro 专业版
+                          {vipStatus.expireAt ? ` · 有效期至 ${new Date(vipStatus.expireAt).toLocaleDateString()}` : " · 永久授权"}
+                          {vipStatus.licenseKey ? ` · 卡密 ${vipStatus.licenseKey}` : ""}
+                        </p>
+                      ) : (
+                        <p className="license-free-info">
+                          当前为 Free 基础版，兑换卡密后可解锁 Pro 全部功能
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="license-redeem-section">
+                    <label>
+                      <span>卡密兑换</span>
+                      <div className="license-redeem-row">
+                        <input
+                          type="text"
+                          value={cardKey}
+                          onChange={(event) => {
+                            setCardKey(event.target.value);
+                            setRedeemError("");
+                            setRedeemNotice("");
+                          }}
+                          placeholder="请输入卡密兑换码"
+                          disabled={isRedeeming}
+                          aria-label="卡密兑换码输入框"
+                        />
+                        <button
+                          type="button"
+                          className="button primary"
+                          disabled={isRedeeming || !cardKey.trim()}
+                          aria-label="立即兑换"
+                          onClick={() => {
+                            if (!cardKey.trim()) return;
+                            setRedeemNotice("");
+                            setRedeemError("");
+                            void redeemLicense(cardKey).then((result) => {
+                              if (result.success) {
+                                setRedeemNotice(result.message);
+                                setCardKey("");
+                              } else {
+                                setRedeemError(result.message);
+                              }
+                            });
+                          }}
+                        >
+                          {isRedeeming ? <LoaderCircle className="spin" size={14} /> : <Gift size={14} />}
+                          <span>{isRedeeming ? "兑换中" : "立即兑换"}</span>
+                        </button>
+                      </div>
+                    </label>
+                    <div className="license-copy-link-row">
+                      <button
+                        type="button"
+                        className="license-copy-link"
+                        disabled={!deviceId}
+                        onClick={() => {
+                          if (!deviceId) return;
+                          void navigator.clipboard.writeText(deviceId).then(() => {
+                            setCopied(true);
+                            setTimeout(() => setCopied(false), 2000);
+                          });
+                        }}
+                        aria-label="复制本机硬件码"
+                        title="点击复制当前设备硬件编码到剪贴板"
+                      >
+                        {copied ? <Check size={12} /> : <Copy size={12} />}
+                        <span>{copied ? "已复制硬件码" : "硬件码"}</span>
+                      </button>
+                    </div>
+                    {redeemNotice && (
+                      <p className="success-text" role="status">
+                        <Check size={14} />
+                        {redeemNotice}
+                      </p>
+                    )}
+                    {redeemError && (
+                      <p className="error-text" role="alert">
+                        {redeemError}
+                      </p>
+                    )}
+                  </div>
+                  {vipStatus.isVip && (
+                    <div className="license-reset-row">
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => void resetLicense()}
+                      >
+                        注销当前授权（测试）
+                      </button>
+                    </div>
+                  )}
                 </div>}
               </section>
             </div>

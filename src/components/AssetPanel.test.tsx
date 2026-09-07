@@ -1,12 +1,30 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AssetPanel } from "@/components/AssetPanel";
+import { InspectorPanel } from "@/components/InspectorPanel";
 import { createEmptyProject } from "@/domain/project";
 import { useEditorStore } from "@/stores/editorStore";
 import { BUILTIN_EFFECTS } from "@/domain/effects";
 import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
 
 describe("AssetPanel video audio actions", () => {
+  it("opens script records from subtitles and keeps editing undoable without a timeline row", () => {
+    const project = createEmptyProject();
+    project.tracks.find(t => t.kind === "generated")!.clips.push({ id: "script", trackId: "generated-main", kind: "generated", label: "第二段脚本", startUs: 10_000_000, durationUs: 3_000_000, locked: false, article: "原文章", narration: "原口播", prompt: "", insertMode: "insert", scenes: [] });
+    useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, past: [], future: [] });
+    render(<><AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} /><InspectorPanel /></>);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "字幕" }), { button: 0, ctrlKey: false });
+    expect(screen.queryByRole("button", { name: "编辑脚本 第二段脚本" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "脚本记录" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑脚本 第二段脚本" }));
+    expect(useEditorStore.getState()).toMatchObject({ selectedClipId: "script", playheadUs: 10_000_000 });
+    fireEvent.change(screen.getByRole("textbox", { name: "文章" }), { target: { value: "更新文章" } });
+    expect(useEditorStore.getState().project.tracks.find(t => t.kind === "generated")!.clips[0]).toMatchObject({ article: "更新文章", narration: "原口播" });
+    act(() => useEditorStore.getState().undo());
+    expect(useEditorStore.getState().project.tracks.find(t => t.kind === "generated")!.clips[0]).toMatchObject({ article: "原文章" });
+    act(() => useEditorStore.getState().redo());
+    expect(useEditorStore.getState().project.tracks.find(t => t.kind === "generated")!.clips[0]).toMatchObject({ article: "更新文章" });
+  });
   it("previews and manually adds a built-in sound effect", () => {
     const project = createEmptyProject();
     useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
@@ -50,10 +68,11 @@ describe("AssetPanel video audio actions", () => {
     useEffectLibraryStore.setState({ effects: [...BUILTIN_EFFECTS] });
     const { container } = render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} />);
 
-    for (const category of ["场景", "标题", "强调", "卡片", "标注", "数据", "布局"]) {
+    for (const category of ["背景", "展示", "场景", "标题", "强调", "卡片", "标注", "数据", "布局"]) {
       expect(screen.getByText(category, { selector: "summary span" })).toBeInTheDocument();
     }
-    expect(container.querySelectorAll(".effect-group")).toHaveLength(7);
+    expect(container.querySelectorAll(".effect-group")).toHaveLength(9);
+    expect(container.querySelectorAll(".effect-group[open]")).toHaveLength(0);
     const dataGroup = screen.getByText("数据", { selector: "summary span" }).closest("details");
     expect(dataGroup).toHaveTextContent("数据排名条");
     expect(dataGroup).toHaveTextContent("环形指标");
@@ -61,8 +80,28 @@ describe("AssetPanel video audio actions", () => {
     expect(dataGroup).toHaveTextContent("数字实证");
     expect(dataGroup).toHaveTextContent("增长曲线");
     expect(dataGroup).not.toHaveTextContent("数字结论");
+    expect(screen.queryByText("章节导航条")).not.toBeInTheDocument();
+    expect(screen.queryByText("双语字幕轨")).not.toBeInTheDocument();
     expect(container.querySelectorAll(".effect-swatch")).toHaveLength(BUILTIN_EFFECTS.length);
     expect(container.querySelectorAll(".effect-swatch i")).toHaveLength(BUILTIN_EFFECTS.length);
+  });
+
+  it("previews an effect from the row and only adds it from the plus button", () => {
+    const project = createEmptyProject();
+    useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
+    useEffectLibraryStore.setState({ effects: [...BUILTIN_EFFECTS] });
+    const onPreviewEffect = vi.fn();
+    render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} onPreviewEffect={onPreviewEffect} />);
+
+    const previewButton = screen.getByRole("button", { name: "预览 金句强调条", hidden: true });
+    fireEvent.click(previewButton);
+    fireEvent.click(previewButton);
+    expect(onPreviewEffect).toHaveBeenCalledTimes(2);
+    expect(onPreviewEffect).toHaveBeenLastCalledWith("punch-pill");
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "添加 金句强调条 到时间线", hidden: true }));
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips).toHaveLength(1);
   });
 
   it("selects one project accent color for new effects with undo support", () => {
@@ -80,8 +119,8 @@ describe("AssetPanel video audio actions", () => {
       auxiliary: "#47d7ac"
     });
 
-    fireEvent.click(screen.getByText("金句强调条").closest("button")!);
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({
+    fireEvent.click(screen.getByRole("button", { name: "添加 金句强调条 到时间线", hidden: true }));
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({
       accentColor: "#47d7ac",
       colorRole: "opinion"
     });
@@ -139,10 +178,32 @@ describe("AssetPanel video audio actions", () => {
     expect(entries[1]).not.toHaveClass("active");
     const subtitleLibrary = document.querySelector(".subtitle-library");
     const subtitleActions = document.querySelector(".subtitle-actions");
-    expect(subtitleActions).toHaveTextContent("生成匹配配音");
+    expect(subtitleActions).toHaveTextContent("生成配音");
     expect(subtitleActions?.previousElementSibling).toBe(subtitleLibrary);
+    expect(screen.queryByRole("button", { name: "匹配" })).not.toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "动效" }), { button: 0, ctrlKey: false });
     fireEvent.click(screen.getByRole("button", { name: "匹配" }));
     expect(onMatchEffects).toHaveBeenCalledOnce();
+  });
+
+  it("matches sounds separately and offers independent subtitle color swatches", () => {
+    useEditorStore.setState({ project: createEmptyProject(), selectedClipId: null, selectedClipIds: [], playheadUs: 0, past: [], future: [] });
+    const onMatchEffects = vi.fn();
+    const onMatchSounds = vi.fn();
+    render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={onMatchEffects} onMatchSounds={onMatchSounds} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "匹配" })).toBeDisabled();
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "音效" }), { button: 0, ctrlKey: false });
+    expect(screen.getByRole("button", { name: "匹配" })).toBeDisabled();
+    act(() => useEditorStore.getState().addGeneratedPlan({ title: "测试", article: "测试文章", narration: "测试口播", captions: [{ startSeconds: 0, endSeconds: 3, text: "核心内容" }], scenes: [], matches: [] }, "", "overlay"));
+    fireEvent.click(screen.getByRole("button", { name: "匹配" }));
+    expect(onMatchSounds).toHaveBeenCalledOnce();
+    expect(onMatchEffects).not.toHaveBeenCalled();
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "字幕" }), { button: 0, ctrlKey: false });
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "字幕文字色" })).getByRole("radio", { name: "青绿" }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "字幕关键词色" })).getByRole("radio", { name: "珊瑚" }));
+    expect(useEditorStore.getState().project.subtitleTheme).toEqual({ color: "#47d7ac", highlightColor: "#ff7b72" });
+    act(() => useEditorStore.getState().undo());
+    expect(useEditorStore.getState().project.subtitleTheme.highlightColor).toBe("#ffb84d");
   });
 
   it("opens global subtitle appearance settings from the subtitle header", () => {

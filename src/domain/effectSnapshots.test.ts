@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { setInstalledEffects, type EffectDefinition } from "@/domain/effects";
+import { setInstalledEffects, type CompositionDefinition } from "@/domain/effects";
 import { createEmptyProject } from "@/domain/project";
 import { parseProject, serializeProject } from "@/domain/projectFile";
 import { buildRenderPlan } from "@/domain/renderPlan";
 import { useEditorStore } from "@/stores/editorStore";
 
-const externalEffect: EffectDefinition = {
+const externalEffect: CompositionDefinition = {
   id: "sample-pack:chapter",
   name: "Chapter",
   category: "卡片",
@@ -19,7 +19,7 @@ const externalEffect: EffectDefinition = {
   soundCues: [{ soundId: "sample-pack:notice", offsetUs: 100_000, volume: 0.5, durationUs: 600_000, sourcePath: "/cache/notice.wav" }]
 };
 
-const externalScene: EffectDefinition = {
+const externalScene: CompositionDefinition = {
   id: "sample-pack:studio-grid",
   name: "Studio grid",
   category: "场景",
@@ -39,7 +39,7 @@ const externalScene: EffectDefinition = {
 afterEach(() => setInstalledEffects([]));
 
 describe("effect recipe snapshots", () => {
-  it("keeps a materialized AI effect recipe after its package is uninstalled", () => {
+  it("keeps a materialized AI effect recipe without package sounds after uninstall", () => {
     setInstalledEffects([externalEffect]);
     useEditorStore.setState({ project: createEmptyProject(), playheadUs: 0, selectedClipId: null, selectedClipIds: [], past: [], future: [], clipboard: [], zoom: 1 });
     useEditorStore.getState().addGeneratedPlan({
@@ -54,26 +54,26 @@ describe("effect recipe snapshots", () => {
 
     setInstalledEffects([]);
     const restored = parseProject(saved);
-    const effect = restored.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === "effect");
-    expect(restored.schemaVersion).toBe(24);
+    const effect = restored.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === "composition");
+    expect(restored.schemaVersion).toBe(30);
     expect(effect?.recipe).toEqual(externalEffect.recipe);
-    expect(effect?.kind === "effect" ? effect.soundCues : undefined).toEqual(externalEffect.soundCues);
+    expect(effect?.kind === "composition" ? effect.soundCues : undefined).toEqual([]);
     expect(buildRenderPlan(restored, "/output.mp4").overlays[0].recipe).toEqual(externalEffect.recipe);
-    expect(buildRenderPlan(restored, "/output.mp4").audios).toContainEqual(expect.objectContaining({ path: "/cache/notice.wav", startUs: 100_000, role: "sound" }));
+    expect(buildRenderPlan(restored, "/output.mp4").audios).toEqual([]);
   });
 
   it("keeps an independent scene snapshot after its package is uninstalled", () => {
     setInstalledEffects([externalScene]);
     useEditorStore.setState({ project: createEmptyProject(), playheadUs: 0, selectedClipId: null, selectedClipIds: [], past: [], future: [], clipboard: [], zoom: 1 });
-    useEditorStore.getState().addEffect(externalScene.id);
+    useEditorStore.getState().addComposition(externalScene.id);
     const saved = serializeProject(useEditorStore.getState().project);
 
     setInstalledEffects([]);
     const restored = parseProject(saved);
-    const scene = restored.tracks.find((track) => track.kind === "scene")?.clips[0];
+    const scene = restored.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === "composition");
     expect(scene).toMatchObject({
-      kind: "scene",
-      background: externalScene.recipe.sceneBackground,
+      kind: "composition",
+      recipe: { sceneBackground: externalScene.recipe.sceneBackground },
       soundCues: externalScene.soundCues
     });
     expect(buildRenderPlan(restored, "/output.mp4").overlays[0]).toMatchObject({ kind: "scene", recipe: { sceneBackground: externalScene.recipe.sceneBackground } });

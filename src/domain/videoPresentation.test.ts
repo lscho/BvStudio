@@ -18,7 +18,7 @@ describe("videoMotionPresetPatch", () => {
 
   it("resets stale low-level properties when restoring full screen", () => {
     const patch = videoMotionPresetPatch("full-screen", clip);
-    expect(patch).toMatchObject({ layoutPreset: "full", role: "a-roll", zIndex: 0, focus: { enabled: false }, mask: { shape: "rectangle" }, transition: { preset: "none" }, camera: { preset: "none" } });
+    expect(patch).toMatchObject({ layoutPreset: "full", role: "a-roll", zIndex: 20, focus: { enabled: false }, mask: { shape: "rectangle" }, transition: { preset: "none" }, camera: { preset: "none" } });
     expect(patch.transformKeyframes).toEqual([]);
   });
 

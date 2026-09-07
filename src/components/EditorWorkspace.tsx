@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Pause, Play, SkipBack } from "lucide-react";
 import { AssetPanel } from "@/components/AssetPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
@@ -14,6 +14,8 @@ interface Props {
   onNeedSettings: () => void;
   onGenerate: () => void;
   onMatchEffects: () => void;
+  onMatchSounds: () => void;
+  matching: boolean;
   onImport: () => void;
   onTranscribe: (assetId: string) => void;
   onExtractAudio: (assetId: string) => void;
@@ -30,16 +32,30 @@ const StablePreviewCanvas = memo(PreviewCanvas);
 const StableInspectorPanel = memo(InspectorPanel);
 const StableTimeline = memo(Timeline);
 
-export function EditorWorkspace({ aiProvider, onNeedSettings, onGenerate, onMatchEffects, onImport, onTranscribe, onExtractAudio, onExportAudio, onRelink, onCreateAudio, onManageEffects, onPreviewBuiltinSound, onAddBuiltinSound }: Props) {
+export function EditorWorkspace({ aiProvider, onNeedSettings, onGenerate, onMatchEffects, onMatchSounds, matching, onImport, onTranscribe, onExtractAudio, onExportAudio, onRelink, onCreateAudio, onManageEffects, onPreviewBuiltinSound, onAddBuiltinSound }: Props) {
   const [playing, setPlaying] = useState(false);
+  const [effectPreview, setEffectPreview] = useState<{ compositionId: string; requestId: number } | null>(null);
   const durationUs = useEditorStore((state) => state.project.durationUs);
   const setPlayhead = useEditorStore((state) => state.setPlayhead);
   const previewRequest = useEditorStore((state) => state.previewRequest);
   const animationFrame = useRef<number | null>(null);
   const previewEndUs = useRef<number | null>(null);
+  const effectPreviewRequestId = useRef(0);
   const playbackAnchor = useRef({ timeMs: 0, playheadUs: 0, lastCommitMs: 0 });
 
+  const handlePreviewEffect = useCallback((compositionId: string | null) => {
+    if (!compositionId) {
+      setEffectPreview(null);
+      return;
+    }
+    effectPreviewRequestId.current += 1;
+    previewEndUs.current = null;
+    setPlaying(false);
+    setEffectPreview({ compositionId, requestId: effectPreviewRequestId.current });
+  }, []);
+
   function togglePlayback() {
+    setEffectPreview(null);
     previewEndUs.current = null;
     setPlaying((current) => !current);
   }
@@ -79,7 +95,7 @@ export function EditorWorkspace({ aiProvider, onNeedSettings, onGenerate, onMatc
 
   return (
     <main className="editor-workspace">
-      <div className="editor-main"><StableAssetPanel onImport={onImport} onGenerate={onGenerate} onMatchEffects={onMatchEffects} onTranscribe={onTranscribe} onExtractAudio={onExtractAudio} onExportAudio={onExportAudio} onRelink={onRelink} onCreateAudio={onCreateAudio} onManageEffects={onManageEffects} onPreviewBuiltinSound={onPreviewBuiltinSound} onAddBuiltinSound={onAddBuiltinSound} /><div className="preview-column"><StablePreviewCanvas aiProvider={aiProvider} onNeedSettings={onNeedSettings} onImport={onImport} onGenerate={onGenerate} playing={playing} /><div className="transport"><button type="button" aria-label="回到开头" onClick={() => { previewEndUs.current = null; setPlaying(false); setPlayhead(0); }}><SkipBack size={17} /></button><button className="play-button" type="button" aria-label={playing ? "暂停" : "播放"} onClick={togglePlayback}>{playing ? <Pause size={18} /> : <Play size={18} fill="currentColor" />}</button><TransportTimecode durationUs={durationUs} /></div></div><StableInspectorPanel /></div>
+      <div className="editor-main"><StableAssetPanel onImport={onImport} onGenerate={onGenerate} onMatchEffects={onMatchEffects} onMatchSounds={onMatchSounds} matching={matching} onTranscribe={onTranscribe} onExtractAudio={onExtractAudio} onExportAudio={onExportAudio} onRelink={onRelink} onCreateAudio={onCreateAudio} onManageEffects={onManageEffects} previewingEffectId={effectPreview?.compositionId} onPreviewEffect={handlePreviewEffect} onPreviewBuiltinSound={onPreviewBuiltinSound} onAddBuiltinSound={onAddBuiltinSound} /><div className="preview-column"><StablePreviewCanvas aiProvider={aiProvider} onNeedSettings={onNeedSettings} onImport={onImport} onGenerate={onGenerate} playing={playing} effectPreview={effectPreview} onCloseEffectPreview={() => setEffectPreview(null)} /><div className="transport"><button type="button" aria-label="回到开头" onClick={() => { setEffectPreview(null); previewEndUs.current = null; setPlaying(false); setPlayhead(0); }}><SkipBack size={17} /></button><button className="play-button" type="button" aria-label={playing ? "暂停" : "播放"} onClick={togglePlayback}>{playing ? <Pause size={18} /> : <Play size={18} fill="currentColor" />}</button><TransportTimecode durationUs={durationUs} /></div></div><StableInspectorPanel /></div>
       <StableTimeline />
     </main>
   );

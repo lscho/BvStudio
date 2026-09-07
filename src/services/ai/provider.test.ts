@@ -178,7 +178,8 @@ describe("provider requests", () => {
     expect(payload.messages.at(-1)?.content).toContain('"stage":"ending"');
     expect(payload.messages[0]?.content).not.toContain('"id":"knowledge-concept-map"');
     expect(payload.messages[0]?.content).not.toContain('"id":"test-title-slide"');
-    for (const id of OVERLAY_STUDIO_EFFECT_IDS) expect(payload.messages[0]?.content).toContain(`"id":"${id}"`);
+    for (const id of OVERLAY_STUDIO_EFFECT_IDS.filter((candidate) => !["chapter-bar", "caption-track", "focus-card"].includes(candidate))) expect(payload.messages[0]?.content).toContain(`"id":"${id}"`);
+    for (const id of ["chapter-bar", "caption-track", "focus-card"]) expect(payload.messages[0]?.content).not.toContain(`"id":"${id}"`);
   });
 
   it("keeps useful divergent motion copy while shortening full-caption repetition", () => {
@@ -394,7 +395,7 @@ describe("provider requests", () => {
     expect(matches.filter((match) => match.primaryEffectId || match.secondaryEffectId)).toHaveLength(4);
   });
 
-  it("keeps AI sound effects sparse and only at the start of a continuous scene", () => {
+  it("discards sound choices from visual motion matching", () => {
     const captions = ["章节开始。", "继续说明。", "操作完成。"].map((text, index) => ({ startSeconds: index * 3, endSeconds: index * 3 + 3, text }));
     const base = {
       ...{
@@ -410,7 +411,7 @@ describe("provider requests", () => {
       { ...base, captionIndex: 1, motionGroupId: "chapter", persistUntilCaptionIndex: 1, soundEffectId: "notice-chime" as const },
       { ...base, captionIndex: 2, soundEffectId: "success-tone" as const }
     ], captions, 9);
-    expect(matches.map((match) => match.soundEffectId)).toEqual(["soft-whoosh", null, "success-tone"]);
+    expect(matches.map((match) => match.soundEffectId)).toEqual([null, null, null]);
   });
 
   it("keeps an imported A-roll on its existing track while preserving the requested camera move", () => {

@@ -151,15 +151,15 @@ function normalizedAlignedSegments(segments: AsrSegment[], durationSeconds: numb
 /** Converts Qwen aligner word/character timestamps into readable subtitle cues. */
 export function captionSegments(transcript: AsrTranscript, durationUs: number): AsrSegment[] {
   const durationSeconds = Number.isFinite(durationUs) && durationUs > 0 ? durationUs / 1_000_000 : Number.POSITIVE_INFINITY;
-  const sourceSegments = transcript.device.startsWith("cloud:")
-    ? transcript.segments.flatMap((segment) => timedTextSegments(segment.text, Math.max(0, segment.endSeconds - segment.startSeconds) * 1_000_000).map((cue) => ({
+  const aligned = normalizedAlignedSegments(transcript.segments, durationSeconds);
+  if (!aligned.length) return fallbackSegments(transcript.text, durationUs);
+  if (transcript.device.startsWith("cloud:")) {
+    return aligned.flatMap((segment) => timedTextSegments(segment.text, (segment.endSeconds - segment.startSeconds) * 1_000_000).map((cue) => ({
       startSeconds: segment.startSeconds + cue.startSeconds,
       endSeconds: segment.startSeconds + cue.endSeconds,
       text: cue.text
-    })))
-    : transcript.segments;
-  const aligned = normalizedAlignedSegments(sourceSegments, durationSeconds);
-  if (!aligned.length) return fallbackSegments(transcript.text, durationUs);
+    })));
+  }
 
   const cues: AsrSegment[] = [];
   let cue: AsrSegment | null = null;

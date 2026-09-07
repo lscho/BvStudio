@@ -78,6 +78,24 @@ describe("project session persistence", () => {
     expect(hydrated.assets[1]).toMatchObject({ missing: false, objectUrl: "asset:///ready.mp4" });
   });
 
+  it("refreshes persisted video dimensions from the source file", async () => {
+    const project = createEmptyProject();
+    project.assets.push({ id: "rotated", name: "rotated.mp4", kind: "video", durationUs: 1_000_000, sourcePath: "/rotated.mp4", width: 1920, height: 1080 });
+    const probeVideoDimensions = vi.fn(async () => ({ width: 1080, height: 1920 }));
+
+    const hydrated = await hydrateProjectAssets(project, {
+      desktop: true,
+      proxyEnabled: false,
+      proxyHeight: 720,
+      pathExists: async () => true,
+      mediaUrl: (path) => `asset://${path}`,
+      probeVideoDimensions
+    });
+
+    expect(probeVideoDimensions).toHaveBeenCalledWith("/rotated.mp4");
+    expect(hydrated.assets[0]).toMatchObject({ width: 1080, height: 1920 });
+  });
+
   it("recreates a built-in sound URL in browser preview instead of marking it missing", async () => {
     vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:builtin-click") });
     const project = createEmptyProject();

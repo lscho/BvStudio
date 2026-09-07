@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { createEmptyProject, type AudioClip, type EffectClip, type ImageClip, type VideoClip } from "@/domain/project";
-import { effectById } from "@/domain/effects";
+import { createEmptyProject, type AudioClip, type CompositionClip, type ImageClip, type VideoClip } from "@/domain/project";
+import { compositionById } from "@/domain/effects";
 import { cameraMotionForPreset } from "@/domain/camera";
 import { estimateMotionLayoutRect, motionLayoutRectsOverlap, type MotionLayoutLayer } from "@/domain/motionLayout";
 import type { AiVideoPlan } from "@/services/ai/schema";
 import { useEditorStore } from "@/stores/editorStore";
+import { buildRenderPlan } from "@/domain/renderPlan";
 
 const plan: AiVideoPlan = {
   title: "插入介绍",
@@ -42,6 +43,73 @@ beforeEach(() => {
 });
 
 describe("editorStore", () => {
+  it("imports and places portrait videos without cropping on a landscape canvas", () => {
+    useEditorStore.getState().addVideo({ id: "landscape", name: "landscape.mp4", sourcePath: "/landscape.mp4", kind: "video", width: 1920, height: 1080, durationUs: 20_000_000 });
+    useEditorStore.getState().addVideo({ id: "portrait", name: "portrait.mp4", sourcePath: "/portrait.mp4", kind: "video", width: 1080, height: 1920, durationUs: 20_000_000 });
+    const importedId = useEditorStore.getState().selectedClipId;
+    useEditorStore.getState().placeAsset("portrait");
+    const placedId = useEditorStore.getState().selectedClipId;
+    const project = useEditorStore.getState().project;
+    expect(project.canvas).toMatchObject({ width: 1920, height: 1080 });
+    expect(project.tracks.flatMap((track) => track.clips).filter((clip) => clip.id === importedId || clip.id === placedId))
+      .toEqual([expect.objectContaining({ fit: "contain", transform: expect.objectContaining({ scale: 1 }) }), expect.objectContaining({ fit: "contain", transform: expect.objectContaining({ scale: 1 }) })]);
+    for (const clip of project.tracks.flatMap((track) => track.clips).filter((clip) => clip.id === importedId || clip.id === placedId)) {
+      expect(clip).toMatchObject({ mask: { shape: "rectangle" } });
+      expect(clip).not.toMatchObject({ mask: { widthPercent: expect.any(Number), heightPercent: expect.any(Number) } });
+    }
+    expect(buildRenderPlan(project, "/output.mp4").overlays.filter((layer) => layer.kind === "video" && layer.path === "/portrait.mp4"))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ mask: expect.objectContaining({ widthPercent: 31.640625, heightPercent: 100 }) })]));
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project.durationUs).toBe(40_000_000);
+    useEditorStore.getState().redo();
+    expect(useEditorStore.getState().project.durationUs).toBe(60_000_000);
+  });
+
+  it("preserves source framing and playback speed when matching a camera move", () => {
+    useEditorStore.getState().addVideo({ id: "portrait", name: "portrait.mp4", kind: "video", durationUs: 10_000_000 });
+    const id = useEditorStore.getState().selectedClipId!;
+    const transform = { x: 35, y: 60, scale: 0.6, rotation: 0, opacity: 1 };
+    useEditorStore.getState().updateVideo(id, { fit: "contain", transform, playbackRate: 1.25, sourceInUs: 1_000_000, durationUs: 6_000_000 });
+    useEditorStore.getState().addSubtitles("portrait", [{ startSeconds: 2.25, endSeconds: 6, text: "讲解内容。" }]);
+    const subtitles = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle");
+    useEditorStore.getState().applyMotionMatches(subtitles.map((clip) => clip.id), [motionMatch]);
+    expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((clip) => clip.label.startsWith("AI 运镜")))
+      .toMatchObject({ fit: "contain", transform, sourceInUs: 2_250_000, playbackRate: 1.25 });
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips).some((clip) => clip.label.startsWith("AI 运镜"))).toBe(false);
+  });
+
+  it.each(["keyframes", "cue", "locked", "hidden"])("does not overlay automatic camera moves on a source with %s", (mode) => {
+    useEditorStore.getState().addVideo({ id: "source", name: "source.mp4", kind: "video", durationUs: 8_000_000 });
+    const id = useEditorStore.getState().selectedClipId!;
+    if (mode === "keyframes") useEditorStore.getState().updateVideo(id, { transformKeyframes: [{ offsetUs: 0, x: 50, y: 50, scale: 0.6, easing: "linear" }] });
+    if (mode === "cue") useEditorStore.getState().addVideoPresentationCue(id, "picture-in-picture-top-right", 0);
+    useEditorStore.getState().addSubtitles("source", [{ startSeconds: 0, endSeconds: 3, text: "讲解内容。" }]);
+    const project = useEditorStore.getState().project;
+    const track = project.tracks.find((candidate) => candidate.clips.some((clip) => clip.id === id))!;
+    if (mode === "locked") useEditorStore.getState().setTrackState(track.id, { locked: true });
+    if (mode === "hidden") useEditorStore.getState().setTrackState(track.id, { hidden: true });
+    const subtitles = project.tracks.flatMap((candidate) => candidate.clips).filter((clip) => clip.kind === "subtitle");
+    useEditorStore.getState().applyMotionMatches(subtitles.map((clip) => clip.id), [motionMatch]);
+    expect(useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).some((clip) => clip.label.startsWith("AI 运镜"))).toBe(false);
+  });
+
+  it.each(["clip", "track"])("does not change framing or add undo entries for a locked %s", (lock) => {
+    useEditorStore.getState().addVideo({ id: "video", name: "video.mp4", kind: "video", durationUs: 5_000_000 });
+    const id = useEditorStore.getState().selectedClipId!;
+    useEditorStore.getState().addVideoPresentationCue(id, "slow-push-in", 0);
+    const project = structuredClone(useEditorStore.getState().project);
+    const track = project.tracks.find((candidate) => candidate.clips.some((clip) => clip.id === id))!;
+    const clip = track.clips[0] as VideoClip;
+    if (lock === "clip") clip.locked = true;
+    else track.locked = true;
+    useEditorStore.setState({ project, past: [] });
+    useEditorStore.getState().updateVideo(id, { fit: "cover" });
+    useEditorStore.getState().updateVideoPresentationCue(id, clip.presentationCues![0].id, { fit: "cover" });
+    expect(useEditorStore.getState().project).toEqual(project);
+    expect(useEditorStore.getState().past).toHaveLength(0);
+  });
+
   it("applies one transition to selected adjacent videos and images with one undo step", () => {
     const project = createEmptyProject();
     const videoTrack = project.tracks.find((candidate) => candidate.kind === "video")!;
@@ -143,38 +211,38 @@ describe("editorStore", () => {
   });
 
   it("adds and edits a parameterized effect with undo support", () => {
-    useEditorStore.getState().addEffect("title-highlight");
-    const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0];
-    expect(effect).toMatchObject({ effectId: "title-highlight", text: "核心观点", colorRole: "opinion", backdrop: { enabled: true, color: "#111316", opacity: 0.64 } });
+    useEditorStore.getState().addComposition("title-highlight");
+    const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0];
+    expect(effect).toMatchObject({ compositionId: "title-highlight", text: "核心观点", colorRole: "opinion", backdrop: { enabled: true, color: "#111316", opacity: 0.64 } });
 
-    useEditorStore.getState().updateEffect(effect.id, { text: "新的标题", speed: 1.5 });
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({ text: "新的标题", speed: 1.5 });
+    useEditorStore.getState().updateComposition(effect.id, { text: "新的标题", speed: 1.5 });
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({ text: "新的标题", speed: 1.5 });
 
     useEditorStore.getState().undo();
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({ text: "核心观点", speed: 1 });
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({ text: "核心观点", speed: 1 });
   });
 
   it("snapshots and edits component effect params with undo support", () => {
-    useEditorStore.getState().addEffect("ring-metric");
-    const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0];
-    expect(effect).toMatchObject({ effectId: "ring-metric", params: { value: 92.4, max: 100, unit: "%" }, backdrop: { enabled: false }, transform: { scale: 1 } });
+    useEditorStore.getState().addComposition("ring-metric");
+    const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0];
+    expect(effect).toMatchObject({ compositionId: "ring-metric", params: { value: 92.4, max: 100, unit: "%" }, backdrop: { enabled: false }, transform: { scale: 1 } });
 
-    useEditorStore.getState().updateEffect(effect.id, { params: { ...(effect.kind === "effect" ? effect.params : {}), value: 64 } });
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({ params: { value: 64 } });
+    useEditorStore.getState().updateComposition(effect.id, { params: { ...(effect.kind === "composition" ? effect.params : {}), value: 64 } });
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({ params: { value: 64 } });
     useEditorStore.getState().undo();
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({ params: { value: 92.4 } });
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({ params: { value: 92.4 } });
   });
 
   it("places manually added component effects outside the presenter area and each other", () => {
     useEditorStore.getState().updatePresenterSafeArea({ position: "center", widthPercent: 32 });
-    useEditorStore.getState().addEffect("ring-metric");
-    useEditorStore.getState().addEffect("ring-metric");
+    useEditorStore.getState().addComposition("ring-metric");
+    useEditorStore.getState().addComposition("ring-metric");
 
     const project = useEditorStore.getState().project;
-    const effects = project.tracks.find((track) => track.kind === "effect")!.clips.filter((clip): clip is EffectClip => clip.kind === "effect");
+    const effects = project.tracks.find((track) => track.kind === "composition")!.clips.filter((clip): clip is CompositionClip => clip.kind === "composition");
     const layers = effects.map((effect) => ({
       id: effect.id,
-      effectId: effect.effectId,
+      compositionId: effect.compositionId,
       startUs: effect.startUs,
       durationUs: effect.durationUs,
       desiredX: effect.transform.x,
@@ -182,7 +250,7 @@ describe("editorStore", () => {
       scale: effect.transform.scale,
       fontSize: effect.fontSize,
       text: effect.text,
-      recipe: effect.recipe ?? effectById(effect.effectId).recipe,
+      recipe: effect.recipe ?? compositionById(effect.compositionId).recipe,
       priority: "primary" as const
     }));
     const rects = effects.map((effect, index) => estimateMotionLayoutRect(layers[index], effect.transform, project.canvas));
@@ -215,29 +283,48 @@ describe("editorStore", () => {
     expect(useEditorStore.getState().project.presenterSafeArea).toEqual({ position: "right", widthPercent: 40 });
   });
 
+  it("commits custom presenter geometry without changing selected or locked clips", () => {
+    useEditorStore.getState().addVideo({ id: "presenter", name: "presenter.mp4", kind: "video", durationUs: 10_000_000 });
+    const selectedClipId = useEditorStore.getState().selectedClipId;
+    const track = useEditorStore.getState().project.tracks.find((candidate) => candidate.kind === "video")!;
+    useEditorStore.getState().setTrackState(track.id, { locked: true });
+    const before = structuredClone(useEditorStore.getState().project);
+    const settings = { position: "custom" as const, xPercent: 14, yPercent: 12, widthPercent: 28, heightPercent: 60 };
+    useEditorStore.getState().updatePresenterSafeArea(settings);
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual(settings);
+    expect(useEditorStore.getState().project.tracks).toEqual(before.tracks);
+    expect(useEditorStore.getState().project.durationUs).toBe(before.durationUs);
+    expect(useEditorStore.getState().selectedClipId).toBe(selectedClipId);
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual(before.presenterSafeArea);
+    useEditorStore.getState().redo();
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual(settings);
+  });
+
   it("keeps archived scene backgrounds editable for old project compatibility", () => {
     useEditorStore.getState().updateMotionTheme({ colors: { data: "#47d7ac", opinion: "#47d7ac", warning: "#47d7ac", auxiliary: "#47d7ac" } });
-    useEditorStore.getState().addEffect("scene-black-stripes");
+    useEditorStore.getState().addComposition("scene-black-stripes");
     let project = useEditorStore.getState().project;
-    expect(project.tracks.find((track) => track.kind === "effect")!.clips).toHaveLength(0);
-    expect(project.tracks.find((track) => track.kind === "scene")!.clips).toEqual([
+    expect(project.tracks.some((track) => track.kind === "scene")).toBe(false);
+    expect(project.tracks.find((track) => track.kind === "composition")!.clips).toEqual([
       expect.objectContaining({
-        kind: "scene", trackId: "scene-main", effectId: "scene-black-stripes", opacity: 1,
-        background: expect.objectContaining({ preset: "black-stripes", borderColor: "#5fa8ff" })
+        kind: "composition", compositionId: "scene-black-stripes", transform: expect.objectContaining({ opacity: 1 }),
+        recipe: expect.objectContaining({ sceneBackground: expect.objectContaining({ preset: "black-stripes", borderColor: "#5fa8ff" }) })
       })
     ]);
 
-    const scene = project.tracks.find((track) => track.kind === "scene")!.clips[0];
-    useEditorStore.getState().updateScene(scene.id, { opacity: 0.45 });
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "scene")!.clips[0]).toMatchObject({ opacity: 0.45 });
+    const scene = project.tracks.find((track) => track.kind === "composition")!.clips[0];
+    if (scene.kind !== "composition") throw new Error("Expected background composition");
+    useEditorStore.getState().updateComposition(scene.id, { transform: { ...scene.transform, opacity: 0.45 } });
+    expect(useEditorStore.getState().project.tracks.find((track) => track.id === scene.trackId)!.clips[0]).toMatchObject({ transform: { opacity: 0.45 } });
     useEditorStore.getState().undo();
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "scene")!.clips[0]).toMatchObject({ opacity: 1 });
+    expect(useEditorStore.getState().project.tracks.find((track) => track.id === scene.trackId)!.clips[0]).toMatchObject({ transform: { opacity: 1 } });
 
-    useEditorStore.getState().setTrackState("scene-main", { locked: true });
+    useEditorStore.getState().setTrackState(scene.trackId, { locked: true });
     useEditorStore.getState().moveClips([scene.id], 1_000_000);
     useEditorStore.getState().trimClip(scene.id, "end", 1_000_000);
     project = useEditorStore.getState().project;
-    expect(project.tracks.find((track) => track.kind === "scene")!.clips[0]).toMatchObject({ startUs: 0, durationUs: 8_000_000 });
+    expect(project.tracks.find((track) => track.id === scene.trackId)!.clips[0]).toMatchObject({ startUs: 0, durationUs: 8_000_000 });
   });
 
   it("updates chapter progress with undo support", () => {
@@ -345,28 +432,28 @@ describe("editorStore", () => {
   });
 
   it("copies and pastes multiple clips preserving their relative offset", () => {
-    useEditorStore.getState().addEffect("title-highlight");
+    useEditorStore.getState().addComposition("title-highlight");
     const first = useEditorStore.getState().selectedClipId!;
     useEditorStore.getState().setPlayhead(4_000_000);
-    useEditorStore.getState().addEffect("number-pop");
+    useEditorStore.getState().addComposition("number-pop");
     const second = useEditorStore.getState().selectedClipId!;
     useEditorStore.getState().selectClip(first);
     useEditorStore.getState().selectClip(second, true);
     useEditorStore.getState().copySelected();
     useEditorStore.getState().setPlayhead(10_000_000);
     useEditorStore.getState().pasteAtPlayhead();
-    const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips;
+    const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips;
     expect(effects).toHaveLength(4);
     expect(effects.slice(2).map((clip) => clip.startUs)).toEqual([10_000_000, 14_000_000]);
   });
 
   it("prevents edits on a locked track", () => {
-    useEditorStore.getState().addEffect("title-highlight");
-    const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0];
+    useEditorStore.getState().addComposition("title-highlight");
+    const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0];
     useEditorStore.getState().setTrackState("effect-main", { locked: true });
     useEditorStore.getState().moveClips([effect.id], 2_000_000);
     useEditorStore.getState().trimClip(effect.id, "end", 2_000_000);
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({ startUs: 0, durationUs: 2_500_000 });
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({ startUs: 0, durationUs: 2_500_000 });
   });
 
   it("adds, trims and splits audio with source continuity", () => {
@@ -398,8 +485,8 @@ describe("editorStore", () => {
     const matchedPlan: AiVideoPlan = { ...plan, captions: [{ startSeconds: 0, endSeconds: 2, text: "实际标题" }], matches: [{ ...motionMatch, primaryMediaAssetId: "broll", primaryMediaSourceInSeconds: 4, mediaLayoutPreset: "shrink-top-right" }] };
     useEditorStore.getState().addGeneratedPlan(matchedPlan, "metrics", "overlay");
     const project = useEditorStore.getState().project;
-    expect(project.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === "video" && clip.label.startsWith("AI 素材"))).toMatchObject({ assetId: "broll", sourceInUs: 4_000_000, zIndex: 10, camera: { preset: "push-in" }, transformKeyframes: expect.any(Array) });
-    expect(project.tracks.find((track) => track.kind === "effect")!.clips).toContainEqual(expect.objectContaining({ text: "实际标题", effectId: "test-title-slide" }));
+    expect(project.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === "video" && clip.label.startsWith("AI 素材"))).toMatchObject({ assetId: "broll", sourceInUs: 4_000_000, zIndex: 30, camera: { preset: "push-in" }, transformKeyframes: expect.any(Array) });
+    expect(project.tracks.find((track) => track.kind === "composition")!.clips).toContainEqual(expect.objectContaining({ text: "实际标题", compositionId: "test-title-slide" }));
   });
 
   it("materializes an AI tutorial composition with screen focus and a circular presenter", () => {
@@ -429,7 +516,7 @@ describe("editorStore", () => {
     expect(videos[0]).toMatchObject({ role: "screen", layoutPreset: "full", focus: { enabled: true, x: 50, y: 50, zoom: 2 }, volume: 0 });
     expect(videos[1]).toMatchObject({ role: "presenter", layoutPreset: "presenter-bottom-right", mask: { shape: "circle" }, transition: { preset: "dock" }, volume: 1 });
     expect(videos[1].transformKeyframes).toHaveLength(2);
-    expect(result.tracks.find((track) => track.kind === "effect")?.clips[0]).toMatchObject({ kind: "effect", backdrop: { enabled: true, color: "#111316" } });
+    expect(result.tracks.find((track) => track.kind === "composition")?.clips[0]).toMatchObject({ kind: "composition", backdrop: { enabled: true, color: "#111316" } });
   });
 
   it("creates a bounded one-shot preview request", () => {
@@ -441,12 +528,12 @@ describe("editorStore", () => {
 
   it("expands a scene template into overlapping timeline effects with shared AI metadata", () => {
     useEditorStore.getState().setPlayhead(2_000_000);
-    useEditorStore.getState().addEffect("scene-focus-stack");
-    const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips;
+    useEditorStore.getState().addComposition("scene-focus-stack");
+    const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips;
 
     expect(effects).toHaveLength(3);
-    expect(new Set(effects.map((effect) => effect.kind === "effect" ? effect.sceneGroupId : undefined))).toHaveLength(1);
-    expect(effects.every((effect) => effect.kind === "effect" && effect.sceneTemplateId === "scene-focus-stack")).toBe(true);
+    expect(new Set(effects.map((effect) => effect.kind === "composition" ? effect.sceneGroupId : undefined))).toHaveLength(1);
+    expect(effects.every((effect) => effect.kind === "composition" && effect.sceneTemplateId === "scene-focus-stack")).toBe(true);
     expect(effects.map((effect) => effect.startUs)).toEqual([2_000_000, 2_480_000, 3_120_000]);
     expect(effects.every((effect) => effect.startUs < 6_000_000 && effect.startUs + effect.durationUs <= 6_000_000)).toBe(true);
   });
@@ -458,9 +545,9 @@ describe("editorStore", () => {
       matches: [{ ...motionMatch, primaryText: "增长 42%", secondaryEffectId: "test-keyword-underline", secondaryText: "核心结论", secondaryX: 70, secondaryY: 72 }]
     };
     useEditorStore.getState().addGeneratedPlan(multiEffectPlan, "增长 42% 的核心结论", "overlay");
-    const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips;
+    const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips;
     expect(effects).toHaveLength(2);
-    expect(effects.map((clip) => clip.kind === "effect" ? clip.text : "")).toEqual(["增长 42%", "核心结论"]);
+    expect(effects.map((clip) => clip.kind === "composition" ? clip.text : "")).toEqual(["增长 42%", "核心结论"]);
   });
 
   it("creates exact timed subtitles returned by the first AI call", () => {
@@ -506,9 +593,9 @@ describe("editorStore", () => {
       expect.objectContaining({ text: "先看增长数据。", sourceAssetId: generated.id }),
       expect.objectContaining({ text: "然后执行三个步骤。", sourceAssetId: generated.id })
     ]));
-    const effects = project.tracks.find((track) => track.kind === "effect")!.clips;
-    expect(effects.map((clip) => clip.kind === "effect" ? clip.text : "")).toEqual(["实际标题", "三个步骤"]);
-    expect(new Set(effects.map((clip) => clip.kind === "effect" ? `${clip.transform.x}:${clip.transform.y}` : "")).size).toBe(2);
+    const effects = project.tracks.find((track) => track.kind === "composition")!.clips;
+    expect(effects.map((clip) => clip.kind === "composition" ? clip.text : "")).toEqual(["实际标题", "三个步骤"]);
+    expect(new Set(effects.map((clip) => clip.kind === "composition" ? `${clip.transform.x}:${clip.transform.y}` : "")).size).toBe(2);
   });
 
   it("keeps ASR extraction separate and applies replaceable AI motion matches afterwards", () => {
@@ -520,7 +607,7 @@ describe("editorStore", () => {
     let project = useEditorStore.getState().project;
     const subtitles = project.tracks.find((track) => track.kind === "subtitle")!.clips;
     expect(subtitles).toHaveLength(2);
-    let effects = project.tracks.find((track) => track.kind === "effect")!.clips;
+    let effects = project.tracks.find((track) => track.kind === "composition")!.clips;
     expect(effects).toHaveLength(0);
 
     useEditorStore.getState().applyMotionMatches(subtitles.map((clip) => clip.id), [
@@ -528,19 +615,19 @@ describe("editorStore", () => {
       { ...motionMatch, captionIndex: 1, primaryEffectId: "test-callout-panel", primaryText: "三步配置", cameraPreset: "pull-out" }
     ]);
     project = useEditorStore.getState().project;
-    effects = project.tracks.find((track) => track.kind === "effect")!.clips;
-    expect(effects.map((effect) => effect.kind === "effect" ? effect.text : "")).toEqual(["增长 42%", "三步配置"]);
-    expect(effects.every((effect) => effect.kind === "effect" && effect.sceneGroupId?.startsWith("ai-subtitle:") && Boolean(effect.matchQuery))).toBe(true);
+    effects = project.tracks.find((track) => track.kind === "composition")!.clips;
+    expect(effects.map((effect) => effect.kind === "composition" ? effect.text : "")).toEqual(["增长 42%", "三步配置"]);
+    expect(effects.every((effect) => effect.kind === "composition" && effect.sceneGroupId?.startsWith("ai-subtitle:") && Boolean(effect.matchQuery))).toBe(true);
     expect(project.tracks.flatMap((track) => track.clips).some((clip) => clip.kind === "video" && clip.label.startsWith("AI 运镜"))).toBe(true);
 
     useEditorStore.getState().addSubtitles("asr-video", [{ startSeconds: 0, endSeconds: 8, text: "替换后的字幕。" }]);
     project = useEditorStore.getState().project;
-    effects = project.tracks.find((track) => track.kind === "effect")!.clips;
+    effects = project.tracks.find((track) => track.kind === "composition")!.clips;
     expect(project.tracks.find((track) => track.kind === "subtitle")!.clips).toHaveLength(1);
     expect(effects).toHaveLength(0);
   });
 
-  it("uses the project accent color instead of the AI color for matched subtitles and effects", () => {
+  it("keeps subtitle colors independent from the project effect accent", () => {
     useEditorStore.getState().updateMotionTheme({ colors: { data: "#47d7ac", opinion: "#47d7ac", warning: "#47d7ac", auxiliary: "#47d7ac" } });
     useEditorStore.getState().addVideo({ id: "asr-video", name: "speech.mp4", kind: "video", durationUs: 3_000_000, hasAudio: true });
     useEditorStore.getState().addSubtitles("asr-video", [{ startSeconds: 0, endSeconds: 3, text: "核心增长达到百分之四十二。" }]);
@@ -556,9 +643,9 @@ describe("editorStore", () => {
     const project = useEditorStore.getState().project;
     expect(project.tracks.find((track) => track.kind === "subtitle")!.clips[0]).toMatchObject({
       highlightWords: ["核心增长"],
-      highlightColor: "#47d7ac"
+      highlightColor: "#ffb84d"
     });
-    expect(project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({
+    expect(project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({
       accentColor: "#47d7ac",
       backdrop: { color: "#47d7ac" }
     });
@@ -576,7 +663,7 @@ describe("editorStore", () => {
     const generated = project.tracks.find((track) => track.kind === "generated")!.clips[0];
     expect(generated).toMatchObject({ kind: "generated", scenes: [expect.objectContaining({ accentColor: "#ffb84d" })] });
     expect(project.tracks.find((track) => track.kind === "subtitle")!.clips[0]).toMatchObject({ highlightColor: "#ffb84d" });
-    expect(project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({
+    expect(project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({
       accentColor: "#ffb84d",
       backdrop: { color: "#ffb84d" }
     });
@@ -587,9 +674,9 @@ describe("editorStore", () => {
     useEditorStore.getState().addSubtitles("asr-video", [{ startSeconds: 1, endSeconds: 4, text: "点击按钮完成操作。" }]);
     const subtitle = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
     const clickAsset = { id: "builtin-sound:clean-click", name: "字幕弹出.wav", kind: "audio" as const, durationUs: 220_000, sourcePath: "/cache/click.wav", objectUrl: "asset://click", hasAudio: true, missing: false };
-    const summary = useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, soundEffectId: "clean-click" }], [clickAsset]);
+    const summary = useEditorStore.getState().applySoundMatches([subtitle.id], [{ captionIndex: 0, soundEffectId: "clean-click" }], [clickAsset]);
 
-    expect(summary).toMatchObject({ requestedEffectCount: 1, effectCount: 1, sceneCount: 0, soundCount: 1, skippedEffectCount: 0 });
+    expect(summary).toBe(1);
 
     let soundTrack = useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")!;
     expect(soundTrack.clips).toEqual([expect.objectContaining({
@@ -599,13 +686,13 @@ describe("editorStore", () => {
     expect(useEditorStore.getState().project.assets).toContainEqual(expect.objectContaining({ id: clickAsset.id }));
 
     const successAsset = { ...clickAsset, id: "builtin-sound:success-tone", name: "片尾收束.wav", durationUs: 1_050_000, sourcePath: "/cache/success.wav" };
-    useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, soundEffectId: "success-tone" }], [successAsset]);
+    useEditorStore.getState().applySoundMatches([subtitle.id], [{ captionIndex: 0, soundEffectId: "success-tone" }], [successAsset]);
     soundTrack = useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")!;
     expect(soundTrack.clips).toHaveLength(1);
     expect(soundTrack.clips[0]).toMatchObject({ label: "AI 音效 · 片尾收束", assetId: successAsset.id });
 
     useEditorStore.getState().setTrackState(soundTrack.id, { locked: true });
-    useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, soundEffectId: null }]);
+    useEditorStore.getState().applySoundMatches([subtitle.id], [{ captionIndex: 0, soundEffectId: null }]);
     expect(useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")!.clips).toHaveLength(1);
   });
 
@@ -618,8 +705,8 @@ describe("editorStore", () => {
       subtitleKeywords: ["核心增长", "无关内容"],
       primaryText: "增势进入关键阶段"
     }]);
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0]).toMatchObject({ highlightWords: ["核心增长"], highlightColor: "#5fa8ff" });
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0]).toMatchObject({ text: "增势进入关键阶段" });
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0]).toMatchObject({ highlightWords: ["核心增长"], highlightColor: "#ffb84d" });
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({ text: "增势进入关键阶段" });
   });
 
   it("materializes a text-free scene background from subtitle motion matching", () => {
@@ -632,11 +719,11 @@ describe("editorStore", () => {
       primaryEffectId: "scene-dark-grid",
       primaryText: ""
     }]);
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips).toHaveLength(0);
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "scene")!.clips[0]).toMatchObject({
-      kind: "scene",
-      effectId: "scene-dark-grid",
-      background: { preset: "dark-grid", borderColor: "#9b8cff" }
+    expect(useEditorStore.getState().project.tracks.some((track) => track.kind === "scene")).toBe(false);
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({
+      kind: "composition",
+      compositionId: "scene-dark-grid",
+      recipe: { sceneBackground: { preset: "dark-grid", borderColor: "#9b8cff" } }
     });
   });
 
@@ -654,17 +741,17 @@ describe("editorStore", () => {
       { ...motionMatch, captionIndex: 2, motionGroupId: "charging-market", persistUntilCaptionIndex: 2, primaryEffectId: "test-keyword-underline", primaryText: "头部运营商主导", y: 70 }
     ]);
 
-    const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips;
-    expect(effects.map((effect) => [effect.startUs, effect.durationUs, effect.kind === "effect" ? effect.text : ""])).toEqual([
+    const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips;
+    expect(effects.map((effect) => [effect.startUs, effect.durationUs, effect.kind === "composition" ? effect.text : ""])).toEqual([
       [0, 7_000_000, "市场格局"],
       [1_500_000, 5_500_000, "公共充电桩"],
       [1_500_000, 5_500_000, "私人充电桩"],
       [5_000_000, 2_000_000, "头部运营商主导"]
     ]);
-    expect([...new Set(effects.map((effect) => effect.kind === "effect" ? effect.sceneGroupId : null))]).toEqual([expect.stringMatching(/^ai-motion:charging-market:/)]);
+    expect([...new Set(effects.map((effect) => effect.kind === "composition" ? effect.sceneGroupId : null))]).toEqual([expect.stringMatching(/^ai-motion:charging-market:/)]);
 
     useEditorStore.getState().undo();
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips).toEqual([]);
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips).toEqual([]);
   });
 
   it("resolves overlapping AI motion positions before writing timeline clips", () => {
@@ -680,10 +767,10 @@ describe("editorStore", () => {
     ]);
 
     const project = useEditorStore.getState().project;
-    const effects = project.tracks.find((track) => track.kind === "effect")!.clips as EffectClip[];
+    const effects = project.tracks.find((track) => track.kind === "composition")!.clips as CompositionClip[];
     const layoutLayers: MotionLayoutLayer[] = effects.map((effect) => ({
       id: effect.id,
-      effectId: effect.effectId,
+      compositionId: effect.compositionId,
       startUs: effect.startUs,
       durationUs: effect.durationUs,
       desiredX: effect.transform.x,
@@ -691,7 +778,7 @@ describe("editorStore", () => {
       scale: effect.transform.scale,
       fontSize: effect.fontSize,
       text: effect.text,
-      recipe: effect.recipe ?? effectById(effect.effectId).recipe,
+      recipe: effect.recipe ?? compositionById(effect.compositionId).recipe,
       priority: "primary"
     }));
     const rectangles = effects.map((effect, index) => estimateMotionLayoutRect(layoutLayers[index], effect.transform, project.canvas));
@@ -713,8 +800,8 @@ describe("editorStore", () => {
       chart: { categories: ["年收入"], series: [1.5], unit: "万元" }
     }]);
 
-    const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "effect")!.clips[0];
-    expect(effect).toMatchObject({ kind: "effect", fontSize: 80, transform: { scale: 0.8 } });
+    const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0];
+    expect(effect).toMatchObject({ kind: "composition", fontSize: 80, transform: { scale: 0.8 } });
   });
 
   it("normalizes Overlay Studio effect scale and keeps it outside the presenter area", () => {
@@ -730,10 +817,10 @@ describe("editorStore", () => {
     }]);
 
     const project = useEditorStore.getState().project;
-    const effect = project.tracks.find((track) => track.kind === "effect")!.clips[0] as EffectClip;
+    const effect = project.tracks.find((track) => track.kind === "composition")!.clips[0] as CompositionClip;
     const layer: MotionLayoutLayer = {
       id: effect.id,
-      effectId: effect.effectId,
+      compositionId: effect.compositionId,
       startUs: effect.startUs,
       durationUs: effect.durationUs,
       desiredX: effect.transform.x,
@@ -741,13 +828,31 @@ describe("editorStore", () => {
       scale: effect.transform.scale,
       fontSize: effect.fontSize,
       text: effect.text,
-      recipe: effect.recipe ?? effectById(effect.effectId).recipe,
+      recipe: effect.recipe ?? compositionById(effect.compositionId).recipe,
       priority: "primary"
     };
     const presenterRect = { left: 57, top: 6, right: 97, bottom: 78 };
 
     expect(effect).toMatchObject({ fontSize: 48, transform: { scale: 1 } });
     expect(motionLayoutRectsOverlap(estimateMotionLayoutRect(layer, effect.transform, project.canvas), presenterRect)).toBe(false);
+  });
+
+  it.each([[1920, 1080], [1080, 1920], [1080, 1080]])("matches outside a custom presenter area and exports the same placement at %i x %i", (width, height) => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "presenter.mp4", kind: "video", durationUs: 3_000_000, sourcePath: "/media/presenter.mp4", hasAudio: true });
+    useEditorStore.getState().updateCanvas({ width, height, fpsNumerator: 30, fpsDenominator: 1 });
+    useEditorStore.getState().updatePresenterSafeArea({ position: "custom", xPercent: 60, yPercent: 18, widthPercent: 28, heightPercent: 54 });
+    useEditorStore.getState().addSubtitles("voice", [{ startSeconds: 0, endSeconds: 3, text: "增长达到百分之四十二。" }]);
+    const subtitle = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, primaryEffectId: "ring-metric", primaryText: "42%｜增长指标", x: 74, y: 45, cameraPreset: "none" }]);
+    const project = useEditorStore.getState().project;
+    const effects = project.tracks.flatMap((track) => track.clips).filter((clip): clip is CompositionClip => clip.kind === "composition");
+    expect(effects).toHaveLength(1);
+    const effect = effects[0];
+    const layer: MotionLayoutLayer = { id: effect.id, compositionId: effect.compositionId, startUs: effect.startUs, durationUs: effect.durationUs, desiredX: effect.transform.x, desiredY: effect.transform.y, scale: effect.transform.scale, fontSize: effect.fontSize, text: effect.text, recipe: effect.recipe ?? compositionById(effect.compositionId).recipe, priority: "primary" };
+    expect(motionLayoutRectsOverlap(estimateMotionLayoutRect(layer, effect.transform, project.canvas), { left: 60, top: 18, right: 88, bottom: 72 })).toBe(false);
+    const plan = buildRenderPlan(project, "/output.mp4");
+    expect(plan.overlays.find((overlay) => "compositionId" in overlay && overlay.compositionId === "ring-metric")).toMatchObject({ x: effect.transform.x, y: effect.transform.y, scale: effect.transform.scale });
+    expect(buildRenderPlan({ ...project, presenterSafeArea: { position: "none", widthPercent: 32 } }, "/output.mp4")).toEqual(plan);
   });
 
   it("clears only subtitles inside an AI replace range", () => {
@@ -827,7 +932,7 @@ describe("editorStore", () => {
     const project = useEditorStore.getState().project;
     const generated = project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === generatedId)!;
     const subtitles = project.tracks.find((track) => track.kind === "subtitle")!.clips.sort((left, right) => left.startUs - right.startUs);
-    const effects = project.tracks.find((track) => track.kind === "effect")!.clips.sort((left, right) => left.startUs - right.startUs);
+    const effects = project.tracks.find((track) => track.kind === "composition")!.clips.sort((left, right) => left.startUs - right.startUs);
     const continuation = project.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === "video" && clip.label.includes("续"));
 
     expect(generated).toMatchObject({ durationUs: 7_200_000 });
@@ -852,7 +957,7 @@ describe("editorStore", () => {
     const project = useEditorStore.getState().project;
     const generated = project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === generatedId);
     const subtitles = project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle" && clip.sourceBlockId === generatedId).sort((left, right) => left.startUs - right.startUs);
-    const effects = project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "effect" && clip.sourceBlockId === generatedId).sort((left, right) => left.startUs - right.startUs);
+    const effects = project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "composition" && clip.sourceBlockId === generatedId).sort((left, right) => left.startUs - right.startUs);
     const voice = project.tracks.flatMap((track) => track.clips).find((clip): clip is AudioClip => clip.kind === "audio" && clip.sourceBlockId === generatedId);
     expect(generated).toMatchObject({ durationUs: 3_400_000, scenes: [{ durationUs: 1_100_000 }, { durationUs: 2_300_000 }] });
     expect(subtitles.map((clip) => [clip.startUs, clip.durationUs])).toEqual([[1_000_000, 1_100_000], [2_100_000, 2_300_000]]);
@@ -869,7 +974,7 @@ describe("editorStore", () => {
       ],
       matches: [{ ...motionMatch, motionGroupId: "summary", persistUntilCaptionIndex: 1 }]
     }, "跨句动效", "insert", { startUs: 1_000_000 });
-    const effect = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === "effect")!;
+    const effect = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === "composition")!;
     expect(effect).toMatchObject({ startUs: 1_000_000, durationUs: 4_000_000 });
 
     useEditorStore.getState().alignGeneratedSceneDurations(generatedId, [1_100_000, 2_300_000]);
@@ -893,9 +998,9 @@ describe("editorStore", () => {
 
   it("selects, moves and stretches scene groups as one undoable unit", () => {
     const project = createEmptyProject();
-    const track = project.tracks.find((candidate) => candidate.kind === "effect")!;
+    const track = project.tracks.find((candidate) => candidate.kind === "composition")!;
     const base = {
-      trackId: track.id, kind: "effect" as const, locked: false, effectId: "test-title-slide", color: "#ffffff", accentColor: "#47d7ac",
+      trackId: track.id, kind: "composition" as const, locked: false, compositionId: "test-title-slide", color: "#ffffff", accentColor: "#47d7ac",
       fontSize: 48, speed: 1, transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }, sceneGroupId: "scene-one"
     };
     track.clips.push(
@@ -905,16 +1010,18 @@ describe("editorStore", () => {
     useEditorStore.setState({ ...useEditorStore.getState(), project, past: [], future: [] });
 
     useEditorStore.getState().selectClip("first");
+    expect(useEditorStore.getState().selectedClipIds).toEqual(["first"]);
+    useEditorStore.getState().selectSceneGroup("scene-one");
     expect(useEditorStore.getState().selectedClipIds).toEqual(["first", "second"]);
-    useEditorStore.getState().moveClips(["first"], 1_000_000);
+    useEditorStore.getState().moveClips(useEditorStore.getState().selectedClipIds, 1_000_000);
     expect(track.clips.map((clip) => clip.startUs)).toEqual([1_000_000, 2_000_000]);
     expect(useEditorStore.getState().project.tracks.find((candidate) => candidate.id === track.id)!.clips.map((clip) => clip.startUs)).toEqual([2_000_000, 3_000_000]);
     useEditorStore.getState().undo();
     expect(useEditorStore.getState().project.tracks.find((candidate) => candidate.id === track.id)!.clips.map((clip) => clip.startUs)).toEqual([1_000_000, 2_000_000]);
 
-    useEditorStore.getState().trimClip("first", "end", 2_000_000);
+    useEditorStore.getState().retimeSceneGroup("scene-one", 6_000_000);
     const stretched = useEditorStore.getState().project.tracks.find((candidate) => candidate.id === track.id)!.clips;
     expect(stretched.map((clip) => [clip.startUs, clip.durationUs])).toEqual([[1_000_000, 6_000_000], [2_500_000, 4_500_000]]);
-    expect(stretched[1].kind === "effect" ? stretched[1].dimAtUs : undefined).toBe(3_000_000);
+    expect(stretched[1].kind === "composition" ? stretched[1].dimAtUs : undefined).toBe(3_000_000);
   });
 });

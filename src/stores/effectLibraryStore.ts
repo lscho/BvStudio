@@ -1,9 +1,9 @@
 import { create } from "zustand";
-import { allEffects, setInstalledEffects, type EffectDefinition } from "@/domain/effects";
+import { allCompositions, setInstalledEffects, type CompositionDefinition } from "@/domain/effects";
 import { installEffectPackage, listEffectPackages, uninstallEffectPackage, type EffectPackageInfo } from "@/services/effectPackages";
 
 interface EffectLibraryState {
-  effects: EffectDefinition[];
+  effects: CompositionDefinition[];
   packages: EffectPackageInfo[];
   loaded: boolean;
   load: () => Promise<void>;
@@ -14,11 +14,11 @@ interface EffectLibraryState {
 async function refresh(set: (patch: Partial<EffectLibraryState>) => void) {
   const packages = await listEffectPackages();
   setInstalledEffects(packages.flatMap((item) => item.effects));
-  set({ packages, effects: allEffects(), loaded: true });
+  set({ packages, effects: allCompositions(), loaded: true });
 }
 
 export const useEffectLibraryStore = create<EffectLibraryState>((set) => ({
-  effects: allEffects(),
+  effects: allCompositions(),
   packages: [],
   loaded: false,
   load: () => refresh(set),

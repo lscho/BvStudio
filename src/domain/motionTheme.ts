@@ -1,5 +1,5 @@
-import { effectById } from "@/domain/effects";
-import { DEFAULT_MOTION_THEME, type EffectClip, type MotionColorRole, type MotionSkin, type MotionTheme } from "@/domain/project";
+import { compositionById } from "@/domain/effects";
+import { DEFAULT_MOTION_THEME, type CompositionClip, type MotionColorRole, type MotionSkin, type MotionTheme } from "@/domain/project";
 import { DEFAULT_EFFECT_BACKDROP } from "@/domain/videoPresentation";
 
 export const MOTION_COLOR_ROLE_OPTIONS: readonly { value: MotionColorRole; label: string }[] = [
@@ -40,8 +40,8 @@ const roleKeywords: Record<Exclude<MotionColorRole, "custom">, readonly string[]
   auxiliary: ["步骤", "流程", "教程", "关键词", "标注"]
 };
 
-export function motionColorRoleForEffect(effectId: string): MotionColorRole {
-  const definition = effectById(effectId);
+export function motionColorRoleForEffect(compositionId: string): MotionColorRole {
+  const definition = compositionById(compositionId);
   const searchable = [definition.category, definition.name, ...definition.tags].join(" ");
   for (const [role, keywords] of Object.entries(roleKeywords) as Array<[Exclude<MotionColorRole, "custom">, readonly string[]]>) {
     if (keywords.some((keyword) => searchable.includes(keyword))) return role;
@@ -50,7 +50,7 @@ export function motionColorRoleForEffect(effectId: string): MotionColorRole {
 }
 
 export function resolveEffectAppearance(
-  clip: Pick<EffectClip, "color" | "accentColor" | "colorRole">,
+  clip: Pick<CompositionClip, "color" | "accentColor" | "colorRole">,
   theme: MotionTheme
 ) {
   const role = clip.colorRole ?? "custom";
@@ -61,10 +61,10 @@ export function resolveEffectAppearance(
 }
 
 export function effectColorRolePatch(
-  clip: Pick<EffectClip, "color" | "accentColor" | "colorRole">,
+  clip: Pick<CompositionClip, "color" | "accentColor" | "colorRole">,
   theme: MotionTheme,
   colorRole: MotionColorRole
-): Pick<EffectClip, "colorRole"> & Partial<Pick<EffectClip, "color" | "accentColor">> {
+): Pick<CompositionClip, "colorRole"> & Partial<Pick<CompositionClip, "color" | "accentColor">> {
   if (colorRole !== "custom") return { colorRole };
   return { colorRole, ...resolveEffectAppearance(clip, theme) };
 }
@@ -91,12 +91,12 @@ export function motionThemeWithAccentColor(theme: MotionTheme, color: string): M
   };
 }
 
-export function effectBackdropUsesTheme(backdrop: Pick<NonNullable<EffectClip["backdrop"]>, "color"> | undefined): boolean {
+export function effectBackdropUsesTheme(backdrop: Pick<NonNullable<CompositionClip["backdrop"]>, "color"> | undefined): boolean {
   return !backdrop || backdrop.color === DEFAULT_EFFECT_BACKDROP.color;
 }
 
 export function resolveEffectBackdropColor(
-  backdrop: Pick<NonNullable<EffectClip["backdrop"]>, "color"> | undefined,
+  backdrop: Pick<NonNullable<CompositionClip["backdrop"]>, "color"> | undefined,
   theme: MotionTheme
 ): string {
   if (!backdrop || effectBackdropUsesTheme(backdrop)) return theme.colors.surface;

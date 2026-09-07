@@ -2,15 +2,59 @@ import { describe, expect, it } from "vitest";
 import { createEmptyProject, type GeneratedBlock, type TimelineTrack, type VideoClip } from "@/domain/project";
 import { buildRenderPlan } from "@/domain/renderPlan";
 import { cameraMotionForPreset } from "@/domain/camera";
-import { createVideoPresentationCue } from "@/domain/videoPresentation";
+import { createVideoPresentationCue, DEFAULT_VIDEO_MASK, videoPresentationAt } from "@/domain/videoPresentation";
+import { createEffectPreviewClip } from "@/domain/effectPreview";
+import { videoFrameMask } from "@/domain/videoFrame";
 
 describe("buildRenderPlan", () => {
+  it("uses absolute layers and derives video dimensions from the source across motion cues", () => {
+    const project = createEmptyProject();
+    project.assets.push({ id: "portrait", name: "portrait.mp4", kind: "video", sourcePath: "/media/portrait.mp4", width: 1080, height: 1920, durationUs: 5_000_000 });
+    const video: VideoClip = { id: "video", trackId: "video-main", kind: "video", label: "Video", locked: false, startUs: 0, durationUs: 5_000_000, assetId: "portrait", sourceInUs: 0, playbackRate: 1, volume: 1, fit: "cover", camera: cameraMotionForPreset("none"), zIndex: 20, mask: { ...DEFAULT_VIDEO_MASK, widthPercent: 25, heightPercent: 80, focusX: 65 } };
+    const cue = createVideoPresentationCue("picture-in-picture-top-right", video, 2_000_000);
+    cue.mask = { ...video.mask!, widthPercent: 30 };
+    video.presentationCues = [cue];
+    project.tracks.find((track) => track.kind === "video")!.clips.push(video);
+    const background = { ...createEffectPreviewClip("background-grid", project.motionTheme, []), zIndex: 0 };
+    project.tracks.find((track) => track.kind === "composition")!.clips.push(background);
+    let overlays = buildRenderPlan(project, "/output.mp4").overlays;
+    expect(overlays[0]).toMatchObject({ compositionId: "background-grid", zIndex: 0 });
+    expect(overlays.find((overlay) => overlay.kind === "video" && overlay.startUs === 0)).toMatchObject({ zIndex: 20, mask: { ...video.mask, widthPercent: 31.640625, heightPercent: 100 } });
+    expect(overlays.find((overlay) => overlay.kind === "video" && overlay.startUs === 2_000_000)).toMatchObject({ zIndex: 20, mask: { ...cue.mask, widthPercent: 31.640625, heightPercent: 100 } });
+    background.zIndex = 230;
+    overlays = buildRenderPlan(project, "/output.mp4").overlays;
+    expect(overlays.at(-1)).toMatchObject({ compositionId: "background-grid", zIndex: 230 });
+  });
+
+  it.each([[1920, 1080], [1080, 1920], [1080, 1080]])("exports contained video framing on a %i x %i canvas", (width, height) => {
+    const project = createEmptyProject();
+    project.canvas = { ...project.canvas, width, height };
+    project.assets.push({ id: "portrait", name: "portrait.mp4", kind: "video", sourcePath: "/media/portrait.mp4", width: 1080, height: 1920, durationUs: 8_000_000 });
+    const track = project.tracks.find((candidate) => candidate.kind === "video")!;
+    const clip: VideoClip = {
+      id: "portrait-clip", trackId: track.id, kind: "video", label: "portrait", locked: false,
+      startUs: 0, durationUs: 6_000_000, sourceInUs: 1_000_000, playbackRate: 1, assetId: "portrait", volume: 1,
+      fit: "contain", transform: { x: 35, y: 60, scale: 0.6, rotation: 0, opacity: 1 }, camera: cameraMotionForPreset("none")
+    };
+    track.clips.push(clip);
+    const preview = videoPresentationAt(clip, 0);
+    expect(buildRenderPlan(project, "/output.mp4").overlays.find((overlay) => overlay.kind === "video"))
+      .toMatchObject({ fit: preview.fit, x: preview.transform.x, y: preview.transform.y, scale: preview.transform.scale, sourceInUs: 1_000_000, mask: videoFrameMask(preview.mask, width, height, 1080, 1920) });
+    const cue = createVideoPresentationCue("picture-in-picture-top-right", clip, 2_000_000);
+    cue.fit = "contain";
+    cue.transform.scale = 0.5;
+    cue.transitionDurationUs = 0;
+    clip.presentationCues = [cue];
+    expect(buildRenderPlan(project, "/output.mp4").overlays.find((overlay) => overlay.kind === "video" && overlay.startUs === 2_000_000))
+      .toMatchObject({ fit: "contain", scale: 0.5, sourceInUs: 3_000_000 });
+  });
+
   it("does not render legacy generated-scene effects or media", () => {
     const project = createEmptyProject();
     const generated: GeneratedBlock = {
       id: "generated", trackId: "generated-main", kind: "generated", label: "AI", startUs: 0, durationUs: 2_000_000,
       locked: false, article: "文章", narration: "口播", prompt: "主题", insertMode: "insert",
-      scenes: [{ id: "legacy", title: "旧占位文字", narration: "字幕", durationUs: 2_000_000, effectId: "scene-focus-stack", textColor: "#ffffff", accentColor: "#ff0000", fontSize: 64, speed: 1, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, mediaSourceInUs: 0, mediaFit: "cover", mediaVolume: 0, camera: cameraMotionForPreset("none") }]
+      scenes: [{ id: "legacy", title: "旧占位文字", narration: "字幕", durationUs: 2_000_000, compositionId: "scene-focus-stack", textColor: "#ffffff", accentColor: "#ff0000", fontSize: 64, speed: 1, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, mediaSourceInUs: 0, mediaFit: "cover", mediaVolume: 0, camera: cameraMotionForPreset("none") }]
     };
     project.tracks.find((track) => track.kind === "generated")!.clips.push(generated);
     const plan = buildRenderPlan(project, "/output.mp4");
@@ -20,7 +64,7 @@ describe("buildRenderPlan", () => {
 
   it("exports materialized subtitle and effect timeline clips", () => {
     const project = createEmptyProject();
-    project.tracks.find((track) => track.kind === "effect")!.clips.push({ id: "effect", trackId: "effect-main", kind: "effect", label: "AI 动效", startUs: 1_000_000, durationUs: 2_000_000, locked: false, effectId: "test-title-slide", text: "真实内容", color: "#ffffff", accentColor: "#ff0000", fontSize: 48, speed: 1, transform: { x: 40, y: 30, scale: 1, rotation: 0, opacity: 0.9 } });
+    project.tracks.find((track) => track.kind === "composition")!.clips.push({ id: "composition", trackId: "effect-main", kind: "composition", label: "AI 动效", startUs: 1_000_000, durationUs: 2_000_000, locked: false, compositionId: "test-title-slide", text: "真实内容", color: "#ffffff", accentColor: "#ff0000", fontSize: 48, speed: 1, transform: { x: 40, y: 30, scale: 1, rotation: 0, opacity: 0.9 } });
     project.tracks.find((track) => track.kind === "subtitle")!.clips.push({ id: "subtitle", trackId: "subtitle-main", kind: "subtitle", label: "字幕", startUs: 1_000_000, durationUs: 2_000_000, locked: false, text: "时间字幕。", color: "#ffffff", backgroundColor: "#000000", fontSize: 44, positionY: 88 });
     const overlays = buildRenderPlan(project, "/output.mp4").overlays;
     expect(overlays).toContainEqual(expect.objectContaining({ text: "真实内容", startUs: 1_000_000, x: 40 }));
@@ -30,23 +74,23 @@ describe("buildRenderPlan", () => {
   it("resolves project theme roles and React renderer metadata for export", () => {
     const project = createEmptyProject();
     project.motionTheme = { ...project.motionTheme, skin: "light", style: "editorial", font: "display", colors: { ...project.motionTheme.colors, text: "#121212", data: "#0099cc" } };
-    project.tracks.find((track) => track.kind === "effect")!.clips.push({
-      id: "themed", trackId: "effect-main", kind: "effect", label: "数据", startUs: 0, durationUs: 3_000_000, locked: false,
-      effectId: "test-number-counter", text: "42%", color: "#ffffff", accentColor: "#ff0000", colorRole: "data", fontSize: 80,
+    project.tracks.find((track) => track.kind === "composition")!.clips.push({
+      id: "themed", trackId: "effect-main", kind: "composition", label: "数据", startUs: 0, durationUs: 3_000_000, locked: false,
+      compositionId: "test-number-counter", text: "42%", color: "#ffffff", accentColor: "#ff0000", colorRole: "data", fontSize: 80,
       speed: 1, dimAtUs: 2_000_000, params: { value: 42, showLabel: true }, transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }
     });
     expect(buildRenderPlan(project, "/output.mp4").overlays[0]).toMatchObject({
-      renderer: "react", effectId: "test-number-counter", color: "#121212", accentColor: "#0099cc", dimAtUs: 2_000_000,
+      renderer: "react", compositionId: "test-number-counter", color: "#121212", accentColor: "#0099cc", dimAtUs: 2_000_000,
       motionTheme: { skin: "light", style: "editorial", font: "display" }, params: { value: 42, showLabel: true }
     });
   });
 
   it("repairs legacy impact text size in export without changing custom sizes", () => {
     const project = createEmptyProject();
-    const track = project.tracks.find((candidate) => candidate.kind === "effect")!;
+    const track = project.tracks.find((candidate) => candidate.kind === "composition")!;
     track.clips.push(
-      { id: "legacy-impact", trackId: track.id, kind: "effect", label: "冲击字", startUs: 0, durationUs: 2_000_000, locked: false, effectId: "data-impact", text: "42%", color: "#ffffff", accentColor: "#47d7ac", fontSize: 56, speed: 1, transform: { x: 50, y: 40, scale: 1, rotation: 0, opacity: 1 } },
-      { id: "custom-impact", trackId: track.id, kind: "effect", label: "自定义冲击字", startUs: 2_000_000, durationUs: 2_000_000, locked: false, effectId: "data-impact", text: "自定义", color: "#ffffff", accentColor: "#47d7ac", fontSize: 40, speed: 1, transform: { x: 50, y: 40, scale: 1, rotation: 0, opacity: 1 } }
+      { id: "legacy-impact", trackId: track.id, kind: "composition", label: "冲击字", startUs: 0, durationUs: 2_000_000, locked: false, compositionId: "data-impact", text: "42%", color: "#ffffff", accentColor: "#47d7ac", fontSize: 56, speed: 1, transform: { x: 50, y: 40, scale: 1, rotation: 0, opacity: 1 } },
+      { id: "custom-impact", trackId: track.id, kind: "composition", label: "自定义冲击字", startUs: 2_000_000, durationUs: 2_000_000, locked: false, compositionId: "data-impact", text: "自定义", color: "#ffffff", accentColor: "#47d7ac", fontSize: 40, speed: 1, transform: { x: 50, y: 40, scale: 1, rotation: 0, opacity: 1 } }
     );
 
     const overlays = buildRenderPlan(project, "/output.mp4").overlays;
@@ -56,10 +100,10 @@ describe("buildRenderPlan", () => {
 
   it("preserves staged cross-caption motion timing in the render plan", () => {
     const project = createEmptyProject();
-    const track = project.tracks.find((candidate) => candidate.kind === "effect")!;
+    const track = project.tracks.find((candidate) => candidate.kind === "composition")!;
     track.clips.push(
-      { id: "title", trackId: track.id, kind: "effect", label: "市场格局", startUs: 1_000_000, durationUs: 6_000_000, locked: false, effectId: "test-title-slide", text: "市场格局", color: "#ffffff", accentColor: "#5fa8ff", fontSize: 48, speed: 1, sceneGroupId: "ai-motion:market", transform: { x: 50, y: 24, scale: 1, rotation: 0, opacity: 1 } },
-      { id: "public", trackId: track.id, kind: "effect", label: "公共充电桩", startUs: 2_500_000, durationUs: 4_500_000, locked: false, effectId: "test-callout-panel", text: "公共充电桩", color: "#ffffff", accentColor: "#47d7ac", fontSize: 44, speed: 1, sceneGroupId: "ai-motion:market", transform: { x: 30, y: 48, scale: 1, rotation: 0, opacity: 1 } }
+      { id: "title", trackId: track.id, kind: "composition", label: "市场格局", startUs: 1_000_000, durationUs: 6_000_000, locked: false, compositionId: "test-title-slide", text: "市场格局", color: "#ffffff", accentColor: "#5fa8ff", fontSize: 48, speed: 1, sceneGroupId: "ai-motion:market", transform: { x: 50, y: 24, scale: 1, rotation: 0, opacity: 1 } },
+      { id: "public", trackId: track.id, kind: "composition", label: "公共充电桩", startUs: 2_500_000, durationUs: 4_500_000, locked: false, compositionId: "test-callout-panel", text: "公共充电桩", color: "#ffffff", accentColor: "#47d7ac", fontSize: 44, speed: 1, sceneGroupId: "ai-motion:market", transform: { x: 30, y: 48, scale: 1, rotation: 0, opacity: 1 } }
     );
     const overlays = buildRenderPlan(project, "/output.mp4").overlays;
     expect(overlays).toContainEqual(expect.objectContaining({ text: "市场格局", startUs: 1_000_000, durationUs: 6_000_000 }));
@@ -139,9 +183,9 @@ describe("buildRenderPlan", () => {
 
   it("applies one-off output dimensions, frame rate and format without changing the project", () => {
     const project = createEmptyProject();
-    project.tracks.find((track) => track.kind === "effect")!.clips.push({
-      id: "scaled-effect", trackId: "effect-main", kind: "effect", label: "动效", startUs: 0, durationUs: 1_000_000,
-      locked: false, effectId: "test-title-slide", text: "输出尺寸", color: "#ffffff", accentColor: "#5fa8ff",
+    project.tracks.find((track) => track.kind === "composition")!.clips.push({
+      id: "scaled-effect", trackId: "effect-main", kind: "composition", label: "动效", startUs: 0, durationUs: 1_000_000,
+      locked: false, compositionId: "test-title-slide", text: "输出尺寸", color: "#ffffff", accentColor: "#5fa8ff",
       fontSize: 60, speed: 1, transform: { x: 50, y: 40, scale: 1, rotation: 0, opacity: 1 }
     });
     const plan = buildRenderPlan(project, "/output.mov", { format: "mov", width: 1280, height: 720, fps: 24 });
@@ -150,15 +194,36 @@ describe("buildRenderPlan", () => {
     expect(project.canvas).toMatchObject({ width: 1920, height: 1080, fpsNumerator: 30 });
   });
 
+  it("preserves Overlay Studio timing and reference scale at a different export size", () => {
+    const project = createEmptyProject();
+    const track = project.tracks.find((candidate) => candidate.kind === "composition")!;
+    track.clips.push({
+      id: "reflow", trackId: track.id, kind: "composition", label: "排版重组", locked: false,
+      compositionId: "type-shift", startUs: 1_000_000, durationUs: 3_000_000,
+      sourceOffsetUs: 500_000, animationDurationUs: 6_000_000, speed: 1.5,
+      text: "", params: { lines: "第一行｜*重点｜- 署名", shiftAtMs: 1_600 },
+      color: "#ffffff", accentColor: "#5fa0fa", fontSize: 48,
+      transform: { x: 50, y: 40, scale: 0.8, rotation: 0, opacity: 1 }
+    });
+
+    expect(buildRenderPlan(project, "/output.mp4", { width: 640, height: 360 }).overlays[0]).toMatchObject({
+      renderer: "react", compositionId: "type-shift", fontSize: 16, scale: 0.8,
+      startUs: 1_000_000, durationUs: 3_000_000, sourceOffsetUs: 500_000,
+      animationDurationUs: 6_000_000, speed: 1.5,
+      params: { lines: "第一行｜*重点｜- 署名", shiftAtMs: 1_600 }
+    });
+  });
+
   it("exports scene backgrounds below videos and text overlays", () => {
     const project = createEmptyProject();
+    project.tracks.push({ id: "scene-main", kind: "scene", name: "旧背景", locked: false, muted: false, hidden: false, clips: [] });
     project.tracks.find((track) => track.kind === "scene")!.clips.push({
       id: "scene", trackId: "scene-main", kind: "scene", label: "黑色条纹", startUs: 0, durationUs: 4_000_000,
-      locked: false, effectId: "scene-black-stripes", opacity: 1,
+      locked: false, compositionId: "scene-black-stripes", opacity: 1,
       background: { preset: "black-stripes", primaryColor: "#111317", secondaryColor: "#252a31", borderColor: "#5fa8ff", intensity: 0.72 }
     });
     const plan = buildRenderPlan(project, "/output.mp4");
-    expect(plan.overlays[0]).toMatchObject({ kind: "scene", zIndex: -100, x: 50, y: 50, recipe: { sceneBackground: { preset: "black-stripes" } } });
+    expect(plan.overlays[0]).toMatchObject({ kind: "scene", zIndex: 0, x: 50, y: 50, recipe: { sceneBackground: { preset: "black-stripes" } } });
     project.tracks.find((track) => track.kind === "scene")!.hidden = true;
     expect(buildRenderPlan(project, "/output.mp4").overlays).toEqual([]);
   });
@@ -184,7 +249,7 @@ describe("buildRenderPlan", () => {
     project.tracks.splice(1, 0, foregroundTrack);
     backgroundTrack.clips.push({ id: "background-clip", trackId: backgroundTrack.id, kind: "video", label: "background", startUs: 0, durationUs: 5_000_000, locked: false, assetId: "background", sourceInUs: 0, playbackRate: 1, volume: 0, fit: "cover", zIndex: 0, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, camera: cameraMotionForPreset("none") });
     foregroundTrack.clips.push({ id: "foreground-clip", trackId: foregroundTrack.id, kind: "video", label: "foreground", startUs: 0, durationUs: 5_000_000, locked: false, assetId: "foreground", sourceInUs: 0, playbackRate: 1, volume: 0.5, fit: "cover", zIndex: 10, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, transformKeyframes: [{ offsetUs: 0, x: 50, y: 50, scale: 1, easing: "ease-in-out" }, { offsetUs: 1_000_000, x: 82, y: 20, scale: 0.3, easing: "ease-in-out" }], camera: cameraMotionForPreset("push-in"), mask: { shape: "circle", radius: 50, feather: 0, borderWidth: 3, borderColor: "#ffffff", focusX: 45, focusY: 35 }, transition: { preset: "dock", durationUs: 600_000, easing: "ease-in-out" }, focus: { enabled: true, startOffsetUs: 1_000_000, durationUs: 2_000_000, x: 40, y: 60, zoom: 1.8, radius: 15, feather: 5, dimOpacity: 0.5, showCursor: true } });
-    project.tracks.find((track) => track.kind === "effect")!.clips.push({ id: "effect", trackId: "effect-main", kind: "effect", label: "text", startUs: 0, durationUs: 2_000_000, locked: false, effectId: "test-title-slide", text: "上层文字", color: "#ffffff", accentColor: "#ffb84d", fontSize: 48, speed: 1, zIndex: 20, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, backdrop: { enabled: true, color: "#111316", opacity: 0.8, blur: 8, paddingX: 18, paddingY: 10, radius: 4 } });
+    project.tracks.find((track) => track.kind === "composition")!.clips.push({ id: "composition", trackId: "effect-main", kind: "composition", label: "text", startUs: 0, durationUs: 2_000_000, locked: false, compositionId: "test-title-slide", text: "上层文字", color: "#ffffff", accentColor: "#ffb84d", fontSize: 48, speed: 1, zIndex: 20, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, backdrop: { enabled: true, color: "#111316", opacity: 0.8, blur: 8, paddingX: 18, paddingY: 10, radius: 4 } });
     const plan = buildRenderPlan(project, "/output.mp4");
     expect(plan.segments).toEqual([expect.objectContaining({ kind: "gap" })]);
     expect(plan.overlays.map((overlay) => overlay.kind)).toEqual(["video", "video", "focus", "text"]);

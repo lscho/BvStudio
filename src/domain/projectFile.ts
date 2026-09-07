@@ -1,5 +1,7 @@
-import { createEmptyProject, DEFAULT_MOTION_THEME, DEFAULT_PRESENTER_SAFE_AREA, projectEndUs, VIDEO_TRANSITION_PRESETS, type ChapterProgressPosition, type ChapterProgressPreset, type ChapterProgressStyle, type EditorProject, type EffectClip, type MotionColorRole, type MotionFont, type MotionSkin, type MotionStyle, type MotionTheme, type PresenterSafeAreaPosition, type SceneClip, type VideoTransition } from "@/domain/project";
-import { OVERLAY_STUDIO_BASE_FONT_SIZE, OVERLAY_STUDIO_EFFECT_IDS, allEffects, effectById, remapEffectTextParams, type EffectParams, type EffectSoundCue, type SceneBackgroundSpec } from "@/domain/effects";
+import { createEmptyProject, DEFAULT_MOTION_THEME, projectEndUs, VIDEO_TRANSITION_PRESETS, type ChapterProgressPosition, type ChapterProgressPreset, type ChapterProgressStyle, type EditorProject, type CompositionClip, type MotionColorRole, type MotionFont, type MotionSkin, type MotionStyle, type MotionTheme, type VideoTransition } from "@/domain/project";
+import { normalizeSubtitleTheme } from "@/domain/subtitleTheme";
+import { normalizePresenterSafeArea } from "@/domain/presenterSafeArea";
+import { OVERLAY_STUDIO_BASE_FONT_SIZE, OVERLAY_STUDIO_EFFECT_IDS, allCompositions, compositionById, remapEffectTextParams, type CompositionParams, type EffectSoundCue, type SceneBackgroundSpec } from "@/domain/effects";
 import { presenterMotionSafeArea, resolveMotionLayout, type MotionLayoutLayer, type OccupiedMotionLayoutLayer } from "@/domain/motionLayout";
 import { cameraMotionForPreset } from "@/domain/camera";
 import { DEFAULT_TRANSFORM } from "@/domain/transforms";
@@ -7,6 +9,10 @@ import { migrateLegacyGeneratedEffectLayout } from "@/domain/sceneEffects";
 import { DEFAULT_EFFECT_BACKDROP, DEFAULT_VIDEO_FOCUS, DEFAULT_VIDEO_MASK, DEFAULT_VIDEO_TRANSITION } from "@/domain/videoPresentation";
 import { CHAPTER_PROGRESS_PRESETS, DEFAULT_CHAPTER_PROGRESS, DEFAULT_SUBTITLE_STYLE } from "@/domain/videoDecorations";
 import { isEasingName } from "@/domain/easing";
+import { compositionAssetIds, compositionLayer, isBackgroundComposition, normalizeBindings } from "@/domain/compositions";
+import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
+import { normalizeVideoMask } from "@/domain/videoFrame";
+import { migrateSceneTracks } from "@/domain/sceneBackground";
 
 function normalizeEffectSoundCues(value: unknown): EffectSoundCue[] {
   if (!Array.isArray(value)) return [];
@@ -25,8 +31,8 @@ function normalizeEffectSoundCues(value: unknown): EffectSoundCue[] {
   });
 }
 
-function normalizeEffectParams(value: unknown, defaults: EffectParams = {}): EffectParams {
-  const normalized: EffectParams = { ...defaults };
+function normalizeEffectParams(value: unknown, defaults: CompositionParams = {}): CompositionParams {
+  const normalized: CompositionParams = { ...defaults };
   if (!value || typeof value !== "object" || Array.isArray(value)) return normalized;
   for (const [key, candidate] of Object.entries(value).slice(0, 64)) {
     if (!/^[a-z][a-z0-9_-]{0,63}$/iu.test(key)) continue;
@@ -37,8 +43,8 @@ function normalizeEffectParams(value: unknown, defaults: EffectParams = {}): Eff
   return normalized;
 }
 
-function defaultEffectParams(effectId: string): EffectParams {
-  return structuredClone(allEffects().find((effect) => effect.id === effectId)?.defaultParams ?? {});
+function defaultEffectParams(compositionId: string): CompositionParams {
+  return structuredClone(allCompositions().find((effect) => effect.id === compositionId)?.defaultParams ?? {});
 }
 
 const scenePresets: readonly SceneBackgroundSpec["preset"][] = [
@@ -52,8 +58,21 @@ const motionSkins: readonly MotionSkin[] = ["dark", "light"];
 const motionStyles: readonly MotionStyle[] = ["minimal", "editorial"];
 const motionFonts: readonly MotionFont[] = ["sans", "display"];
 const motionColorRoles: readonly MotionColorRole[] = ["data", "opinion", "warning", "auxiliary", "custom"];
-const presenterSafeAreaPositions: readonly PresenterSafeAreaPosition[] = ["none", "left", "center", "right"];
-const supportedProjectSchemaVersions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24] as const;
+const supportedProjectSchemaVersions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30] as const;
+
+function migrateCompositionFields(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record: Record<string, unknown> = { ...value };
+  if (record.kind === "effect") record.kind = "composition";
+  if (typeof record.effectId === "string") {
+    record.compositionId = record.effectId;
+    delete record.effectId;
+  }
+  for (const field of ["tracks", "clips", "scenes", "additionalEffects"]) {
+    if (Array.isArray(record[field])) record[field] = record[field].map(migrateCompositionFields);
+  }
+  return record;
+}
 
 function normalizeVideoTransition(value: unknown, durationUs: number): VideoTransition {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { ...DEFAULT_VIDEO_TRANSITION };
@@ -72,15 +91,15 @@ function normalizeVideoTransition(value: unknown, durationUs: number): VideoTran
   return { preset, durationUs: normalizedDurationUs, easing, fromClipId };
 }
 
-function isGeneratedOverlayStudioEffect(clip: EffectClip) {
-  return OVERLAY_STUDIO_EFFECT_IDS.includes(clip.effectId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number])
+function isGeneratedOverlayStudioEffect(clip: CompositionClip) {
+  return OVERLAY_STUDIO_EFFECT_IDS.includes(clip.compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number])
     && Boolean(clip.sourceSubtitleId || clip.sourceBlockId || clip.label.startsWith("AI 动效"));
 }
 
-function effectMotionLayoutLayer(effect: EffectClip): MotionLayoutLayer {
+function effectMotionLayoutLayer(effect: CompositionClip): MotionLayoutLayer {
   return {
     id: effect.id,
-    effectId: effect.effectId,
+    compositionId: effect.compositionId,
     startUs: effect.startUs,
     durationUs: effect.durationUs,
     desiredX: effect.transform.x,
@@ -88,14 +107,14 @@ function effectMotionLayoutLayer(effect: EffectClip): MotionLayoutLayer {
     scale: effect.transform.scale,
     fontSize: effect.fontSize,
     text: effect.text,
-    recipe: effect.recipe ?? effectById(effect.effectId).recipe,
+    recipe: effect.recipe ?? compositionById(effect.compositionId).recipe,
     priority: "primary"
   };
 }
 
 function migrateGeneratedOverlayStudioLayout(project: EditorProject, sourceSchemaVersion: number) {
   if (sourceSchemaVersion >= 22) return;
-  const effects = project.tracks.flatMap((track) => track.clips).filter((clip): clip is EffectClip => clip.kind === "effect");
+  const effects = project.tracks.flatMap((track) => track.clips).filter((clip): clip is CompositionClip => clip.kind === "composition");
   const movable = effects.filter((effect) => isGeneratedOverlayStudioEffect(effect) && !effect.transformKeyframes?.length);
   if (!movable.length) return;
   const movableIds = new Set(movable.map((effect) => effect.id));
@@ -154,8 +173,8 @@ function chapterProgressColor(value: unknown, fallback: string): string {
   return typeof value === "string" && /^#[0-9a-f]{6}$/iu.test(value) ? value : fallback;
 }
 
-function normalizeSceneBackground(value: unknown, effectId: string): SceneBackgroundSpec {
-  const fallback = structuredClone(effectById(effectId).recipe.sceneBackground ?? effectById("scene-black-stripes").recipe.sceneBackground!);
+function normalizeSceneBackground(value: unknown, compositionId: string): SceneBackgroundSpec {
+  const fallback = structuredClone(compositionById(compositionId).recipe.sceneBackground ?? compositionById("scene-black-stripes").recipe.sceneBackground!);
   if (!value || typeof value !== "object") return fallback;
   const candidate = value as Record<string, unknown>;
   const color = (field: "primaryColor" | "secondaryColor" | "borderColor") => (
@@ -194,6 +213,7 @@ export function parseProject(contents: string): EditorProject {
     throw new Error("工程文件不是有效的 JSON");
   }
   if (!raw || typeof raw !== "object") throw new Error("工程文件结构无效");
+  if ("schemaVersion" in raw && typeof raw.schemaVersion === "number" && raw.schemaVersion <= 24) raw = migrateCompositionFields(raw);
   const candidate = raw as Omit<Partial<EditorProject>, "schemaVersion"> & { schemaVersion?: number };
   const sourceSchemaVersion = candidate.schemaVersion;
   if (typeof sourceSchemaVersion !== "number" || !supportedProjectSchemaVersions.includes(sourceSchemaVersion as (typeof supportedProjectSchemaVersions)[number])) throw new Error("不支持此工程文件版本");
@@ -214,51 +234,49 @@ export function parseProject(contents: string): EditorProject {
       fadeInUs: clip.fadeInUs ?? 0,
       fadeOutUs: clip.fadeOutUs ?? 0,
       role: clip.role ?? "music"
-    } : clip.kind === "video" ? { ...clip, camera: clip.camera ?? cameraMotionForPreset("none"), cameraOffsetUs: clip.cameraOffsetUs ?? 0, cameraDurationUs: clip.cameraDurationUs ?? clip.durationUs, zIndex: clip.zIndex ?? (track.id === "video-main" ? 0 : 10), transform: clip.transform ?? { ...DEFAULT_TRANSFORM }, transformKeyframes: clip.transformKeyframes ?? [], layoutPreset: clip.layoutPreset ?? (track.id === "video-main" ? "full" : "picture-in-picture-top-right"), role: clip.role ?? (track.id === "video-main" ? "a-roll" : "b-roll"), mask: { ...DEFAULT_VIDEO_MASK, ...clip.mask }, transition: normalizeVideoTransition(clip.transition, clip.durationUs), focus: clip.focus ? { ...DEFAULT_VIDEO_FOCUS, ...clip.focus } : undefined, presentationCues: (clip.presentationCues ?? []).map((cue) => ({ ...cue, offsetUs: Math.max(0, Math.min(clip.durationUs - 1, cue.offsetUs)), transitionDurationUs: cue.transitionDurationUs <= 0 ? 0 : Math.max(100_000, Math.min(clip.durationUs - cue.offsetUs, cue.transitionDurationUs)), transform: { ...DEFAULT_TRANSFORM, ...cue.transform }, mask: { ...DEFAULT_VIDEO_MASK, ...cue.mask }, focus: { ...DEFAULT_VIDEO_FOCUS, ...cue.focus }, camera: cue.camera ?? cameraMotionForPreset("none"), fit: cue.fit ?? "cover" })).sort((left, right) => left.offsetUs - right.offsetUs) }
+    } : clip.kind === "video" ? { ...clip, camera: clip.camera ?? cameraMotionForPreset("none"), cameraOffsetUs: clip.cameraOffsetUs ?? 0, cameraDurationUs: clip.cameraDurationUs ?? clip.durationUs, zIndex: clip.zIndex, transform: clip.transform ?? { ...DEFAULT_TRANSFORM }, transformKeyframes: clip.transformKeyframes ?? [], layoutPreset: clip.layoutPreset ?? (track.id === "video-main" ? "full" : "picture-in-picture-top-right"), role: clip.role ?? (track.id === "video-main" ? "a-roll" : "b-roll"), mask: { ...DEFAULT_VIDEO_MASK, ...clip.mask }, transition: normalizeVideoTransition(clip.transition, clip.durationUs), focus: clip.focus ? { ...DEFAULT_VIDEO_FOCUS, ...clip.focus } : undefined, presentationCues: (clip.presentationCues ?? []).map((cue) => ({ ...cue, offsetUs: Math.max(0, Math.min(clip.durationUs - 1, cue.offsetUs)), transitionDurationUs: cue.transitionDurationUs <= 0 ? 0 : Math.max(100_000, Math.min(clip.durationUs - cue.offsetUs, cue.transitionDurationUs)), transform: { ...DEFAULT_TRANSFORM, ...cue.transform }, mask: { ...DEFAULT_VIDEO_MASK, ...cue.mask }, focus: { ...DEFAULT_VIDEO_FOCUS, ...cue.focus }, camera: cue.camera ?? cameraMotionForPreset("none"), fit: cue.fit ?? "cover" })).sort((left, right) => left.offsetUs - right.offsetUs) }
       : clip.kind === "scene" ? {
         ...clip,
         opacity: Number.isFinite(clip.opacity) ? Math.max(0, Math.min(1, clip.opacity)) : 1,
-        background: normalizeSceneBackground(clip.background, clip.effectId),
+        background: normalizeSceneBackground(clip.background, clip.compositionId),
         soundCues: normalizeEffectSoundCues(clip.soundCues),
         dimAtUs: normalizeOptionalTimeUs(clip.dimAtUs, clip.durationUs),
         lintOff: normalizeStringList(clip.lintOff)
       }
-      : clip.kind === "effect" ? (() => {
-        const recipe = clip.recipe ?? structuredClone(effectById(clip.effectId).recipe);
+      : clip.kind === "composition" ? (() => {
+        const recipe = clip.recipe ?? structuredClone(compositionById(clip.compositionId).recipe);
         if (recipe.sceneBackground) {
           return {
-            id: clip.id,
-            trackId: "scene-main",
-            kind: "scene" as const,
-            label: clip.label,
-            startUs: clip.startUs,
-            durationUs: clip.durationUs,
-            locked: clip.locked,
-            sourceBlockId: clip.sourceBlockId,
-            sourceSubtitleId: clip.sourceSubtitleId,
-            effectId: clip.effectId,
-            background: normalizeSceneBackground(recipe.sceneBackground, clip.effectId),
-            opacity: typeof clip.transform?.opacity === "number" && Number.isFinite(clip.transform.opacity)
+            ...clip,
+            bindings: normalizeBindings(clip.bindings),
+            sourceOffsetUs: normalizeOptionalTimeUs(clip.sourceOffsetUs, Number.MAX_SAFE_INTEGER) ?? 0,
+            animationDurationUs: Math.max(1, normalizeOptionalTimeUs(clip.animationDurationUs, Number.MAX_SAFE_INTEGER) ?? clip.durationUs),
+            recipe: { ...recipe, sceneBackground: normalizeSceneBackground(recipe.sceneBackground, clip.compositionId) },
+            transform: { ...clip.transform, opacity: typeof clip.transform?.opacity === "number" && Number.isFinite(clip.transform.opacity)
               ? Math.max(0, Math.min(1, clip.transform.opacity))
-              : 1,
+              : 1 },
             soundCues: normalizeEffectSoundCues(clip.soundCues),
             sceneGroupId: clip.sceneGroupId,
             matchQuery: clip.matchQuery,
             dimAtUs: normalizeOptionalTimeUs(clip.dimAtUs, clip.durationUs),
             lintOff: normalizeStringList(clip.lintOff)
-          } satisfies SceneClip;
+          } satisfies CompositionClip;
         }
         const generatedOverlayStudioEffect = sourceSchemaVersion < 22 && isGeneratedOverlayStudioEffect(clip);
-        const params = normalizeEffectParams(clip.params, defaultEffectParams(clip.effectId));
+        const params = normalizeEffectParams(clip.params, defaultEffectParams(clip.compositionId));
         return {
           ...clip,
-          zIndex: clip.zIndex ?? 20,
+          bindings: normalizeBindings(clip.bindings),
+          speed: typeof clip.speed === "number" && Number.isFinite(clip.speed) ? Math.max(0.25, Math.min(3, clip.speed)) : 1,
+          sourceOffsetUs: normalizeOptionalTimeUs(clip.sourceOffsetUs, Number.MAX_SAFE_INTEGER) ?? 0,
+          animationDurationUs: Math.max(1, normalizeOptionalTimeUs(clip.animationDurationUs, Number.MAX_SAFE_INTEGER) ?? clip.durationUs),
+          zIndex: clip.zIndex,
           recipe,
           fontSize: generatedOverlayStudioEffect ? OVERLAY_STUDIO_BASE_FONT_SIZE : clip.fontSize,
           transform: generatedOverlayStudioEffect && !clip.transformKeyframes?.length
             ? { ...clip.transform, scale: 1 }
             : clip.transform,
-          params: generatedOverlayStudioEffect ? remapEffectTextParams(clip.effectId, clip.text, params) : params,
+          params: generatedOverlayStudioEffect ? remapEffectTextParams(clip.compositionId, clip.text, params) : params,
           soundCues: normalizeEffectSoundCues(clip.soundCues),
           backdrop: { ...DEFAULT_EFFECT_BACKDROP, ...clip.backdrop },
           colorRole: typeof clip.colorRole === "string" && motionColorRoles.includes(clip.colorRole as MotionColorRole) ? clip.colorRole as MotionColorRole : "custom",
@@ -278,7 +296,7 @@ export function parseProject(contents: string): EditorProject {
         mediaFit: scene.mediaFit ?? "cover",
         mediaVolume: scene.mediaVolume ?? 0,
         camera: scene.camera ?? cameraMotionForPreset("none"),
-        recipe: scene.recipe ?? structuredClone(effectById(scene.effectId).recipe),
+        recipe: scene.recipe ?? structuredClone(compositionById(scene.compositionId).recipe),
         additionalEffects: (scene.additionalEffects ?? []).map((layer) => ({
           ...layer,
           startOffsetUs: layer.startOffsetUs ?? 0,
@@ -286,7 +304,7 @@ export function parseProject(contents: string): EditorProject {
           zIndex: layer.zIndex ?? 20,
           source: layer.source ?? "manual",
           matchQuery: layer.matchQuery ?? `${scene.title} ${scene.narration}`.trim(),
-          recipe: layer.recipe ?? structuredClone(effectById(layer.effectId).recipe),
+          recipe: layer.recipe ?? structuredClone(compositionById(layer.compositionId).recipe),
           soundCues: normalizeEffectSoundCues(layer.soundCues)
         })),
         secondaryMediaSourceInUs: scene.secondaryMediaSourceInUs ?? 0,
@@ -305,20 +323,13 @@ export function parseProject(contents: string): EditorProject {
         : tracks.some((track) => track.kind === fallbackTrack.kind);
     if (!exists) tracks.push(structuredClone(fallbackTrack));
   }
-  const sceneTrack = tracks.find((track) => track.kind === "scene")!;
-  for (const track of tracks) {
-    if (track === sceneTrack) continue;
-    const scenes = track.clips.filter((clip): clip is SceneClip => clip.kind === "scene");
-    track.clips = track.clips.filter((clip) => clip.kind !== "scene");
-    for (const scene of scenes) sceneTrack.clips.push({ ...scene, trackId: sceneTrack.id });
-  }
-  sceneTrack.clips = sceneTrack.clips.map((clip) => ({ ...clip, trackId: sceneTrack.id }));
+  tracks.splice(0, tracks.length, ...migrateSceneTracks(tracks));
   const trackOrder = (track: EditorProject["tracks"][number]) => {
     if (track.kind === "video") return 0;
     if (track.kind === "image") return 1;
     if (track.kind === "generated") return 2;
     if (track.kind === "scene") return 3;
-    if (track.kind === "effect") return 4;
+    if (track.kind === "composition") return 4;
     if (track.kind === "subtitle") return 5;
     if (track.audioRole === "voice") return 6;
     if (track.audioRole === "music") return 7;
@@ -336,17 +347,11 @@ export function parseProject(contents: string): EditorProject {
   const project = {
     ...fallback,
     ...candidate,
-    schemaVersion: 24 as const,
+    schemaVersion: 30 as const,
     canvas: { ...fallback.canvas, ...candidate.canvas },
-    presenterSafeArea: {
-      position: typeof candidate.presenterSafeArea?.position === "string" && presenterSafeAreaPositions.includes(candidate.presenterSafeArea.position as PresenterSafeAreaPosition)
-        ? candidate.presenterSafeArea.position as PresenterSafeAreaPosition
-        : DEFAULT_PRESENTER_SAFE_AREA.position,
-      widthPercent: typeof candidate.presenterSafeArea?.widthPercent === "number" && Number.isFinite(candidate.presenterSafeArea.widthPercent)
-        ? Math.max(18, Math.min(60, candidate.presenterSafeArea.widthPercent))
-        : DEFAULT_PRESENTER_SAFE_AREA.widthPercent
-    },
+    presenterSafeArea: normalizePresenterSafeArea(candidate.presenterSafeArea),
     motionTheme: normalizeMotionTheme(candidate.motionTheme),
+    subtitleTheme: normalizeSubtitleTheme(candidate.subtitleTheme),
     chapterProgress: {
       ...DEFAULT_CHAPTER_PROGRESS,
       enabled: typeof chapterCandidate?.enabled === "boolean" ? chapterCandidate.enabled : DEFAULT_CHAPTER_PROGRESS.enabled,
@@ -375,6 +380,46 @@ export function parseProject(contents: string): EditorProject {
     assets: candidate.assets,
     tracks
   } as EditorProject;
+  if (sourceSchemaVersion <= 25) {
+    const usedIds = new Set(project.tracks.flatMap((track) => track.clips).map((clip) => clip.id));
+    for (const track of project.tracks) {
+      const backgrounds: CompositionClip[] = [];
+      for (const clip of track.clips) {
+        if (clip.kind !== "composition" || !["poster-wall-3d", "image-duet-3d"].includes(clip.compositionId)) continue;
+        const params = clip.params ?? {};
+        let id = `${clip.id}-background`;
+        while (usedIds.has(id)) id += "-1";
+        usedIds.add(id);
+        backgrounds.push({
+          ...structuredClone(clip), id, compositionId: "background-grid", label: `${clip.label} · 背景`, bindings: [],
+          params: { ...defaultEffectParams("background-grid"), grid: true, ...params, layoutCount: Math.max(1, compositionAssetIds(clip).length) },
+          transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: clip.transform.opacity },
+          soundCues: [], transformKeyframes: [], sceneGroupId: undefined
+        });
+        clip.params = { ...params };
+        delete clip.params.background;
+        delete clip.params.gridColor;
+        delete clip.params.grid;
+      }
+      track.clips.push(...backgrounds);
+    }
+  }
+  for (const track of project.tracks) {
+    for (const clip of track.clips) {
+      if (clip.kind === "video") {
+        clip.zIndex = sourceSchemaVersion < 28
+          ? normalizeLayer(DEFAULT_VIDEO_LAYER + (typeof clip.zIndex === "number" && Number.isFinite(clip.zIndex) ? clip.zIndex : track.id === "video-main" ? 0 : 10), DEFAULT_VIDEO_LAYER)
+          : normalizeLayer(clip.zIndex, DEFAULT_VIDEO_LAYER);
+        clip.mask = normalizeVideoMask(clip.mask);
+        for (const cue of clip.presentationCues ?? []) cue.mask = normalizeVideoMask(cue.mask);
+      } else if (clip.kind === "composition") {
+        if (sourceSchemaVersion < 28) {
+          clip.zIndex = isBackgroundComposition(clip.compositionId) || clip.recipe?.sceneBackground ? 0
+            : normalizeLayer(200 + (typeof clip.zIndex === "number" && Number.isFinite(clip.zIndex) ? clip.zIndex : 20), 220);
+        } else clip.zIndex = compositionLayer(clip);
+      }
+    }
+  }
   migrateGeneratedOverlayStudioLayout(project, sourceSchemaVersion);
   const assetById = new Map(project.assets.map((asset) => [asset.id, asset]));
   const generatedById = new Map(project.tracks

@@ -6,7 +6,7 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
-fn credentials_directory(app: &AppHandle) -> Result<PathBuf, String> {
+pub fn credentials_directory(app: &AppHandle) -> Result<PathBuf, String> {
     let directory = app
         .path()
         .app_data_dir()

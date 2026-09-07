@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effectById } from "@/domain/effects";
+import { compositionById } from "@/domain/effects";
 import {
   estimateMotionLayoutRect,
   motionLayoutRectsOverlap,
@@ -19,7 +19,7 @@ function layer(id: string, patch: Partial<MotionLayoutLayer> = {}): MotionLayout
     scale: 1,
     fontSize: 56,
     text: "市场格局",
-    recipe: effectById("test-title-slide").recipe,
+    recipe: compositionById("test-title-slide").recipe,
     priority: "primary",
     ...patch
   };
@@ -42,8 +42,8 @@ describe("resolveMotionLayout", () => {
 
   it("uses reference component footprints to keep simultaneous cards apart", () => {
     const layers = [
-      layer("term", { effectId: "term-card", recipe: effectById("term-card").recipe, fontSize: 48 }),
-      layer("pin", { effectId: "pin-board", recipe: effectById("pin-board").recipe, fontSize: 48 })
+      layer("term", { compositionId: "term-card", recipe: compositionById("term-card").recipe, fontSize: 48 }),
+      layer("pin", { compositionId: "pin-board", recipe: compositionById("pin-board").recipe, fontSize: 48 })
     ];
     const placements = resolveMotionLayout({ canvas, layers });
     const term = placements.get("term");
@@ -86,7 +86,7 @@ describe("resolveMotionLayout", () => {
   });
 
   it("moves a component outside the configured presenter area", () => {
-    const motion = layer("metric", { effectId: "ring-metric", recipe: effectById("ring-metric").recipe, fontSize: 48 });
+    const motion = layer("metric", { compositionId: "ring-metric", recipe: compositionById("ring-metric").recipe, fontSize: 48 });
     const safeArea = { left: 34, top: 6, right: 66, bottom: 78 };
     const placement = resolveMotionLayout({
       canvas,
@@ -99,7 +99,7 @@ describe("resolveMotionLayout", () => {
   });
 
   it("uses a smaller fallback scale instead of dropping a wide component around a center presenter", () => {
-    const motion = layer("wide", { effectId: "type-shift", recipe: effectById("type-shift").recipe, fontSize: 48 });
+    const motion = layer("wide", { compositionId: "type-shift", recipe: compositionById("type-shift").recipe, fontSize: 48 });
     const safeArea = { left: 34, top: 6, right: 66, bottom: 78 };
     const placement = resolveMotionLayout({
       canvas,
@@ -137,7 +137,7 @@ describe("resolveMotionLayout", () => {
 
   it("keeps primary layers and omits an unplaceable secondary layer", () => {
     const portrait = { width: 576, height: 1280 };
-    const chartRecipe = effectById("test-bar-chart").recipe;
+    const chartRecipe = compositionById("test-bar-chart").recipe;
     const layers = [
       layer("primary-one", { recipe: chartRecipe, fontSize: 48, desiredY: 44, priority: "primary" }),
       layer("primary-two", { recipe: chartRecipe, fontSize: 48, desiredY: 67.5, priority: "primary" }),

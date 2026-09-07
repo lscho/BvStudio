@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
+import { sceneBackgroundComposition } from "@/domain/sceneBackground";
 import { InspectorPanel } from "@/components/InspectorPanel";
 import { createEmptyProject, type VideoClip } from "@/domain/project";
 import { useEditorStore } from "@/stores/editorStore";
@@ -10,36 +11,60 @@ beforeEach(() => {
   project.tracks.find((track) => track.kind === "generated")!.clips.push({
     id: "generated", trackId: "generated-main", kind: "generated", label: "AI 片段", startUs: 0, durationUs: 3_000_000,
     locked: false, article: "文章", narration: "口播", prompt: "主题", insertMode: "insert",
-    scenes: [{ id: "caption", title: "增长", narration: "增长 42%", durationUs: 3_000_000, effectId: "test-number-counter", textColor: "#ffffff", accentColor: "#47d7ac", fontSize: 58, speed: 1, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, mediaSourceInUs: 0, mediaFit: "cover", mediaVolume: 0, camera: cameraMotionForPreset("none") }]
+    scenes: [{ id: "caption", title: "增长", narration: "增长 42%", durationUs: 3_000_000, compositionId: "test-number-counter", textColor: "#ffffff", accentColor: "#47d7ac", fontSize: 58, speed: 1, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, mediaSourceInUs: 0, mediaFit: "cover", mediaVolume: 0, camera: cameraMotionForPreset("none") }]
   });
   useEditorStore.setState({ project, selectedClipId: "generated", selectedClipIds: ["generated"], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [], previewRequest: null });
 });
 
 describe("InspectorPanel generated metadata", () => {
+  it("edits crop focus and absolute layer without manual container controls", () => {
+    useEditorStore.getState().addVideo({ id: "portrait", name: "portrait.mp4", kind: "video", durationUs: 8_000_000 });
+    const id = useEditorStore.getState().selectedClipId!;
+    const current = () => useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === id);
+    const view = render(<InspectorPanel />);
+    expect(screen.getByRole("spinbutton", { name: "视频层级" })).toHaveValue(20);
+    expect(screen.queryByRole("combobox", { name: "画面适配" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "容器宽度" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "容器高度" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "匹配素材比例" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("spinbutton", { name: "取景中心 X" }), { target: { value: "60" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "视频层级" }), { target: { value: "240" } });
+    expect(current()).toMatchObject({ fit: "contain", zIndex: 240, mask: { focusX: 60 }, transform: { scale: 1 }, sourceInUs: 0, playbackRate: 1 });
+    useEditorStore.getState().undo();
+    expect(current()).toMatchObject({ zIndex: 20, mask: { focusX: 60 } });
+    useEditorStore.getState().redo();
+    expect(current()).toMatchObject({ zIndex: 240 });
+    view.unmount();
+    useEditorStore.getState().setTrackState(current()!.trackId, { locked: true });
+    useEditorStore.setState({ selectedClipId: id, selectedClipIds: [id] });
+    render(<InspectorPanel />);
+    expect(screen.getByRole("spinbutton", { name: "视频层级" })).toBeDisabled();
+  });
+
   it("can detach one effect from theme colors without changing its appearance", () => {
     const state = useEditorStore.getState();
     const project = createEmptyProject();
     project.motionTheme.colors = { ...project.motionTheme.colors, text: "#121212", data: "#0099cc", surface: "#eef0f2" };
-    const track = project.tracks.find((candidate) => candidate.kind === "effect")!;
+    const track = project.tracks.find((candidate) => candidate.kind === "composition")!;
     track.clips.push({
-      id: "effect", trackId: track.id, kind: "effect", label: "数据", startUs: 0, durationUs: 2_000_000,
-      locked: false, effectId: "number-pop", text: "42%", color: "#ffffff", accentColor: "#ff0000",
+      id: "composition", trackId: track.id, kind: "composition", label: "数据", startUs: 0, durationUs: 2_000_000,
+      locked: false, compositionId: "number-pop", text: "42%", color: "#ffffff", accentColor: "#ff0000",
       colorRole: "data", fontSize: 72, speed: 1, transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }
     });
-    useEditorStore.setState({ ...state, project, selectedClipId: "effect", selectedClipIds: ["effect"] });
+    useEditorStore.setState({ ...state, project, selectedClipId: "composition", selectedClipIds: ["composition"] });
     render(<InspectorPanel />);
 
     expect(screen.getByText("跟随主题")).toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("combobox", { name: "动效颜色来源" }), { key: "Enter" });
     fireEvent.click(screen.getByRole("option", { name: "单独设置" }));
 
-    const effect = useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "effect");
+    const effect = useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "composition");
     expect(effect).toMatchObject({ colorRole: "custom", color: "#121212", accentColor: "#0099cc" });
     expect(screen.getByLabelText("文字颜色")).toHaveValue("#121212");
     expect(screen.getByLabelText("强调色")).toHaveValue("#0099cc");
 
     useEditorStore.getState().updateMotionTheme({ colors: { text: "#eeeeee", data: "#112233" } });
-    expect(useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "effect")).toMatchObject({
+    expect(useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "composition")).toMatchObject({
       colorRole: "custom", color: "#121212", accentColor: "#0099cc"
     });
   });
@@ -48,19 +73,19 @@ describe("InspectorPanel generated metadata", () => {
     const state = useEditorStore.getState();
     const project = createEmptyProject();
     project.motionTheme.colors.surface = "#eef0f2";
-    const track = project.tracks.find((candidate) => candidate.kind === "effect")!;
+    const track = project.tracks.find((candidate) => candidate.kind === "composition")!;
     track.clips.push({
-      id: "effect", trackId: track.id, kind: "effect", label: "观点", startUs: 0, durationUs: 2_000_000,
-      locked: false, effectId: "title-highlight", text: "核心观点", color: "#ffffff", accentColor: "#ffb84d",
+      id: "composition", trackId: track.id, kind: "composition", label: "观点", startUs: 0, durationUs: 2_000_000,
+      locked: false, compositionId: "title-highlight", text: "核心观点", color: "#ffffff", accentColor: "#ffb84d",
       colorRole: "opinion", fontSize: 56, speed: 1, transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 }
     });
-    useEditorStore.setState({ ...state, project, selectedClipId: "effect", selectedClipIds: ["effect"] });
+    useEditorStore.setState({ ...state, project, selectedClipId: "composition", selectedClipIds: ["composition"] });
     render(<InspectorPanel />);
 
     const background = screen.getByLabelText("背景颜色 · 跟随主题");
     expect(background).toHaveValue("#eef0f2");
     fireEvent.change(background, { target: { value: "#223344" } });
-    expect(useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "effect")).toMatchObject({ backdrop: { color: "#223344" } });
+    expect(useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "composition")).toMatchObject({ backdrop: { color: "#223344" } });
 
     fireEvent.click(screen.getByRole("button", { name: "恢复跟随主题底色" }));
     expect(screen.getByLabelText("背景颜色 · 跟随主题")).toHaveValue("#eef0f2");
@@ -77,17 +102,48 @@ describe("InspectorPanel generated metadata", () => {
   it("edits an independent scene background clip", () => {
     const state = useEditorStore.getState();
     const project = createEmptyProject();
-    project.tracks.find((track) => track.kind === "scene")!.clips.push({
-      id: "scene", trackId: "scene-main", kind: "scene", label: "深色网格", startUs: 0, durationUs: 3_000_000,
-      locked: false, effectId: "scene-dark-grid", opacity: 1,
+    const track = project.tracks.find((track) => track.kind === "composition")!;
+    track.clips.push(sceneBackgroundComposition({
+      id: "scene", trackId: track.id, kind: "scene", label: "深色网格", startUs: 0, durationUs: 3_000_000,
+      locked: false, compositionId: "scene-dark-grid", opacity: 1,
       background: { preset: "dark-grid", primaryColor: "#15191f", secondaryColor: "#29313b", borderColor: "#47d7ac", intensity: 0.72 }
-    });
+    }));
     useEditorStore.setState({ ...state, project, selectedClipId: "scene", selectedClipIds: ["scene"] });
     render(<InspectorPanel />);
 
-    expect(screen.getByText("整画布场景背景 · 视频下层")).toBeInTheDocument();
+    expect(screen.getByText("背景动效 · 视频下层")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("spinbutton", { name: "动效层级" }), { target: { value: "250" } });
+    expect(useEditorStore.getState().project.tracks.find((candidate) => candidate.id === track.id)!.clips[0]).toMatchObject({ zIndex: 250 });
     fireEvent.change(screen.getByRole("slider", { name: "透明度" }), { target: { value: "0.55" } });
-    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "scene")!.clips[0]).toMatchObject({ opacity: 0.55 });
+    expect(useEditorStore.getState().project.tracks.find((candidate) => candidate.id === track.id)!.clips[0]).toMatchObject({ transform: { opacity: 0.55 } });
+  });
+
+  it("edits video scale with undo and redo while preserving source timing", () => {
+    useEditorStore.setState({ project: createEmptyProject(), playheadUs: 0, selectedClipId: null, selectedClipIds: [], past: [], future: [] });
+    useEditorStore.getState().addVideo({ id: "portrait", name: "portrait.mp4", kind: "video", durationUs: 8_000_000 });
+    const id = useEditorStore.getState().selectedClipId!;
+    useEditorStore.getState().updateVideo(id, { fit: "cover", sourceInUs: 1_000_000, playbackRate: 1.25, durationUs: 4_000_000 });
+    render(<InspectorPanel />);
+    fireEvent.change(screen.getByRole("slider", { name: "缩放" }), { target: { value: "0.6" } });
+    const current = () => useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === id);
+    expect(current()).toMatchObject({ fit: "cover", transform: { scale: 0.6 }, sourceInUs: 1_000_000, playbackRate: 1.25, durationUs: 4_000_000 });
+    useEditorStore.getState().undo();
+    expect(current()).toMatchObject({ fit: "cover", transform: { scale: 1 } });
+    useEditorStore.getState().redo();
+    expect(current()).toMatchObject({ fit: "cover", transform: { scale: 0.6 } });
+  });
+
+  it("edits an active motion cue target and keeps existing transform keyframes", () => {
+    useEditorStore.setState({ project: createEmptyProject(), playheadUs: 0, selectedClipId: null, selectedClipIds: [], past: [], future: [] });
+    useEditorStore.getState().addVideo({ id: "video", name: "video.mp4", kind: "video", durationUs: 8_000_000 });
+    const id = useEditorStore.getState().selectedClipId!;
+    useEditorStore.getState().updateVideo(id, { transformKeyframes: [{ offsetUs: 0, x: 50, y: 50, scale: 1, easing: "linear" }] });
+    useEditorStore.getState().addVideoPresentationCue(id, "picture-in-picture-top-right", 1_000_000);
+    useEditorStore.getState().setPlayhead(1_000_000);
+    render(<InspectorPanel />);
+    fireEvent.change(screen.getByRole("slider", { name: "缩放" }), { target: { value: "0.5" } });
+    expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === id))
+      .toMatchObject({ transformKeyframes: [{ offsetUs: 0, scale: 1 }], presentationCues: [{ fit: "cover", transform: { x: 82, y: 20, scale: 0.5 } }] });
   });
 
   it("adds a timed presenter motion cue at the playhead with one click", () => {
@@ -113,7 +169,7 @@ describe("InspectorPanel generated metadata", () => {
     expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "video-clip")).toMatchObject({ presentationCues: [{ transitionDurationUs: 1_400_000 }] });
   });
 
-  it("applies the momentum zoom transition from the video inspector", () => {
+  it("applies the standard fade transition from the video inspector", () => {
     const state = useEditorStore.getState();
     const project = createEmptyProject();
     project.assets.push({ id: "video", name: "cut.mp4", kind: "video", durationUs: 10_000_000 });
@@ -122,17 +178,18 @@ describe("InspectorPanel generated metadata", () => {
     render(<InspectorPanel />);
 
     fireEvent.keyDown(screen.getByRole("combobox", { name: "片段转场" }), { key: "Enter" });
-    fireEvent.click(screen.getByRole("option", { name: "动势缩放" }));
+    expect(screen.queryByRole("option", { name: "动势缩放" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "淡入" }));
     fireEvent.change(screen.getByRole("spinbutton", { name: "转场时长" }), { target: { value: "0.45" } });
 
     expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === "video-clip")).toMatchObject({
-      transition: { preset: "momentum-zoom", durationUs: 450_000 }
+      transition: { preset: "fade", durationUs: 450_000 }
     });
     expect(useEditorStore.getState().previewRequest).toMatchObject({ startUs: 2_550_000, endUs: 3_450_000 });
-    expect(screen.queryByRole("combobox", { name: "转场曲线" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "转场曲线" })).toBeInTheDocument();
   });
 
-  it("applies the momentum zoom transition from the image inspector", () => {
+  it("applies the standard fade transition from the image inspector", () => {
     const state = useEditorStore.getState();
     const project = createEmptyProject();
     const track = project.tracks.find((candidate) => candidate.kind === "image")!;
@@ -144,16 +201,17 @@ describe("InspectorPanel generated metadata", () => {
     render(<InspectorPanel />);
 
     fireEvent.keyDown(screen.getByRole("combobox", { name: "片段转场" }), { key: "Enter" });
-    fireEvent.click(screen.getByRole("option", { name: "动势缩放" }));
+    expect(screen.queryByRole("option", { name: "动势缩放" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "淡入" }));
     fireEvent.change(screen.getByRole("spinbutton", { name: "转场时长" }), { target: { value: "0.4" } });
 
     expect(useEditorStore.getState().project.tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "image-clip")).toMatchObject({
-      transition: { preset: "momentum-zoom", durationUs: 400_000 }
+      transition: { preset: "fade", durationUs: 400_000 }
     });
     expect(useEditorStore.getState().previewRequest).toMatchObject({ startUs: 1_600_000, endUs: 2_400_000 });
   });
 
-  it("applies the momentum zoom transition to every cut in a multi-video selection", () => {
+  it("applies the standard fade transition to every cut in a multi-video selection", () => {
     const state = useEditorStore.getState();
     const project = createEmptyProject();
     project.assets.push({ id: "video", name: "cut.mp4", kind: "video", durationUs: 10_000_000 });
@@ -175,7 +233,7 @@ describe("InspectorPanel generated metadata", () => {
 
     const videos = useEditorStore.getState().project.tracks.find((candidate) => candidate.id === track.id)!.clips as VideoClip[];
     expect(videos[0].transition).toBeUndefined();
-    expect(videos.slice(1).every((video) => video.transition?.preset === "momentum-zoom" && video.transition.durationUs === 450_000)).toBe(true);
+    expect(videos.slice(1).every((video) => video.transition?.preset === "fade" && video.transition.durationUs === 450_000)).toBe(true);
     expect(useEditorStore.getState().past).toHaveLength(1);
     expect(useEditorStore.getState().previewRequest).toMatchObject({ startUs: 1_550_000, endUs: 2_450_000 });
   });

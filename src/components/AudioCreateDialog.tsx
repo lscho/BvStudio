@@ -26,13 +26,14 @@ export interface SpeechSegmentInput {
 interface Props {
   open: boolean;
   defaultText: string;
+  targetLabel?: string;
   speechSegments?: SpeechSegmentInput[];
   cloudSpeech: CloudSpeechConfig;
   onOpenChange: (open: boolean) => void;
   onCreated: (source: CreatedAudioSource) => Promise<void>;
 }
 
-export function AudioCreateDialog({ open, defaultText, speechSegments = [], cloudSpeech, onOpenChange, onCreated }: Props) {
+export function AudioCreateDialog({ open, defaultText, targetLabel, speechSegments = [], cloudSpeech, onOpenChange, onCreated }: Props) {
   const [text, setText] = useState(defaultText);
   const [voice, setVoice] = useState(cloudSpeech.ttsVoice);
   const [style, setStyle] = useState(cloudSpeech.ttsStyle);
@@ -148,7 +149,7 @@ export function AudioCreateDialog({ open, defaultText, speechSegments = [], clou
         <Dialog.Content className="dialog-content audio-dialog" aria-describedby="audio-description">
           <Dialog.Close className="icon-button dialog-close" aria-label="关闭" disabled={recording || busy}><X size={18} /></Dialog.Close>
           <Dialog.Title>配音与录音</Dialog.Title>
-          <Dialog.Description id="audio-description">创建的人声会加入当前播放头。</Dialog.Description>
+          <Dialog.Description id="audio-description">{targetLabel ?? "创建的人声会加入当前播放头。"}</Dialog.Description>
           <Tabs.Root defaultValue="tts" className="audio-tabs">
             <Tabs.List aria-label="音频创建方式"><Tabs.Trigger value="tts"><Volume2 size={15} />云端配音</Tabs.Trigger><Tabs.Trigger value="record"><Mic size={15} />麦克风</Tabs.Trigger></Tabs.List>
             <Tabs.Content value="tts" className="audio-tab-content">

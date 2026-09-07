@@ -1,17 +1,26 @@
 import { CircleUserRound, Clock3, Columns2, DiamondPlus, Expand, Focus, PictureInPicture2, ScanSearch, Search, SlidersHorizontal, SunMedium, Trash2, ZoomIn } from "lucide-react";
 import { useState } from "react";
 import { Select } from "@/components/Select";
+import { CompositionAssetSlots, CompositionInspector } from "@/components/CompositionInspector";
+import { CompositionGroupInspector, CompositionTiming } from "@/components/CompositionTiming";
+import { compositionBindingIssues, compositionLayer, compositionSlots, mediaComposition } from "@/domain/compositions";
+import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
+import { normalizeVideoMask } from "@/domain/videoFrame";
 import { EASING_LABELS, EASING_NAMES } from "@/domain/easing";
-import { effectById, type ChartSpec, type EffectParamValue } from "@/domain/effects";
+import { compositionById, type ChartSpec, type CompositionParamValue } from "@/domain/effects";
 import { effectBackdropUsesTheme, effectColorRolePatch, MOTION_COLOR_ROLE_OPTIONS, resolveEffectAppearance, resolveEffectBackdropColor } from "@/domain/motionTheme";
-import type { AudioClip, EffectClip, GeneratedBlock, ImageClip, MotionColorRole, MotionTheme, SceneClip, SubtitleClip, TransformProps, VideoClip, VideoTransition, VideoTransitionPreset, VisualTransformKeyframe } from "@/domain/project";
+import type { AudioClip, CompositionClip, GeneratedBlock, ImageClip, MotionColorRole, MotionTheme, SceneClip, SubtitleClip, TransformProps, VideoClip, VideoTransition, VideoTransitionPreset, VisualTransformKeyframe } from "@/domain/project";
 import { selectedClip, useEditorStore } from "@/stores/editorStore";
 import { upsertVisualKeyframe, visualTransformAt } from "@/domain/transforms";
 import { activeVideoPresentationCue, DEFAULT_EFFECT_BACKDROP, selectedVisualTransitionCuts, VIDEO_MOTION_PRESETS, VIDEO_TRANSITION_OPTIONS, videoMotionPresetUsesFocusPoint, videoPresentationAt, videoTransition, visualTransition, type VideoMotionPresetId, type VisualTransitionClip } from "@/domain/videoPresentation";
 import { subtitleStyle } from "@/domain/videoDecorations";
-import { effectControlsFor } from "@/effects/registry";
+import { effectControlsFor } from "@/compositions/registry";
 
 const EASING_OPTIONS = EASING_NAMES.map((name) => ({ value: name, label: EASING_LABELS[name] }));
+
+function transitionOptions(current: VideoTransitionPreset) {
+  return VIDEO_TRANSITION_OPTIONS.filter((option) => option.value !== "momentum-zoom" || current === "momentum-zoom");
+}
 
 const ENTRANCE_OPTIONS = [
   { value: "pop", label: "弹出" },
@@ -49,18 +58,21 @@ export function InspectorPanel() {
   const project = useEditorStore((state) => state.project);
   const selectedClipId = useEditorStore((state) => state.selectedClipId);
   const selectedClipIds = useEditorStore((state) => state.selectedClipIds);
-  const updateEffect = useEditorStore((state) => state.updateEffect);
+  const updateComposition = useEditorStore((state) => state.updateComposition);
   const updateScene = useEditorStore((state) => state.updateScene);
   const updateImage = useEditorStore((state) => state.updateImage);
   const updateAudio = useEditorStore((state) => state.updateAudio);
   const updateGenerated = useEditorStore((state) => state.updateGenerated);
   const updateSubtitle = useEditorStore((state) => state.updateSubtitle);
   const clip = selectedClip(project, selectedClipId);
+  const groupId = clip?.kind === "composition" ? clip.sceneGroupId : undefined;
+  const group = project.tracks.flatMap(track => track.clips).filter((item): item is CompositionClip => item.kind === "composition" && Boolean(groupId) && item.sceneGroupId === groupId);
+  const showGroup = group.length > 1 && group.length === selectedClipIds.length && group.every(item => selectedClipIds.includes(item.id));
   const selectedMaterials = project.tracks.flatMap((track) => track.clips).filter((candidate): candidate is VisualTransitionClip => (candidate.kind === "video" || candidate.kind === "image") && selectedClipIds.includes(candidate.id));
   const showTransitionBatch = (clip?.kind === "video" || clip?.kind === "image") && selectedMaterials.length > 1;
 
-  function patchEffect(patch: Partial<EffectClip>) {
-    if (clip?.kind === "effect") updateEffect(clip.id, patch);
+  function patchEffect(patch: Partial<CompositionClip>) {
+    if (clip?.kind === "composition") updateComposition(clip.id, patch);
   }
   function patchScene(patch: Partial<SceneClip>) {
     if (clip?.kind === "scene") updateScene(clip.id, patch);
@@ -83,7 +95,7 @@ export function InspectorPanel() {
       <header><SlidersHorizontal size={16} /><strong>属性</strong></header>
       {!clip && <div className="inspector-empty"><SlidersHorizontal size={22} /><p>选择时间线或画布中的内容</p></div>}
       {clip?.kind === "scene" && <SceneInspector clip={clip} onPatch={patchScene} />}
-      {clip?.kind === "effect" && <EffectInspectorAtPlayhead clip={clip} onPatch={patchEffect} />}
+      {showGroup && groupId ? <CompositionGroupInspector groupId={groupId} clips={group} /> : clip?.kind === "composition" && <EffectInspectorAtPlayhead clip={clip} onPatch={patchEffect} />}
       {clip?.kind === "generated" && <GeneratedInspector clip={clip} onPatch={patchGenerated} />}
       {showTransitionBatch && <VisualTransitionBatchInspector key={selectedClipIds.join(":")} selectedCount={selectedMaterials.length} />}
       {!showTransitionBatch && clip?.kind === "video" && <VideoInspectorAtPlayhead clip={clip} />}
@@ -99,7 +111,7 @@ function VisualTransitionBatchInspector({ selectedCount }: { selectedCount: numb
   const selectedClipIds = useEditorStore((state) => state.selectedClipIds);
   const applyTransition = useEditorStore((state) => state.applyTransitionToSelectedMaterials);
   const requestPreview = useEditorStore((state) => state.requestPreview);
-  const [preset, setPreset] = useState<VideoTransitionPreset>("momentum-zoom");
+  const [preset, setPreset] = useState<VideoTransitionPreset>("fade");
   const [durationUs, setDurationUs] = useState(500_000);
   const cuts = selectedVisualTransitionCuts(project, selectedClipIds);
   const maximumDurationUs = cuts.length
@@ -113,7 +125,7 @@ function VisualTransitionBatchInspector({ selectedCount }: { selectedCount: numb
   return <div className="inspector-content">
     <div className="selection-heading"><span className="type-dot video" /><div><strong>{selectedCount} 个视觉素材</strong><small>{cuts.length} 个相邻切点</small></div></div>
     <section className="video-transition-batch">
-      <label><span>批量转场</span><Select label="批量转场" value={preset} onChange={(value) => setPreset(value as VideoTransitionPreset)} options={VIDEO_TRANSITION_OPTIONS} /></label>
+      <label><span>批量转场</span><Select label="批量转场" value={preset} onChange={(value) => setPreset(value as VideoTransitionPreset)} options={VIDEO_TRANSITION_OPTIONS.filter((option) => option.value !== "momentum-zoom")} /></label>
       {preset !== "none" && <NumberField label="转场时长" value={durationUs / 1_000_000} min={0.1} max={maximumDurationUs / 1_000_000} step={0.05} suffix="s" onChange={(value) => setDurationUs(Math.round(value * 1_000_000))} />}
       <button className="button primary" type="button" disabled={!cuts.length} onClick={apply}>{preset === "none" ? "清除选中切点转场" : `应用到 ${cuts.length} 个切点`}</button>
       {!cuts.length && <p className="video-transition-empty">选中的视频或贴图之间没有可用的相邻切点</p>}
@@ -131,10 +143,10 @@ function ImageInspector({ clip, onPatch }: { clip: ImageClip; onPatch: (patch: P
   return <div className="inspector-content">
     <div className="selection-heading"><span className="type-dot image" /><div><strong>{clip.label}</strong><small>图片贴图</small></div></div>
     <div className="two-column"><NumberField label="开始时间" value={clip.startUs / 1_000_000} min={0} step={0.05} suffix="s" onChange={(value) => onPatch({ startUs: Math.round(value * 1_000_000) })} /><NumberField label="持续时间" value={clip.durationUs / 1_000_000} min={0.1} step={0.05} suffix="s" onChange={(value) => onPatch({ durationUs: Math.round(value * 1_000_000) })} /></div>
-    <label title="动势缩放会在相邻视觉素材切点两侧保持连续缩放速度"><span>片段转场</span><Select label="片段转场" value={transition.preset} onChange={(value) => {
+    <label><span>片段转场</span><Select label="片段转场" value={transition.preset} onChange={(value) => {
       onPatch({ transition: { ...transition, preset: value as VideoTransitionPreset } });
       previewTransition(transition.durationUs);
-    }} options={VIDEO_TRANSITION_OPTIONS} /></label>
+    }} options={transitionOptions(transition.preset)} /></label>
     {transition.preset !== "none" && <div className="two-column"><NumberField label="转场时长" value={transition.durationUs / 1_000_000} min={0.1} max={clip.durationUs / 1_000_000} step={0.05} suffix="s" onChange={(value) => {
       const durationUs = Math.round(value * 1_000_000);
       onPatch({ transition: { ...transition, durationUs } });
@@ -167,18 +179,27 @@ function SubtitleInspector({ clip, onPatch }: { clip: SubtitleClip; onPatch: (pa
   </div>;
 }
 
-function EffectInspectorAtPlayhead({ clip, onPatch }: { clip: EffectClip; onPatch: (patch: Partial<EffectClip>) => void }) {
+function EffectInspectorAtPlayhead({ clip, onPatch }: { clip: CompositionClip; onPatch: (patch: Partial<CompositionClip>) => void }) {
   const playheadUs = useEditorStore((state) => state.playheadUs);
   const setPlayhead = useEditorStore((state) => state.setPlayhead);
   const motionTheme = useEditorStore((state) => state.project.motionTheme);
-  return <EffectInspector clip={clip} motionTheme={motionTheme} playheadUs={playheadUs} onSeek={setPlayhead} onPatch={onPatch} />;
+  const trackLocked = useEditorStore((state) => state.project.tracks.find(track => track.id === clip.trackId)?.locked);
+  if (clip.recipe?.sceneBackground) return <SceneInspector timing={<><CompositionTiming clip={clip} locked={clip.locked || Boolean(trackLocked)} /><fieldset className="video-framing-controls" disabled={clip.locked || Boolean(trackLocked)}><NumberField label="动效层级" value={compositionLayer(clip)} min={0} max={1000} step={1} suffix="" onChange={(zIndex) => onPatch({ zIndex })} /></fieldset></>} clip={{ ...clip, kind: "scene", background: clip.recipe.sceneBackground, opacity: clip.transform.opacity }} onPatch={(patch) => onPatch({
+    ...(patch.background ? { recipe: { ...clip.recipe!, sceneBackground: patch.background } } : {}),
+    ...(patch.opacity !== undefined ? { transform: { ...clip.transform, opacity: patch.opacity } } : {}),
+    ...(patch.startUs !== undefined ? { startUs: patch.startUs } : {}),
+    ...(patch.durationUs !== undefined ? { durationUs: patch.durationUs } : {}),
+    ...(patch.dimAtUs !== undefined ? { dimAtUs: patch.dimAtUs } : {}),
+    ...(patch.lintOff ? { lintOff: patch.lintOff } : {})
+  })} />;
+  return mediaComposition(clip.compositionId) ? <CompositionInspector clip={clip} /> : <EffectInspector clip={clip} motionTheme={motionTheme} playheadUs={playheadUs} onSeek={setPlayhead} onPatch={onPatch} />;
 }
 
-function SceneInspector({ clip, onPatch }: { clip: SceneClip; onPatch: (patch: Partial<SceneClip>) => void }) {
+function SceneInspector({ clip, onPatch, timing }: { clip: SceneClip; onPatch: (patch: Partial<SceneClip>) => void; timing?: React.ReactNode }) {
   const patchBackground = (patch: Partial<SceneClip["background"]>) => onPatch({ background: { ...clip.background, ...patch } });
   return <div className="inspector-content">
-    <div className="selection-heading"><span className="type-dot scene" /><div><strong>{clip.label}</strong><small>整画布场景背景 · 视频下层</small></div></div>
-    <div className="two-column"><NumberField label="开始时间" value={clip.startUs / 1_000_000} min={0} step={0.1} suffix="s" onChange={(value) => onPatch({ startUs: Math.round(value * 1_000_000) })} /><NumberField label="持续时间" value={clip.durationUs / 1_000_000} min={0.1} step={0.1} suffix="s" onChange={(value) => onPatch({ durationUs: Math.round(value * 1_000_000) })} /></div>
+    <div className="selection-heading"><span className="type-dot composition" /><div><strong>{clip.label}</strong><small>背景动效 · 视频下层</small></div></div>
+    {timing ?? <div className="two-column"><NumberField label="开始时间" value={clip.startUs / 1_000_000} min={0} step={0.1} suffix="s" onChange={(value) => onPatch({ startUs: Math.round(value * 1_000_000) })} /><NumberField label="持续时间" value={clip.durationUs / 1_000_000} min={0.1} step={0.1} suffix="s" onChange={(value) => onPatch({ durationUs: Math.round(value * 1_000_000) })} /></div>}
     <div className="two-column"><label><span>主背景色</span><input type="color" value={clip.background.primaryColor} onChange={(event) => patchBackground({ primaryColor: event.target.value })} /></label><label><span>纹理颜色</span><input type="color" value={clip.background.secondaryColor} onChange={(event) => patchBackground({ secondaryColor: event.target.value })} /></label></div>
     <label><span>边框 / 强调色</span><input type="color" value={clip.background.borderColor} onChange={(event) => patchBackground({ borderColor: event.target.value })} /></label>
     <RangeField label="纹理强度" value={clip.background.intensity} min={0.1} max={1} step={0.05} suffix="" onChange={(intensity) => patchBackground({ intensity })} />
@@ -202,7 +223,9 @@ function keyframeTransformPatch(base: TransformProps, keyframes: readonly Visual
     : { transform, transformKeyframes: [...(keyframes ?? [])] };
 }
 
-function EffectInspector({ clip, motionTheme, playheadUs, onSeek, onPatch }: { clip: EffectClip; motionTheme: MotionTheme; playheadUs: number; onSeek: (timeUs: number) => void; onPatch: (patch: Partial<EffectClip>) => void }) {
+function EffectInspector({ clip, motionTheme, playheadUs, onSeek, onPatch }: { clip: CompositionClip; motionTheme: MotionTheme; playheadUs: number; onSeek: (timeUs: number) => void; onPatch: (patch: Partial<CompositionClip>) => void }) {
+  const assets = useEditorStore(state => state.project.assets);
+  const trackLocked = useEditorStore(state => state.project.tracks.find(track => track.id === clip.trackId)?.locked);
   const localUs = Math.max(0, Math.min(clip.durationUs, playheadUs - clip.startUs));
   const current = visualTransformAt(clip.transform, clip.transformKeyframes, localUs);
   const patchTransform = (patch: Partial<TransformProps>) => onPatch(keyframeTransformPatch(clip.transform, clip.transformKeyframes, localUs, patch));
@@ -212,10 +235,14 @@ function EffectInspector({ clip, motionTheme, playheadUs, onSeek, onPatch }: { c
   const backdropFollowsTheme = effectBackdropUsesTheme(clip.backdrop);
   const backdropColor = resolveEffectBackdropColor(clip.backdrop, motionTheme);
   const colorRole = clip.colorRole ?? "custom";
+  const slots = compositionSlots(clip.compositionId);
+  const bindingIssues = compositionBindingIssues(clip, assets);
+  const locked = clip.locked || Boolean(trackLocked);
   return <div className="inspector-content">
-    <div className="selection-heading"><span className="type-dot effect" /><div><strong>{clip.label}</strong><small>动效片段 · 视频上层</small></div></div>
-    <div className="two-column"><NumberField label="开始时间" value={clip.startUs / 1_000_000} min={0} step={0.1} suffix="s" onChange={(value) => onPatch({ startUs: Math.round(value * 1_000_000) })} /><NumberField label="持续时间" value={clip.durationUs / 1_000_000} min={0.1} step={0.1} suffix="s" onChange={(value) => onPatch({ durationUs: Math.round(value * 1_000_000) })} /></div>
-    <NumberField label="动效层级" value={clip.zIndex ?? 20} min={0} max={200} step={1} suffix="" onChange={(zIndex) => onPatch({ zIndex })} />
+    <div className="selection-heading"><span className="type-dot composition" /><div><strong>{clip.label}</strong><small>动效片段 · 视频上层</small></div></div>
+    <CompositionTiming clip={clip} locked={locked} />
+    {slots.length > 0 && <><CompositionAssetSlots clip={clip} locked={locked} />{bindingIssues.length > 0 && <p className="composition-validation" role="status">{bindingIssues[0]}</p>}</>}
+    <fieldset className="video-framing-controls" disabled={locked}><NumberField label="动效层级" value={compositionLayer(clip)} min={0} max={1000} step={1} suffix="" onChange={(zIndex) => onPatch({ zIndex })} /></fieldset>
     <label><span>颜色来源</span><Select label="动效颜色来源" value={colorRole} onChange={(value) => onPatch(effectColorRolePatch(clip, motionTheme, value as MotionColorRole))} options={MOTION_COLOR_ROLE_OPTIONS} /></label>
     <div className="effect-color-summary" aria-label="当前动效配色">
       <span><i style={{ backgroundColor: appearance.color }} />文字</span>
@@ -234,9 +261,9 @@ function EffectInspector({ clip, motionTheme, playheadUs, onSeek, onPatch }: { c
   </div>;
 }
 
-function EffectRegistryControls({ clip, onPatch }: { clip: EffectClip; onPatch: (patch: Partial<EffectClip>) => void }) {
-  const params = { ...effectById(clip.effectId).defaultParams, ...clip.params };
-  const patchParam = (field: string, value: EffectParamValue) => onPatch({ params: { ...params, [field]: value } });
+function EffectRegistryControls({ clip, onPatch }: { clip: CompositionClip; onPatch: (patch: Partial<CompositionClip>) => void }) {
+  const params = { ...compositionById(clip.compositionId).defaultParams, ...clip.params };
+  const patchParam = (field: string, value: CompositionParamValue) => onPatch({ params: { ...params, [field]: value } });
   return <>{effectControlsFor(clip).map((control) => {
     if (control.kind === "text") return <label key={control.field}><span>{control.label}</span><textarea rows={control.rows} value={clip.text} onChange={(event) => onPatch({ text: event.target.value })} /></label>;
     if (control.kind === "color") {
@@ -293,6 +320,7 @@ function ChartFields({ spec, onChange }: { spec: ChartSpec; onChange: (next: Cha
 }
 
 function VideoInspector({ clip, playheadUs, onSeek }: { clip: VideoClip; playheadUs: number; onSeek: (timeUs: number) => void }) {
+  const trackLocked = useEditorStore((state) => state.project.tracks.find((track) => track.id === clip.trackId)?.locked);
   const setFocusPickClip = useEditorStore((state) => state.setFocusPickClip);
   const requestPreview = useEditorStore((state) => state.requestPreview);
   const updateVideo = useEditorStore((state) => state.updateVideo);
@@ -303,6 +331,16 @@ function VideoInspector({ clip, playheadUs, onSeek }: { clip: VideoClip; playhea
   const presentation = videoPresentationAt(clip, localUs);
   const clipTransition = videoTransition(clip);
   const activeCue = activeVideoPresentationCue(clip, localUs);
+  const framingTransform = activeCue?.transform ?? presentation.transform;
+  const locked = clip.locked || Boolean(trackLocked);
+  const patchFraming = (patch: Pick<Partial<VideoClip>, "mask" | "fit">) => {
+    if (activeCue) updateVideoPresentationCue(clip.id, activeCue.id, patch);
+    else updateVideo(clip.id, patch);
+  };
+  const patchTransform = (patch: Partial<TransformProps>) => {
+    if (activeCue) updateVideoPresentationCue(clip.id, activeCue.id, { transform: { ...activeCue.transform, ...patch } });
+    else updateVideo(clip.id, { ...keyframeTransformPatch(clip.transform ?? presentation.transform, clip.transformKeyframes, localUs, patch), layoutPreset: "custom" });
+  };
   const transitionEnabled = Boolean(activeCue && activeCue.transitionDurationUs > 0);
   const defaultTransitionDurationUs = activeCue
     ? Math.min(650_000, Math.max(100_000, clip.durationUs - activeCue.offsetUs))
@@ -318,11 +356,23 @@ function VideoInspector({ clip, playheadUs, onSeek }: { clip: VideoClip; playhea
   };
   return <div className="inspector-content">
     <div className="selection-heading"><span className="type-dot video" /><div><strong>{clip.label}</strong><small>选择一个运镜方案即可直接应用</small></div></div>
+    <fieldset className="video-framing-controls" disabled={locked}>
+      <div className="two-column">
+        <NumberField label="取景中心 X" value={presentation.mask.focusX} min={0} max={100} step={1} suffix="%" onChange={(focusX) => patchFraming({ mask: normalizeVideoMask({ ...presentation.mask, focusX }) })} />
+        <NumberField label="取景中心 Y" value={presentation.mask.focusY} min={0} max={100} step={1} suffix="%" onChange={(focusY) => patchFraming({ mask: normalizeVideoMask({ ...presentation.mask, focusY }) })} />
+      </div>
+      <RangeField label="缩放" value={framingTransform.scale} min={0.3} max={3} step={0.01} suffix="×" onChange={(scale) => patchTransform({ scale })} />
+      <div className="two-column">
+        <NumberField label="水平位置" value={framingTransform.x} min={0} max={100} step={1} suffix="%" onChange={(x) => patchTransform({ x: Math.max(0, Math.min(100, x)) })} />
+        <NumberField label="垂直位置" value={framingTransform.y} min={0} max={100} step={1} suffix="%" onChange={(y) => patchTransform({ y: Math.max(0, Math.min(100, y)) })} />
+      </div>
+      <NumberField label="视频层级" value={normalizeLayer(clip.zIndex, DEFAULT_VIDEO_LAYER)} min={0} max={1000} step={1} suffix="" onChange={(zIndex) => updateVideo(clip.id, { zIndex })} />
+    </fieldset>
     <p className="video-cue-position"><Clock3 size={13} />将在当前时间 {formatCueTime(localUs)} 添加运镜节点</p>
-    <label title="动势缩放会在相邻片段切点两侧保持连续缩放速度"><span>片段转场</span><Select label="片段转场" value={clipTransition.preset} onChange={(value) => {
+    <label><span>片段转场</span><Select label="片段转场" value={clipTransition.preset} onChange={(value) => {
       updateVideo(clip.id, { transition: { ...clipTransition, preset: value as VideoTransitionPreset } });
       previewTransition(clipTransition.durationUs);
-    }} options={VIDEO_TRANSITION_OPTIONS} /></label>
+    }} options={transitionOptions(clipTransition.preset)} /></label>
     {clipTransition.preset !== "none" && <div className="two-column"><NumberField label="转场时长" value={clipTransition.durationUs / 1_000_000} min={0.1} max={clip.durationUs / 1_000_000} step={0.05} suffix="s" onChange={(value) => {
       const durationUs = Math.round(value * 1_000_000);
       updateVideo(clip.id, { transition: { ...clipTransition, durationUs } });
@@ -385,5 +435,5 @@ function NumberField({ label, value, min, max, step, suffix, onChange }: { label
 }
 
 function RangeField({ label, value, min, max, step = 1, suffix, onChange }: { label: string; value: number; min: number; max: number; step?: number; suffix: string; onChange: (value: number) => void }) {
-  return <label className="range-field"><span>{label}<output>{Number(value.toFixed(2))}{suffix}</output></span><input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} /></label>;
+  return <label className="range-field"><span>{label}<output>{Number(value.toFixed(2))}{suffix}</output></span><input aria-label={label} type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} /></label>;
 }

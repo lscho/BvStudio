@@ -1,4 +1,4 @@
-import { effectById, effectSelectionsForText, recommendedEffectFontSizeForId, type EffectDefinition } from "@/domain/effects";
+import { compositionById, effectSelectionsForText, recommendedEffectFontSizeForId, type CompositionDefinition } from "@/domain/effects";
 import type { GeneratedEffectLayer, GeneratedScene } from "@/domain/project";
 
 const AUTO_LAYOUT_SLOTS = {
@@ -19,7 +19,7 @@ const AUTO_LAYOUT_SLOTS = {
   ]
 } as const;
 
-export function suggestedEffectTransform(definition: EffectDefinition, occurrence = 0) {
+export function suggestedEffectTransform(definition: CompositionDefinition, occurrence = 0) {
   const slots = AUTO_LAYOUT_SLOTS[definition.recipe.layout];
   const slot = slots[occurrence % slots.length];
   const chartScale = definition.recipe.chart && definition.recipe.chart.kind !== "counter" ? Math.min(slot.scale, 0.7) : slot.scale;
@@ -45,22 +45,22 @@ export function migrateLegacyGeneratedEffectLayout(scene: GeneratedScene): Gener
   const additionalEffects = scene.additionalEffects ?? [];
   const automaticLayers = additionalEffects.filter((layer) => layer.source === "ai" || layer.source === "subtitle-match");
   if (automaticLayers.length === 0
-    || effectById(scene.effectId).kind === "scene"
+    || compositionById(scene.compositionId).kind === "scene"
     || !isLegacyCenteredTransform(scene.transform)
-    || !automaticLayers.every((layer) => effectById(layer.effectId).kind !== "scene" && isLegacyCenteredTransform(layer.transform))) return scene;
+    || !automaticLayers.every((layer) => compositionById(layer.compositionId).kind !== "scene" && isLegacyCenteredTransform(layer.transform))) return scene;
 
-  const layoutOccurrences = new Map<EffectDefinition["recipe"]["layout"], number>();
-  const nextTransform = (effectId: string) => {
-    const definition = effectById(effectId);
+  const layoutOccurrences = new Map<CompositionDefinition["recipe"]["layout"], number>();
+  const nextTransform = (compositionId: string) => {
+    const definition = compositionById(compositionId);
     const occurrence = layoutOccurrences.get(definition.recipe.layout) ?? 0;
     layoutOccurrences.set(definition.recipe.layout, occurrence + 1);
     return suggestedEffectTransform(definition, occurrence);
   };
   return {
     ...scene,
-    transform: nextTransform(scene.effectId),
+    transform: nextTransform(scene.compositionId),
     additionalEffects: additionalEffects.map((layer) => automaticLayers.includes(layer)
-      ? { ...layer, transform: nextTransform(layer.effectId) }
+      ? { ...layer, transform: nextTransform(layer.compositionId) }
       : layer)
   };
 }
@@ -68,7 +68,7 @@ export function migrateLegacyGeneratedEffectLayout(scene: GeneratedScene): Gener
 export function generatedSceneEffects(scene: GeneratedScene): GeneratedEffectLayer[] {
   const primary: GeneratedEffectLayer = {
     id: `${scene.id}:primary`,
-    effectId: scene.effectId,
+    compositionId: scene.compositionId,
     text: scene.title,
     textColor: scene.textColor,
     accentColor: scene.accentColor,
@@ -80,8 +80,8 @@ export function generatedSceneEffects(scene: GeneratedScene): GeneratedEffectLay
     zIndex: 20,
     source: "ai",
     matchQuery: `${scene.title} ${scene.narration}`.trim(),
-    recipe: scene.recipe ?? structuredClone(effectById(scene.effectId).recipe),
-    soundCues: structuredClone(effectById(scene.effectId).soundCues ?? [])
+    recipe: scene.recipe ?? structuredClone(compositionById(scene.compositionId).recipe),
+    soundCues: structuredClone(compositionById(scene.compositionId).soundCues ?? [])
   };
   return [primary, ...(scene.additionalEffects ?? [])].sort((left, right) => left.zIndex - right.zIndex);
 }
@@ -96,18 +96,18 @@ export function createGeneratedEffectLayers(
 ): GeneratedEffectLayer[] {
   const layers: GeneratedEffectLayer[] = [];
   for (const selectedId of effectIds) {
-    const selected = effectById(selectedId);
+    const selected = compositionById(selectedId);
     const templates = selected.kind === "scene" && selected.sceneLayers?.length
-      ? selected.sceneLayers.map((template) => ({ definition: effectById(template.effectId), template }))
+      ? selected.sceneLayers.map((template) => ({ definition: compositionById(template.compositionId), template }))
       : [{ definition: selected, template: undefined }];
     for (const [index, { definition, template }] of templates.entries()) {
       const startOffsetUs = Math.round(durationUs * (template?.startRatio ?? 0));
       const availableUs = Math.max(100_000, durationUs - startOffsetUs);
-      const sameLayoutCount = layers.filter((layer) => effectById(layer.effectId).recipe.layout === definition.recipe.layout).length;
+      const sameLayoutCount = layers.filter((layer) => compositionById(layer.compositionId).recipe.layout === definition.recipe.layout).length;
       const suggestedTransform = suggestedEffectTransform(definition, sameLayoutCount);
       layers.push({
         id: crypto.randomUUID(),
-        effectId: definition.id,
+        compositionId: definition.id,
         text: template?.text ?? (layers.length === 0 && index === 0 ? text : definition.defaultText),
         textColor: definition.defaultColor,
         accentColor: selected.kind === "scene" ? selected.defaultAccentColor : accentColor || definition.defaultAccentColor,
@@ -135,5 +135,5 @@ export function createGeneratedEffectLayers(
 
 /** Stable local contract for matching timed subtitle text to a scene or multiple effect layers. */
 export function effectIdsForSubtitle(text: string, limit = 3): string[] {
-  return effectSelectionsForText(text, limit).map((effect: EffectDefinition) => effect.id);
+  return effectSelectionsForText(text, limit).map((effect: CompositionDefinition) => effect.id);
 }

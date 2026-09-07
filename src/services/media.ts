@@ -1,11 +1,12 @@
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { isDesktopRuntime } from "@/services/runtime";
-import type { EffectParams, EffectRecipe } from "@/domain/effects";
+import type { CompositionParams, EffectRecipe } from "@/domain/effects";
 import type { ChapterMarker, ChapterProgressPosition, ChapterProgressStyle, EffectBackdrop, MotionTheme, SubtitleStylePreset, VideoFocusEffect, VideoMask, VideoTransition, VisualTransformKeyframe } from "@/domain/project";
 import type { CameraMotion } from "@/domain/camera";
 import { drawChartFrame, hexAlpha, measureChartBox } from "@/domain/chartEffects";
 import { highlightedTextParts } from "@/domain/videoDecorations";
+import { DEFAULT_VIDEO_MASK, videoFrameSize } from "@/domain/videoFrame";
 
 export interface MediaToolStatus {
   ffmpegPath?: string;
@@ -94,14 +95,18 @@ interface RenderOverlayBase {
 }
 
 export interface RenderTextOverlay extends RenderOverlayBase {
-  kind: "text";
-  effectId?: string;
-  renderer?: "legacy" | "react";
+  kind: "text" | "composition";
+  compositionId?: string;
+  renderer?: "legacy" | "react" | "three" | "canvas";
+  compositionImages?: { id: string; path: string; kind?: "image" | "video" }[];
+  sourceOffsetUs?: number;
+  animationDurationUs?: number;
+  sequenceId?: string;
   text: string;
   color: string;
   fontSize: number;
   accentColor: string;
-  params?: EffectParams;
+  params?: CompositionParams;
   /** Static baked appearance; absent when the overlay ships a frame sequence instead. */
   imageDataBase64?: string;
   /**
@@ -573,7 +578,8 @@ async function rasterizeStaticOverlay(overlay: RenderTextOverlay, canvasWidth: n
   return context.canvas.toDataURL("image/png").split(",", 2)[1];
 }
 
-function rasterizeFocusOverlay(overlay: RenderFocusOverlay, width: number, height: number): string {
+function rasterizeFocusOverlay(overlay: RenderFocusOverlay, canvasWidth: number, canvasHeight: number): string {
+  const { width, height } = videoFrameSize(overlay.mask ?? DEFAULT_VIDEO_MASK, canvasWidth, canvasHeight);
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;

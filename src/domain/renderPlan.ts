@@ -1,10 +1,14 @@
-import { contentEndUs, type AudioClip, type EditorProject, type EffectBackdrop, type EffectClip, type GeneratedBlock, type ImageClip, type SceneClip, type VideoClip, type VideoTransition } from "@/domain/project";
+import { contentEndUs, type AudioClip, type EditorProject, type EffectBackdrop, type CompositionClip, type GeneratedBlock, type ImageClip, type SceneClip, type VideoClip, type VideoTransition } from "@/domain/project";
+import { compositionAssetIds, compositionBindingIssues, compositionLayer, mediaComposition } from "@/domain/compositions";
 import type { ExportVideoFormat, RenderAudioClip, RenderFocusOverlay, RenderOverlay, RenderPlan, RenderSegment, VideoEncoder } from "@/services/media";
-import { clockControlledRecipe, effectById, effectiveEffectFontSize } from "@/domain/effects";
+import { clockControlledRecipe, compositionById, effectiveEffectFontSize } from "@/domain/effects";
 import { DEFAULT_TRANSFORM } from "@/domain/transforms";
 import { momentumExitTransition, videoFocus, videoMask, videoPresentationAt, videoTransition, visualTransition, type VisualTransitionClip } from "@/domain/videoPresentation";
 import { displaySubtitleText, subtitleStyle } from "@/domain/videoDecorations";
 import { resolveEffectAppearance } from "@/domain/motionTheme";
+import { focusCardSourceRect } from "@/domain/focusCard";
+import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
+import { videoFrameMask, videoFrameSize } from "@/domain/videoFrame";
 
 function activeAt<T extends { startUs: number; durationUs: number }>(clips: T[], timeUs: number): T | undefined {
   return clips.find((clip) => timeUs >= clip.startUs && timeUs < clip.startUs + clip.durationUs);
@@ -52,6 +56,7 @@ function focusOverlay(
   startOffsetUs: number,
   durationUs: number,
   zIndex: number,
+  frame: VideoFrameContext,
   transition?: VideoTransition,
   exitTransition?: VideoTransition
 ): RenderFocusOverlay {
@@ -68,7 +73,7 @@ function focusOverlay(
     speed: 1,
     zIndex,
     transformKeyframes: transformKeyframesForRange(clip, startOffsetUs, startOffsetUs + durationUs),
-    mask: { ...presentation.mask, borderWidth: 0, focusX: 50, focusY: 50 },
+    mask: { ...videoFrameMask(presentation.mask, frame.canvasWidth, frame.canvasHeight, frame.sourceWidth, frame.sourceHeight), borderWidth: 0, focusX: 50, focusY: 50 },
     focus: { ...focus, startOffsetUs: 0 },
     transition,
     exitTransition,
@@ -76,19 +81,35 @@ function focusOverlay(
   };
 }
 
-function dynamicVideoOverlays(clip: VideoClip, path: string, exitTransition?: VideoTransition): RenderOverlay[] {
+interface TimelineRange {
+  startUs: number;
+  durationUs: number;
+}
+
+interface VideoFrameContext {
+  canvasWidth: number;
+  canvasHeight: number;
+  sourceWidth?: number;
+  sourceHeight?: number;
+}
+
+function dynamicVideoOverlays(clip: VideoClip, path: string, frame: VideoFrameContext, exitTransition?: VideoTransition, excludedRanges: TimelineRange[] = []): RenderOverlay[] {
   const transition = videoTransition(clip);
   const momentumEntering = transition.preset === "momentum-zoom";
   const momentumExiting = exitTransition?.preset === "momentum-zoom";
-  if (!clip.presentationCues?.length && !momentumEntering && !momentumExiting) {
+  if (!clip.presentationCues?.length && !momentumEntering && !momentumExiting && excludedRanges.length === 0) {
     const transform = clip.transform ?? DEFAULT_TRANSFORM;
     const focus = videoFocus(clip);
-    const videoOverlay = { kind: "video" as const, startUs: clip.startUs, durationUs: clip.durationUs, path, sourceInUs: clip.sourceInUs, playbackRate: clip.playbackRate, fit: clip.fit, loop: false, camera: clip.camera, cameraOffsetUs: clip.cameraOffsetUs ?? 0, cameraDurationUs: clip.cameraDurationUs ?? clip.durationUs, x: transform.x, y: transform.y, opacity: transform.opacity, scale: transform.scale, rotation: transform.rotation, speed: 1, zIndex: clip.zIndex ?? 0, transformKeyframes: clip.transformKeyframes, mask: videoMask(clip), transition: videoTransition(clip), focus, recipe: frameRecipe };
+    const videoOverlay = { kind: "video" as const, startUs: clip.startUs, durationUs: clip.durationUs, path, sourceInUs: clip.sourceInUs, playbackRate: clip.playbackRate, fit: clip.fit, loop: false, camera: clip.camera, cameraOffsetUs: clip.cameraOffsetUs ?? 0, cameraDurationUs: clip.cameraDurationUs ?? clip.durationUs, x: transform.x, y: transform.y, opacity: transform.opacity, scale: transform.scale, rotation: transform.rotation, speed: 1, zIndex: normalizeLayer(clip.zIndex, DEFAULT_VIDEO_LAYER), transformKeyframes: clip.transformKeyframes, mask: videoFrameMask(videoMask(clip), frame.canvasWidth, frame.canvasHeight, frame.sourceWidth, frame.sourceHeight), transition: videoTransition(clip), focus, recipe: frameRecipe };
     if (!focus.enabled) return [videoOverlay];
     const durationUs = Math.min(focus.durationUs, Math.max(100_000, clip.durationUs - focus.startOffsetUs));
-    return [videoOverlay, focusOverlay(clip, focus, focus.startOffsetUs, durationUs, (clip.zIndex ?? 0) + 1)];
+    return [videoOverlay, focusOverlay(clip, focus, focus.startOffsetUs, durationUs, (normalizeLayer(clip.zIndex, DEFAULT_VIDEO_LAYER)) + 1, frame)];
   }
   const points = new Set<number>([0, clip.durationUs]);
+  for (const range of excludedRanges) {
+    points.add(Math.max(0, Math.min(clip.durationUs, range.startUs - clip.startUs)));
+    points.add(Math.max(0, Math.min(clip.durationUs, range.startUs + range.durationUs - clip.startUs)));
+  }
   if (momentumEntering) points.add(Math.min(clip.durationUs, transition.durationUs));
   if (momentumExiting) points.add(Math.max(0, clip.durationUs - exitTransition.durationUs));
   for (const frame of clip.transformKeyframes ?? []) points.add(Math.max(0, Math.min(clip.durationUs, frame.offsetUs)));
@@ -110,6 +131,8 @@ function dynamicVideoOverlays(clip: VideoClip, path: string, exitTransition?: Vi
     const endOffsetUs = ranges[index + 1];
     const durationUs = endOffsetUs - startOffsetUs;
     if (durationUs <= 0) return [];
+    const absoluteStartUs = clip.startUs + startOffsetUs;
+    if (excludedRanges.some((range) => absoluteStartUs >= range.startUs && absoluteStartUs < range.startUs + range.durationUs)) return [];
     const start = videoPresentationAt(clip, startOffsetUs);
     const transformKeyframes = transformKeyframesForRange(clip, startOffsetUs, endOffsetUs);
     const focusStartUs = Math.max(startOffsetUs, start.focus.startOffsetUs);
@@ -139,9 +162,9 @@ function dynamicVideoOverlays(clip: VideoClip, path: string, exitTransition?: Vi
       scale: start.transform.scale,
       rotation: start.transform.rotation,
       speed: 1,
-      zIndex: clip.zIndex ?? 0,
+      zIndex: normalizeLayer(clip.zIndex, DEFAULT_VIDEO_LAYER),
       transformKeyframes,
-      mask: start.mask,
+      mask: videoFrameMask(start.mask, frame.canvasWidth, frame.canvasHeight, frame.sourceWidth, frame.sourceHeight),
       transition: startOffsetUs === 0 && (momentumEntering || !clip.presentationCues?.length)
         ? { ...transition, durationUs: Math.min(transition.durationUs, durationUs) }
         : { ...transition, preset: "none" as const },
@@ -152,7 +175,7 @@ function dynamicVideoOverlays(clip: VideoClip, path: string, exitTransition?: Vi
       recipe: frameRecipe
     };
     if (!focus.enabled) return [videoOverlay];
-    return [videoOverlay, focusOverlay(clip, focus, startOffsetUs + focus.startOffsetUs, focus.durationUs, (clip.zIndex ?? 0) + 1, videoOverlay.transition, videoOverlay.exitTransition)];
+    return [videoOverlay, focusOverlay(clip, focus, startOffsetUs + focus.startOffsetUs, focus.durationUs, (normalizeLayer(clip.zIndex, DEFAULT_VIDEO_LAYER)) + 1, frame, videoOverlay.transition, videoOverlay.exitTransition)];
   });
 }
 
@@ -200,7 +223,7 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
   const width = options.width ?? project.canvas.width;
   const height = options.height ?? project.canvas.height;
   const outputScale = Math.min(width / project.canvas.width, height / project.canvas.height);
-  const scaleRecipe = <T extends ReturnType<typeof effectById>["recipe"]>(recipe: T): T => ({
+  const scaleRecipe = <T extends ReturnType<typeof compositionById>["recipe"]>(recipe: T): T => ({
     ...recipe,
     paddingX: recipe.paddingX * outputScale,
     paddingY: recipe.paddingY * outputScale,
@@ -216,6 +239,15 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
   } : undefined;
   const videoTracks = project.tracks.filter((track) => track.kind === "video" && !track.hidden);
   const videoClips = videoTracks.flatMap((track) => track.clips).filter((clip): clip is VideoClip => clip.kind === "video");
+  const focusCards = project.tracks.filter((track) => track.kind === "composition" && !track.hidden).flatMap((track) => track.clips).filter((clip): clip is CompositionClip => clip.kind === "composition" && clip.compositionId === "focus-card");
+  const focusCardSourceVideo = (effect: CompositionClip) => {
+    const assetId = compositionAssetIds(effect)[0];
+    return videoClips.find((candidate) => candidate.assetId === assetId && effect.startUs >= candidate.startUs && effect.startUs < candidate.startUs + candidate.durationUs);
+  };
+  const focusCardTakeovers = (video: VideoClip) => focusCards.filter((effect) => focusCardSourceVideo(effect)?.id === video.id).map((effect) => ({
+    startUs: Math.max(video.startUs, effect.startUs),
+    durationUs: Math.max(0, Math.min(video.startUs + video.durationUs, effect.startUs + effect.durationUs) - Math.max(video.startUs, effect.startUs))
+  })).filter((range) => range.durationUs > 0);
   const imageClips = project.tracks.filter((track) => track.kind === "image" && !track.hidden).flatMap((track) => track.clips).filter((clip): clip is ImageClip => clip.kind === "image");
   const visualClips: VisualTransitionClip[] = [...videoClips, ...imageClips];
   const generated = project.tracks.filter((track) => !track.hidden).flatMap((track) => track.clips).filter((clip): clip is GeneratedBlock => clip.kind === "generated");
@@ -242,22 +274,95 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
     if (clip.kind === "video") {
       const asset = project.assets.find((candidate) => candidate.id === clip.assetId);
       if (!asset?.sourcePath) throw new Error(`视频图层“${clip.label}”缺少本地源路径，无法导出`);
-      return dynamicVideoOverlays(clip, asset.sourcePath, momentumExitTransition(clip, visualClips));
+      return dynamicVideoOverlays(clip, asset.sourcePath, { canvasWidth: width, canvasHeight: height, sourceWidth: asset.width, sourceHeight: asset.height }, momentumExitTransition(clip, visualClips), focusCardTakeovers(clip));
     }
-    if (clip.kind === "scene") {
-      const recipe = scaleRecipe({ ...effectById(clip.effectId).recipe, sceneBackground: clip.background });
+    if (clip.kind === "scene" || (clip.kind === "composition" && clip.recipe?.sceneBackground)) {
+      const recipe = scaleRecipe({ ...compositionById(clip.compositionId).recipe, sceneBackground: clip.kind === "scene" ? clip.background : clip.recipe?.sceneBackground });
+      const opacity = clip.kind === "scene" ? clip.opacity : clip.transform.opacity;
+      const zIndex = clip.kind === "scene" ? 0 : compositionLayer(clip);
       const dimAtUs = clip.dimAtUs === undefined ? undefined : Math.max(0, Math.min(clip.durationUs, clip.dimAtUs));
-      if (dimAtUs === undefined || dimAtUs >= clip.durationUs) return [{ kind: "scene" as const, startUs: clip.startUs, durationUs: clip.durationUs, x: 50, y: 50, opacity: clip.opacity, scale: 1, rotation: 0, speed: 1, zIndex: -100, recipe }];
+      if (dimAtUs === undefined || dimAtUs >= clip.durationUs) return [{ kind: "scene" as const, startUs: clip.startUs, durationUs: clip.durationUs, x: 50, y: 50, opacity, scale: 1, rotation: 0, speed: 1, zIndex, recipe }];
       return [
-        ...(dimAtUs > 0 ? [{ kind: "scene" as const, startUs: clip.startUs, durationUs: dimAtUs, x: 50, y: 50, opacity: clip.opacity, scale: 1, rotation: 0, speed: 1, zIndex: -100, recipe }] : []),
-        { kind: "scene" as const, startUs: clip.startUs + dimAtUs, durationUs: clip.durationUs - dimAtUs, x: 50, y: 50, opacity: clip.opacity * 0.35, scale: 1, rotation: 0, speed: 1, zIndex: -100, recipe }
+        ...(dimAtUs > 0 ? [{ kind: "scene" as const, startUs: clip.startUs, durationUs: dimAtUs, x: 50, y: 50, opacity, scale: 1, rotation: 0, speed: 1, zIndex, recipe }] : []),
+        { kind: "scene" as const, startUs: clip.startUs + dimAtUs, durationUs: clip.durationUs - dimAtUs, x: 50, y: 50, opacity: opacity * 0.35, scale: 1, rotation: 0, speed: 1, zIndex, recipe }
       ];
     }
-    if (clip.kind === "effect") {
-      const recipe = scaleRecipe(clockControlledRecipe(clip.recipe ?? effectById(clip.effectId).recipe));
+    if (clip.kind === "composition") {
+      const mediaDefinition = mediaComposition(clip.compositionId);
+      if (mediaDefinition) {
+        const issues = compositionBindingIssues(clip, project.assets);
+        if (issues.length) throw new Error(`${clip.label}：${issues[0]}`);
+        const images = compositionAssetIds(clip).map((id) => {
+          const asset = project.assets.find((candidate) => candidate.id === id);
+          if (!asset?.sourcePath) throw new Error(`${clip.label}素材缺少本地源路径，无法导出`);
+          return { id, path: asset.sourcePath, kind: asset.kind === "video" ? "video" as const : "image" as const };
+        });
+        return [{ kind: "composition", renderer: mediaDefinition.renderer === "canvas" ? "canvas" : "three", compositionId: clip.compositionId, compositionImages: images,
+          startUs: clip.startUs, durationUs: clip.durationUs, sourceOffsetUs: clip.sourceOffsetUs ?? 0,
+          animationDurationUs: clip.animationDurationUs ?? clip.durationUs, params: clip.params,
+          text: "", color: clip.color, accentColor: clip.accentColor, fontSize: clip.fontSize,
+          ...clip.transform, transformKeyframes: clip.transformKeyframes, speed: clip.speed,
+          zIndex: compositionLayer(clip), recipe: frameRecipe }];
+      }
+      const recipe = scaleRecipe(clockControlledRecipe(clip.recipe ?? compositionById(clip.compositionId).recipe));
       const fontSize = effectiveEffectFontSize(clip.fontSize, recipe, clip.text);
       const appearance = resolveEffectAppearance(clip, project.motionTheme);
-      return [{ kind: "text" as const, effectId: clip.effectId, renderer: "react" as const, startUs: clip.startUs, durationUs: clip.durationUs, text: clip.text, color: appearance.color, accentColor: appearance.accentColor, fontSize: fontSize * outputScale, x: clip.transform.x, y: clip.transform.y, opacity: clip.transform.opacity, scale: clip.transform.scale, rotation: clip.transform.rotation, speed: clip.speed, zIndex: 200 + (clip.zIndex ?? 20), transformKeyframes: clip.transformKeyframes, recipe, params: clip.params, backdrop: scaleBackdrop(clip.backdrop), motionTheme: project.motionTheme, dimAtUs: clip.dimAtUs }];
+      const reactOverlay = { kind: "text" as const, compositionId: clip.compositionId, renderer: "react" as const, startUs: clip.startUs, durationUs: clip.durationUs, sourceOffsetUs: clip.sourceOffsetUs, animationDurationUs: clip.animationDurationUs, text: clip.text, color: appearance.color, accentColor: appearance.accentColor, fontSize: fontSize * outputScale, x: clip.transform.x, y: clip.transform.y, opacity: clip.transform.opacity, scale: clip.transform.scale, rotation: clip.transform.rotation, speed: clip.speed, zIndex: compositionLayer(clip), transformKeyframes: clip.transformKeyframes, recipe, params: clip.params, backdrop: scaleBackdrop(clip.backdrop), motionTheme: project.motionTheme, dimAtUs: clip.dimAtUs };
+      if (clip.compositionId !== "focus-card") return [reactOverlay];
+      const issues = compositionBindingIssues(clip, project.assets);
+      if (issues.length) throw new Error(`${clip.label}：${issues[0]}`);
+      const assetId = compositionAssetIds(clip)[0];
+      const asset = project.assets.find((candidate) => candidate.id === assetId);
+      if (!asset?.sourcePath) throw new Error(`${clip.label}素材缺少本地源路径，无法导出`);
+      const sourceVideo = focusCardSourceVideo(clip);
+      const playbackRate = sourceVideo?.playbackRate ?? 1;
+      const sourceAtClipStartUs = sourceVideo
+        ? sourceVideo.sourceInUs + Math.max(0, clip.startUs - sourceVideo.startUs) * playbackRate
+        : 0;
+      const sourcePresentation = sourceVideo ? videoPresentationAt(sourceVideo, Math.max(0, clip.startUs - sourceVideo.startUs)) : null;
+      const sourceRect = sourcePresentation ? focusCardSourceRect(sourcePresentation.transform, sourcePresentation.mask.shape, sourcePresentation.mask.radius, width, height, videoFrameSize(sourcePresentation.mask, width, height, asset.width, asset.height)) : null;
+      const sourceOffsetUs = clip.sourceOffsetUs ?? 0;
+      const focusMediaSourceInUs = Math.max(0, sourceAtClipStartUs - sourceOffsetUs / clip.speed * playbackRate);
+      return [reactOverlay, {
+        kind: "composition" as const,
+        renderer: "canvas" as const,
+        compositionId: "focus-card-media",
+        compositionImages: [{ id: asset.id, path: asset.sourcePath, kind: "video" as const }],
+        startUs: clip.startUs,
+        durationUs: clip.durationUs,
+        sourceOffsetUs,
+        animationDurationUs: clip.animationDurationUs ?? clip.durationUs,
+        params: {
+          ...clip.params,
+          focusMediaSourceInUs,
+          focusMediaPlaybackRate: playbackRate,
+          focusEffectSpeed: clip.speed,
+          focusMediaAccentColor: appearance.accentColor,
+          focusMediaFocusX: sourcePresentation?.mask.focusX ?? 50,
+          focusMediaFocusY: sourcePresentation?.mask.focusY ?? 50,
+          ...(sourceRect ? {
+            focusSourceX: sourceRect.x,
+            focusSourceY: sourceRect.y,
+            focusSourceWidth: sourceRect.width,
+            focusSourceHeight: sourceRect.height,
+            focusSourceRadius: sourceRect.radius
+          } : {}),
+          fit: "cover"
+        },
+        text: "",
+        color: appearance.color,
+        accentColor: appearance.accentColor,
+        fontSize: fontSize * outputScale,
+        x: clip.transform.x,
+        y: clip.transform.y,
+        opacity: clip.transform.opacity,
+        scale: clip.transform.scale,
+        rotation: clip.transform.rotation,
+        speed: clip.speed,
+        zIndex: compositionLayer(clip) + 1,
+        transformKeyframes: clip.transformKeyframes,
+        recipe: frameRecipe
+      }];
     }
     if (clip.kind === "subtitle") {
       const style = subtitleStyle(clip);
@@ -381,9 +486,9 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
     }];
   });
   const cueClips = project.tracks
-    .filter((track) => (track.kind === "scene" || track.kind === "effect") && !track.hidden && !track.muted)
+    .filter((track) => (track.kind === "scene" || track.kind === "composition") && !track.hidden && !track.muted)
     .flatMap((track) => track.clips)
-    .filter((clip): clip is SceneClip | EffectClip => clip.kind === "scene" || clip.kind === "effect");
+    .filter((clip): clip is SceneClip | CompositionClip => clip.kind === "scene" || clip.kind === "composition");
   for (const clip of cueClips) {
     for (const cue of clip.soundCues ?? []) {
       if (!cue.sourcePath) throw new Error(`${clip.kind === "scene" ? "场景" : "动效"}“${clip.label}”的音效缺少本地缓存，无法导出`);

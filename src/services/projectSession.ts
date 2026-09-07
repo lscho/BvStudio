@@ -23,6 +23,7 @@ export interface ProjectHydrationOptions {
   proxyHeight: number;
   pathExists: (path: string) => Promise<boolean>;
   mediaUrl: (path: string) => string;
+  probeVideoDimensions?: (path: string) => Promise<{ width: number; height: number }>;
   createProxy?: (path: string, assetId: string, durationUs: number) => Promise<{ proxyPath: string; height: number }>;
 }
 
@@ -120,6 +121,17 @@ export async function hydrateProjectAssets(project: EditorProject, options: Proj
       continue;
     }
     asset.objectUrl = options.mediaUrl(asset.sourcePath);
+    if (asset.kind === "video" && options.probeVideoDimensions) {
+      try {
+        const dimensions = await options.probeVideoDimensions(asset.sourcePath);
+        if (dimensions.width > 0 && dimensions.height > 0) {
+          asset.width = dimensions.width;
+          asset.height = dimensions.height;
+        }
+      } catch {
+        // 尺寸刷新失败时保留工程中的旧探测结果，素材仍可继续使用。
+      }
+    }
 
     if (asset.proxyPath) {
       try {

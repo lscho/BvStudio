@@ -12,7 +12,7 @@ describe("visual transforms", () => {
 
   it("creates a full-screen to corner handoff preset", () => {
     const layout = videoLayoutForPreset("shrink-top-right", 4_000_000);
-    expect(layout.zIndex).toBe(10);
+    expect(layout.zIndex).toBe(30);
     expect(layout.transformKeyframes).toEqual([
       expect.objectContaining({ offsetUs: 0, x: 50, y: 50, scale: 1 }),
       expect.objectContaining({ offsetUs: 1_120_000, x: 82, y: 20, scale: 0.3 })

@@ -1,5 +1,6 @@
-import { allEffects } from "@/domain/effects";
-import type { EditorProject, EffectClip, SceneClip, TimelineClip } from "@/domain/project";
+import { allCompositions } from "@/domain/effects";
+import { compositionBindingIssues } from "@/domain/compositions";
+import type { EditorProject, CompositionClip, SceneClip, TimelineClip } from "@/domain/project";
 
 export interface MotionLintIssue {
   ruleId: string;
@@ -9,27 +10,30 @@ export interface MotionLintIssue {
 }
 
 function ignores(clip: TimelineClip, ruleId: string) {
-  return (clip.kind === "effect" || clip.kind === "scene") && clip.lintOff?.includes(ruleId);
+  return (clip.kind === "composition" || clip.kind === "scene") && clip.lintOff?.includes(ruleId);
 }
 
 function issue(issues: MotionLintIssue[], clip: TimelineClip, ruleId: string, severity: MotionLintIssue["severity"], message: string) {
   if (!ignores(clip, ruleId)) issues.push({ ruleId, severity, clipId: clip.id, message });
 }
 
-function motionClips(project: EditorProject): Array<EffectClip | SceneClip> {
-  return project.tracks.flatMap((track) => track.clips).filter((clip): clip is EffectClip | SceneClip => clip.kind === "effect" || clip.kind === "scene");
+function motionClips(project: EditorProject): Array<CompositionClip | SceneClip> {
+  return project.tracks.flatMap((track) => track.clips).filter((clip): clip is CompositionClip | SceneClip => clip.kind === "composition" || clip.kind === "scene");
 }
 
 export function lintMotionProject(project: EditorProject): MotionLintIssue[] {
   const issues: MotionLintIssue[] = [];
-  const registered = new Set(allEffects().map((effect) => effect.id));
+  const registered = new Set(allCompositions().map((effect) => effect.id));
   const clips = project.tracks.flatMap((track) => track.clips);
   for (const clip of clips) {
     if (!Number.isInteger(clip.startUs) || !Number.isInteger(clip.durationUs) || clip.startUs < 0 || clip.durationUs <= 0) {
       issue(issues, clip, "invalid-time", "error", `“${clip.label}”的时间范围无效`);
     }
-    if (clip.kind !== "effect") continue;
-    if (!registered.has(clip.effectId) && !clip.recipe) issue(issues, clip, "unknown-effect", "error", `“${clip.label}”引用了不可用的动效 ${clip.effectId}`);
+    if (clip.kind !== "composition") continue;
+    if (!project.tracks.find((track) => track.id === clip.trackId)?.hidden) {
+      for (const message of compositionBindingIssues(clip, project.assets)) issues.push({ ruleId: "composition-input", severity: "error", clipId: clip.id, message: `${clip.label}：${message}` });
+    }
+    if (!registered.has(clip.compositionId) && !clip.recipe) issue(issues, clip, "unknown-effect", "error", `“${clip.label}”引用了不可用的动效 ${clip.compositionId}`);
     if (clip.transform.x < 5 || clip.transform.x > 95 || clip.transform.y < 5 || clip.transform.y > 95 || clip.transform.scale > 2.5) {
       issue(issues, clip, "unsafe-bounds", "warning", `“${clip.label}”接近或超出画布安全边界`);
     }
@@ -42,7 +46,7 @@ export function lintMotionProject(project: EditorProject): MotionLintIssue[] {
     }
   }
 
-  const groups = new Map<string, Array<EffectClip | SceneClip>>();
+  const groups = new Map<string, Array<CompositionClip | SceneClip>>();
   for (const clip of motionClips(project)) {
     if (!clip.sceneGroupId) continue;
     groups.set(clip.sceneGroupId, [...(groups.get(clip.sceneGroupId) ?? []), clip]);
@@ -54,7 +58,7 @@ export function lintMotionProject(project: EditorProject): MotionLintIssue[] {
       if (clip.startUs - coveredUntilUs > 250_000) issue(issues, clip, "group-gap", "warning", `场景组“${clip.label}”之前存在时间空档`);
       coveredUntilUs = Math.max(coveredUntilUs, clip.startUs + clip.durationUs);
     }
-    const events = ordered.flatMap((clip) => clip.kind === "effect" ? [
+    const events = ordered.flatMap((clip) => clip.kind === "composition" && !clip.recipe?.sceneBackground ? [
       { timeUs: clip.startUs, delta: 1, clip },
       { timeUs: clip.startUs + clip.durationUs, delta: -1, clip }
     ] : []).sort((left, right) => left.timeUs - right.timeUs || left.delta - right.delta);
@@ -70,7 +74,7 @@ export function lintMotionProject(project: EditorProject): MotionLintIssue[] {
 
   const strong = motionClips(project).filter((clip) => {
     if (clip.soundCues?.length) return true;
-    if (clip.kind !== "effect") return false;
+    if (clip.kind !== "composition") return false;
     return Boolean(clip.recipe?.animation?.keyframes.some((frame) => frame.rotateX || frame.rotateY));
   }).sort((left, right) => left.startUs - right.startUs);
   for (let index = 1; index < strong.length; index += 1) {

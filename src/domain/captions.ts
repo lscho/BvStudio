@@ -6,7 +6,10 @@ export interface TimedTextSegment {
   text: string;
 }
 
-const SENTENCE_BOUNDARY = /(?<=[。！？!?；;])/u;
+const sentenceSegmenter = new Intl.Segmenter("zh", { granularity: "sentence" });
+const wordSegmenter = new Intl.Segmenter("zh", { granularity: "word" });
+const CLAUSE_END = /[，,；;：:](?:["'”’）》】」』\s]*)$/u;
+const OPENING_PUNCTUATION = /^[（(\[《【「『“‘]+$/u;
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
 function textUnits(text: string) {
@@ -43,25 +46,47 @@ export function mergeLeadingCaptionFragments(segments: readonly TimedTextSegment
 }
 
 function splitLongSentence(sentence: string, maxUnits: number) {
-  const chunks: string[] = [];
-  let chunk = "";
-  for (const character of Array.from(sentence.trim())) {
-    const candidate = chunk + character;
-    if (chunk && textUnits(candidate) > maxUnits) {
-      chunks.push(chunk.trim());
-      chunk = character;
+  const words: { text: string; units: number }[] = [];
+  let opening = "";
+  for (const token of wordSegmenter.segment(sentence.trim())) {
+    if (token.isWordLike) {
+      words.push({ text: opening + token.segment, units: textUnits(token.segment) });
+      opening = "";
+    } else if (OPENING_PUNCTUATION.test(token.segment) || opening || !words.length) {
+      opening += token.segment;
     } else {
-      chunk = candidate;
+      words[words.length - 1].text += token.segment;
     }
   }
-  if (chunk.trim()) chunks.push(chunk.trim());
+  if (opening) {
+    if (words.length) words[words.length - 1].text += opening;
+    else words.push({ text: opening, units: 0 });
+  }
+
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < words.length) {
+    let end = start;
+    let units = 0;
+    let clauseEnd = start;
+    while (end < words.length) {
+      const word = words[end];
+      if (end > start && units + word.units > maxUnits) break;
+      units += word.units;
+      end += 1;
+      if (CLAUSE_END.test(word.text)) clauseEnd = end;
+    }
+    // Prefer an existing clause break; a word and its closing punctuation stay intact.
+    if (end < words.length && clauseEnd > start) end = clauseEnd;
+    chunks.push(words.slice(start, end).map((word) => word.text).join("").trim());
+    start = end;
+  }
   return chunks;
 }
 
 export function splitCaptionText(text: string, maxUnits = 22) {
-  return text
-    .split(SENTENCE_BOUNDARY)
-    .flatMap((sentence) => splitLongSentence(sentence, maxUnits))
+  return Array.from(sentenceSegmenter.segment(text))
+    .flatMap(({ segment }) => splitLongSentence(segment, maxUnits))
     .filter(Boolean);
 }
 
