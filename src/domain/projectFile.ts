@@ -149,6 +149,14 @@ function normalizeOptionalTimeUs(value: unknown, durationUs: number): number | u
   return Math.max(0, Math.min(Math.max(0, durationUs), Math.round(value)));
 }
 
+function normalizeClipTime<T extends { startUs: number; durationUs: number }>(clip: T): T {
+  return {
+    ...clip,
+    startUs: Number.isFinite(clip.startUs) ? Math.max(0, Math.round(clip.startUs)) : clip.startUs,
+    durationUs: Number.isFinite(clip.durationUs) ? Math.max(1, Math.round(clip.durationUs)) : clip.durationUs
+  };
+}
+
 function normalizeMotionTheme(value: unknown): MotionTheme {
   if (!value || typeof value !== "object") return structuredClone(DEFAULT_MOTION_THEME);
   const candidate = value as Record<string, unknown>;
@@ -313,7 +321,7 @@ export function parseProject(contents: string): EditorProject {
         mediaLayoutPreset: scene.mediaLayoutPreset ?? "full"
       })) }
       : clip.kind === "image" ? { ...clip, transform: clip.transform ?? { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }, entrance: clip.entrance ?? "pop", speed: clip.speed ?? 1, transition: normalizeVideoTransition(clip.transition, clip.durationUs) }
-        : clip)
+        : clip).map(normalizeClipTime)
   })) as EditorProject["tracks"];
   for (const fallbackTrack of fallback.tracks) {
     const exists = fallbackTrack.kind === "audio"

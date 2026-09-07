@@ -202,7 +202,7 @@ describe("AssetPanel video audio actions", () => {
     expect(onMatchEffects).toHaveBeenCalledOnce();
   });
 
-  it("matches sounds separately and offers independent subtitle color swatches", () => {
+  it("matches sounds separately without duplicating subtitle color settings", () => {
     useEditorStore.setState({ project: createEmptyProject(), selectedClipId: null, selectedClipIds: [], playheadUs: 0, past: [], future: [] });
     const onMatchEffects = vi.fn();
     const onMatchSounds = vi.fn();
@@ -215,11 +215,8 @@ describe("AssetPanel video audio actions", () => {
     expect(onMatchSounds).toHaveBeenCalledOnce();
     expect(onMatchEffects).not.toHaveBeenCalled();
     fireEvent.mouseDown(screen.getByRole("tab", { name: "字幕" }), { button: 0, ctrlKey: false });
-    fireEvent.click(within(screen.getByRole("radiogroup", { name: "字幕文字色" })).getByRole("radio", { name: "青绿" }));
-    fireEvent.click(within(screen.getByRole("radiogroup", { name: "字幕关键词色" })).getByRole("radio", { name: "珊瑚" }));
-    expect(useEditorStore.getState().project.subtitleTheme).toEqual({ color: "#47d7ac", highlightColor: "#ff7b72" });
-    act(() => useEditorStore.getState().undo());
-    expect(useEditorStore.getState().project.subtitleTheme.highlightColor).toBe("#ffb84d");
+    expect(screen.queryByRole("radiogroup", { name: "字幕文字色" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "字幕关键词色" })).not.toBeInTheDocument();
   });
 
   it("opens global subtitle appearance settings from the subtitle header", () => {
@@ -237,6 +234,11 @@ describe("AssetPanel video audio actions", () => {
     fireEvent.click(subtitleTab);
     fireEvent.click(screen.getByRole("button", { name: "设置全局字幕样式" }));
     expect(screen.getByRole("dialog", { name: "全局字幕样式" })).toBeInTheDocument();
+    expect(document.querySelector('input[type="color"]')).toBeNull();
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "字幕文字色" })).getByRole("radio", { name: "青绿" }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "字幕关键词色" })).getByRole("radio", { name: "珊瑚" }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "字幕背景色" })).getByRole("radio", { name: "纯黑" }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "字幕描边色" })).getByRole("radio", { name: "天蓝" }));
     const fontSize = screen.getByRole("slider", { name: "字号" });
     fireEvent.change(fontSize, { target: { value: "60" } });
     expect(fontSize).toHaveValue("60");
@@ -248,5 +250,10 @@ describe("AssetPanel video audio actions", () => {
       [60, "第一条核心", ["核心"]],
       [60, "第二条重点", ["重点"]]
     ]);
+    expect(subtitles).toEqual([
+      expect.objectContaining({ color: "#47d7ac", highlightColor: "#ff7b72", backgroundColor: "#000000", outlineColor: "#5fa8ff" }),
+      expect.objectContaining({ color: "#47d7ac", highlightColor: "#ff7b72", backgroundColor: "#000000", outlineColor: "#5fa8ff" })
+    ]);
+    expect(useEditorStore.getState().project.subtitleTheme).toEqual({ color: "#47d7ac", highlightColor: "#ff7b72" });
   });
 });

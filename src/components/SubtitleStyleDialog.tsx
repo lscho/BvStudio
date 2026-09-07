@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Captions, X } from "lucide-react";
+import { Captions, Check, X } from "lucide-react";
 import { Select } from "@/components/Select";
+import { MOTION_ACCENT_COLOR_PRESETS } from "@/domain/motionTheme";
 import type { SubtitleClip, SubtitleStylePreset } from "@/domain/project";
 import { DEFAULT_SUBTITLE_STYLE, subtitleStyle } from "@/domain/videoDecorations";
 import { useEditorStore, type SubtitleAppearancePatch } from "@/stores/editorStore";
@@ -30,6 +31,12 @@ const styleOptions = [
   { value: "bold", label: "重点强调" },
   { value: "minimal", label: "简洁无底" }
 ];
+
+const subtitleColorPresets = [
+  { id: "white", label: "纯白", color: "#ffffff" },
+  { id: "black", label: "纯黑", color: "#000000" },
+  ...MOTION_ACCENT_COLOR_PRESETS
+] as const;
 
 const defaultAppearance: SubtitleAppearance = {
   stylePreset: DEFAULT_SUBTITLE_STYLE.stylePreset,
@@ -108,7 +115,15 @@ export function SubtitleStyleDialog({ open, onOpenChange, subtitles }: Props) {
 }
 
 function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  return <label><span>{label}</span><input type="color" value={value} onChange={(event) => onChange(event.target.value)} /></label>;
+  return <fieldset className="subtitle-color-field">
+    <legend>{label}色</legend>
+    <div className="subtitle-color-swatches" role="radiogroup" aria-label={`字幕${label}色`}>
+      {subtitleColorPresets.map((preset) => {
+        const selected = value.toLowerCase() === preset.color;
+        return <button key={preset.id} type="button" role="radio" aria-checked={selected} aria-label={preset.label} title={preset.label} style={{ "--theme-color": preset.color, "--theme-check-color": preset.id === "white" ? "#1b1d21" : "#ffffff" } as CSSProperties} onClick={() => onChange(preset.color)}>{selected && <Check size={12} aria-hidden="true" />}</button>;
+      })}
+    </div>
+  </fieldset>;
 }
 
 function RangeField({ label, value, min, max, step = 1, suffix, onChange }: { label: string; value: number; min: number; max: number; step?: number; suffix: string; onChange: (value: number) => void }) {

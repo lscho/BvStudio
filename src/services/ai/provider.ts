@@ -767,6 +767,7 @@ const MAX_SCENE_CAPTIONS = 8;
 const MAX_SCENE_EFFECT_LAYERS = 4;
 const MAX_SCENE_DURATION_SECONDS = 15;
 const MAX_SCENE_GAP_SECONDS = 1.5;
+const CUMULATIVE_SCENE_EFFECT_IDS = new Set(["pin-board", "step-timeline", "checklist"]);
 
 function addFallbackMotionSceneGroups(matches: readonly AiMotionMatch[], captions: readonly AiTimedScript["captions"][number][]) {
   const replacements = new Map<number, AiMotionMatch>();
@@ -835,6 +836,75 @@ function normalizeExistingARollLayers(matches: readonly AiMotionMatch[], aRollAs
   });
 }
 
+function cumulativeTextScore(value: string | null | undefined) {
+  const parts = (value ?? "").split(/[|｜\n]/u).map((part) => part.trim()).filter(Boolean);
+  return parts.length * 1_000 + Array.from(parts.join("")).length;
+}
+
+function cumulativeTextsBelongToSameState(left: string | null | undefined, right: string | null | undefined) {
+  const parts = (value: string | null | undefined) => (value ?? "")
+    .split(/[|｜\n]/u)
+    .map((part) => comparableMotionText(part))
+    .filter(Boolean);
+  const leftParts = parts(left);
+  const rightParts = parts(right);
+  if (!leftParts.length || !rightParts.length) return false;
+  const shorter = leftParts.length <= rightParts.length ? leftParts : rightParts;
+  const longer = leftParts.length <= rightParts.length ? rightParts : leftParts;
+  return shorter.every((part, index) => part === longer[index]);
+}
+
+function collapseCumulativeSceneEffectStates(matches: readonly AiMotionMatch[]) {
+  const collapsed = matches.map((match) => ({ ...match }));
+  const anchors = new Map<string, Array<{ matchIndex: number; slot: "primary" | "secondary"; score: number; text: string | null }>>();
+
+  collapsed.forEach((match, matchIndex) => {
+    const candidates = [
+      { slot: "primary" as const, compositionId: match.primaryEffectId, text: match.primaryText },
+      { slot: "secondary" as const, compositionId: match.secondaryEffectId, text: match.secondaryText }
+    ];
+    for (const candidate of candidates) {
+      if (!candidate.compositionId || !CUMULATIVE_SCENE_EFFECT_IDS.has(candidate.compositionId)) continue;
+      const score = cumulativeTextScore(candidate.text);
+      const compositionAnchors = anchors.get(candidate.compositionId) ?? [];
+      let anchor: (typeof compositionAnchors)[number] | undefined;
+      for (let index = compositionAnchors.length - 1; index >= 0; index -= 1) {
+        if (cumulativeTextsBelongToSameState(compositionAnchors[index].text, candidate.text)) {
+          anchor = compositionAnchors[index];
+          break;
+        }
+      }
+      if (!anchor) {
+        compositionAnchors.push({ matchIndex, slot: candidate.slot, score, text: candidate.text });
+        anchors.set(candidate.compositionId, compositionAnchors);
+        continue;
+      }
+
+      if (score >= anchor.score) {
+        const anchorMatch = collapsed[anchor.matchIndex];
+        if (anchor.slot === "primary") anchorMatch.primaryText = candidate.text ?? "";
+        else anchorMatch.secondaryText = candidate.text;
+        anchor.score = score;
+        anchor.text = candidate.text;
+      }
+      const anchorMatch = collapsed[anchor.matchIndex];
+      anchorMatch.persistUntilCaptionIndex = Math.max(
+        anchorMatch.persistUntilCaptionIndex ?? anchorMatch.captionIndex,
+        match.persistUntilCaptionIndex ?? match.captionIndex
+      );
+      if (candidate.slot === "primary") {
+        match.primaryEffectId = null;
+        match.primaryText = "";
+      } else {
+        match.secondaryEffectId = null;
+        match.secondaryText = null;
+      }
+    }
+  });
+
+  return collapsed;
+}
+
 function normalizeGroupedMotionContinuity(matches: readonly AiMotionMatch[]) {
   const groups = new Map<string, AiMotionMatch[]>();
   for (const match of matches) {
@@ -846,7 +916,7 @@ function normalizeGroupedMotionContinuity(matches: readonly AiMotionMatch[]) {
 
   const replacements = new Map<number, AiMotionMatch>();
   for (const group of groups.values()) {
-    const ordered = [...group].sort((left, right) => left.captionIndex - right.captionIndex);
+    const ordered = collapseCumulativeSceneEffectStates([...group].sort((left, right) => left.captionIndex - right.captionIndex));
     const requestedLayerCount = ordered.reduce((count, match) => count + Number(Boolean(match.primaryEffectId)) + Number(Boolean(match.secondaryEffectId)), 0);
     const informationDense = requestedLayerCount >= 3;
     const seenTexts = new Set<string>();
@@ -859,8 +929,11 @@ function normalizeGroupedMotionContinuity(matches: readonly AiMotionMatch[]) {
       let primaryText = match.primaryText;
       let secondaryEffectId = match.secondaryEffectId;
       let secondaryText = match.secondaryText;
-      const mediaComposition = primaryEffectId && (compositionById(primaryEffectId).renderer === "three" || compositionById(primaryEffectId).renderer === "canvas") ? primaryEffectId : null;
-      const primaryKey = mediaComposition ? `composition:${mediaComposition}` : comparableMotionText(primaryText);
+      const primaryDefinition = primaryEffectId ? compositionById(primaryEffectId) : null;
+      const nonTextCompositionId = primaryDefinition && (primaryDefinition.recipe.sceneBackground || primaryDefinition.renderer === "three" || primaryDefinition.renderer === "canvas")
+        ? primaryDefinition.id
+        : null;
+      const primaryKey = nonTextCompositionId ? `composition:${nonTextCompositionId}` : comparableMotionText(primaryText);
       if (!primaryEffectId || remainingLayers <= 0 || (primaryKey && seenTexts.has(primaryKey))) {
         primaryEffectId = null;
         primaryText = "";
@@ -946,10 +1019,10 @@ export function normalizeMotionMatches(
     let primaryEffectId = match.primaryEffectId;
     let secondaryEffectId = match.secondaryEffectId;
     let primaryText = primaryEffectId && !compositionById(primaryEffectId).recipe.sceneBackground
-      ? compactMotionText(match.primaryText, evidenceText, primaryEffectId === "quote-lockup")
+      ? compactMotionText(match.primaryText, evidenceText, primaryEffectId === "quote-lockup" || CUMULATIVE_SCENE_EFFECT_IDS.has(primaryEffectId))
       : "";
     let secondaryText = secondaryEffectId && !compositionById(secondaryEffectId).recipe.sceneBackground
-      ? compactMotionText(match.secondaryText, evidenceText, secondaryEffectId === "quote-lockup")
+      ? compactMotionText(match.secondaryText, evidenceText, secondaryEffectId === "quote-lockup" || CUMULATIVE_SCENE_EFFECT_IDS.has(secondaryEffectId))
       : null;
 
     if (primaryEffectId && compositionById(primaryEffectId).category === "标题"

@@ -659,7 +659,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (next?.kind === "composition") retimeCompositionData(next, nextDurationUs);
     });
   }),
-  setPlayhead: (playheadUs) => set({ playheadUs: Math.max(0, playheadUs) }),
+  setPlayhead: (playheadUs) => {
+    if (!Number.isFinite(playheadUs)) return;
+    set({ playheadUs: Math.max(0, Math.round(playheadUs)) });
+  },
   setZoom: (zoom) => set({ zoom: Math.min(3, Math.max(0.6, zoom)) }),
   setRangeStart: (timeUs) => set({ rangeStartUs: timeUs === null ? null : Math.max(0, Math.round(timeUs)) }),
   setRangeEnd: (timeUs) => set({ rangeEndUs: timeUs === null ? null : Math.max(0, Math.round(timeUs)) }),
@@ -924,8 +927,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       });
     })();
     const plannedDurationUs = Math.max(1_000_000, Math.round((plannedCaptions.at(-1)?.endSeconds ?? 1) * 1_000_000));
-    const durationUs = Math.max(100_000, target?.durationUs ?? plannedDurationUs);
-    const startUs = Math.max(0, target?.startUs ?? get().playheadUs);
+    const targetDurationUs = target?.durationUs;
+    const requestedStartUs = target?.startUs ?? get().playheadUs;
+    const durationUs = typeof targetDurationUs === "number" && Number.isFinite(targetDurationUs)
+      ? Math.max(100_000, Math.round(targetDurationUs))
+      : plannedDurationUs;
+    const startUs = Number.isFinite(requestedStartUs) ? Math.max(0, Math.round(requestedStartUs)) : 0;
     const durationScale = durationUs / plannedDurationUs;
     const captions = plannedCaptions.map((caption, index) => ({
       ...caption,
@@ -1094,6 +1101,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
       const effectTrack = project.tracks.find((track) => track.kind === "composition")!;
       const sceneTrack = effectTrack;
+      const lockedMotionSubtitleIds = new Set(effectTrack.clips.flatMap((clip) => (
+        clip.locked && (clip.kind === "composition" || clip.kind === "scene") && clip.sourceSubtitleId ? [clip.sourceSubtitleId] : []
+      )));
       if (!effectTrack.locked) effectTrack.clips = effectTrack.clips.filter((clip) => clip.locked || clip.kind !== "composition" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
       if (!sceneTrack.locked) sceneTrack.clips = sceneTrack.clips.filter((clip) => clip.locked || clip.kind !== "scene" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
       for (const track of project.tracks.filter((candidate) => candidate.kind === "video")) {
@@ -1153,8 +1163,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           subtitle.highlightWords = subtitleKeywordsForText(subtitle.text, match.subtitleKeywords ?? []);
         }
         const entries = aiMotionEntries(match, subtitle.text, false);
-        const selectedEntries = entries.slice(0, 2);
-        summary.requestedEffectCount += selectedEntries.length;
+        const requestedEntries = entries.slice(0, 2);
+        const selectedEntries = lockedMotionSubtitleIds.has(subtitle.id) ? [] : requestedEntries;
+        summary.requestedEffectCount += requestedEntries.length;
+        if (lockedMotionSubtitleIds.has(subtitle.id)) summary.skippedEffectCount += requestedEntries.length;
         for (const entry of selectedEntries) {
           const definition = compositionById(entry.compositionId);
           if (effectTrack.locked || (definition.recipe.sceneBackground && sceneTrack.locked)) { summary.skippedEffectCount += 1; continue; }
@@ -1597,15 +1609,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }));
   },
   trimClip: (clipId, edge, deltaUs) => {
-    if (Math.abs(deltaUs) < 1) return;
+    if (!Number.isFinite(deltaUs)) return;
+    const roundedDeltaUs = Math.round(deltaUs);
+    if (Math.abs(roundedDeltaUs) < 1) return;
     set((state) => commit(state, (project) => {
       const clip = findClip(project, clipId);
       const track = clip ? project.tracks.find((candidate) => candidate.id === clip.trackId) : undefined;
       if (!clip || clip.locked || track?.locked) return;
       const minimumDuration = clip.kind === "subtitle" ? 100_000 : 250_000;
       if (edge === "start") {
-        const actualDelta = Math.min(deltaUs, clip.durationUs - minimumDuration);
-        const sourceLimit = isSourceClip(clip) ? -clip.sourceInUs / clip.playbackRate : -clip.startUs;
+        const actualDelta = Math.min(roundedDeltaUs, clip.durationUs - minimumDuration);
+        const sourceLimit = isSourceClip(clip) ? Math.ceil(-clip.sourceInUs / clip.playbackRate) : -clip.startUs;
         const boundedDelta = Math.max(actualDelta, -clip.startUs, sourceLimit);
         const presentationBoundary = clip.kind === "video" && boundedDelta > 0 ? videoPresentationAt(clip, boundedDelta) : undefined;
         clip.startUs += boundedDelta;
@@ -1640,10 +1654,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         }
         if (clip.kind === "generated") trimGeneratedStart(clip, boundedDelta);
       } else {
-        let durationUs = Math.max(minimumDuration, Math.round(clip.durationUs + deltaUs));
+        let durationUs = Math.max(minimumDuration, Math.round(clip.durationUs + roundedDeltaUs));
         if (isSourceClip(clip)) {
           const asset = project.assets.find((candidate) => candidate.id === clip.assetId);
-          if (asset) durationUs = Math.min(durationUs, Math.max(minimumDuration, (asset.durationUs - clip.sourceInUs) / clip.playbackRate));
+          if (asset) {
+            const availableDurationUs = Math.floor((asset.durationUs - clip.sourceInUs) / clip.playbackRate);
+            durationUs = Math.min(durationUs, Math.max(minimumDuration, availableDurationUs));
+          }
         }
         clip.durationUs = durationUs;
         if (clip.kind === "video") {

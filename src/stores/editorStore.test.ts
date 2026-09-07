@@ -4,8 +4,10 @@ import { compositionById } from "@/domain/effects";
 import { cameraMotionForPreset } from "@/domain/camera";
 import { estimateMotionLayoutRect, motionLayoutRectsOverlap, type MotionLayoutLayer } from "@/domain/motionLayout";
 import type { AiVideoPlan } from "@/services/ai/schema";
+import { normalizeMotionMatches } from "@/services/ai/provider";
 import { useEditorStore } from "@/stores/editorStore";
 import { buildRenderPlan } from "@/domain/renderPlan";
+import { lintMotionProject } from "@/domain/motionLint";
 
 const plan: AiVideoPlan = {
   title: "插入介绍",
@@ -210,6 +212,25 @@ describe("editorStore", () => {
     expect(generated).toMatchObject({ startUs: 5_000_000, durationUs: 6_000_000, kind: "generated" });
   });
 
+  it("keeps playhead and generated plan times in integer microseconds", () => {
+    useEditorStore.getState().setPlayhead(1_234_567.89);
+    expect(useEditorStore.getState().playheadUs).toBe(1_234_568);
+
+    const generatedId = useEditorStore.getState().addGeneratedPlan(plan, "小数时间", "overlay", {
+      startUs: 2_345_678.6,
+      durationUs: 3_000_000.4
+    });
+    const project = useEditorStore.getState().project;
+    const clips = project.tracks.flatMap((track) => track.clips);
+    const generated = clips.find((clip) => clip.id === generatedId);
+    const subtitles = clips.filter((clip) => clip.kind === "subtitle" && clip.sourceBlockId === generatedId);
+
+    expect(generated).toMatchObject({ startUs: 2_345_679, durationUs: 3_000_000 });
+    expect(subtitles.length).toBeGreaterThan(0);
+    expect([generated, ...subtitles].every((clip) => clip && Number.isInteger(clip.startUs) && Number.isInteger(clip.durationUs))).toBe(true);
+    expect(lintMotionProject(project).filter((issue) => issue.ruleId === "invalid-time")).toEqual([]);
+  });
+
   it("adds and edits a parameterized effect with undo support", () => {
     useEditorStore.getState().addComposition("title-highlight");
     const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0];
@@ -392,6 +413,22 @@ describe("editorStore", () => {
     expect(clips).toHaveLength(2);
     expect(clips[0]).toMatchObject({ startUs: 5_000_000, durationUs: 3_000_000, sourceInUs: 2_000_000 });
     expect(clips[1]).toMatchObject({ startUs: 8_000_000, durationUs: 7_000_000, sourceInUs: 5_000_000 });
+  });
+
+  it("keeps source clip trims integral without passing the asset end", () => {
+    useEditorStore.getState().addVideo({ id: "fractional-trim", name: "source.mp4", kind: "video", durationUs: 10_000_000 });
+    const videoId = useEditorStore.getState().selectedClipId!;
+    useEditorStore.getState().updateVideo(videoId, { startUs: 1_000_000, sourceInUs: 1, durationUs: 1_000_000, playbackRate: 1.25 });
+
+    useEditorStore.getState().trimClip(videoId, "end", 20_000_000);
+    let video = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === videoId) as VideoClip;
+    expect(video.durationUs).toBe(7_999_999);
+    expect(video.sourceInUs + video.durationUs * video.playbackRate).toBeLessThanOrEqual(10_000_000);
+
+    useEditorStore.getState().trimClip(videoId, "start", -100);
+    video = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === videoId) as VideoClip;
+    expect(video).toMatchObject({ startUs: 1_000_000, durationUs: 7_999_999, sourceInUs: 1 });
+    expect(Number.isInteger(video.startUs) && Number.isInteger(video.durationUs)).toBe(true);
   });
 
   it("chains timed video presentation cues with undo, trim and split continuity", () => {
@@ -627,6 +664,25 @@ describe("editorStore", () => {
     expect(effects).toHaveLength(0);
   });
 
+  it("preserves a locked matched effect without adding a duplicate on rematch", () => {
+    useEditorStore.getState().addVideo({ id: "locked-motion-video", name: "speech.mp4", kind: "video", durationUs: 3_000_000, hasAudio: true });
+    useEditorStore.getState().addSubtitles("locked-motion-video", [{ startSeconds: 0, endSeconds: 3, text: "行业进入精细化运营阶段。" }]);
+    const subtitle = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+    const backgroundMatch = { ...motionMatch, primaryEffectId: "scene-dark-grid", primaryText: "" };
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [backgroundMatch]);
+
+    const project = structuredClone(useEditorStore.getState().project);
+    const effectTrack = project.tracks.find((track) => track.kind === "composition")!;
+    effectTrack.clips[0].locked = true;
+    const lockedId = effectTrack.clips[0].id;
+    useEditorStore.setState({ project, past: [] });
+
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [backgroundMatch]);
+    const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({ id: lockedId, locked: true, sourceSubtitleId: subtitle.id });
+  });
+
   it("keeps subtitle colors independent from the project effect accent", () => {
     useEditorStore.getState().updateMotionTheme({ colors: { data: "#47d7ac", opinion: "#47d7ac", warning: "#47d7ac", auxiliary: "#47d7ac" } });
     useEditorStore.getState().addVideo({ id: "asr-video", name: "speech.mp4", kind: "video", durationUs: 3_000_000, hasAudio: true });
@@ -752,6 +808,43 @@ describe("editorStore", () => {
 
     useEditorStore.getState().undo();
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips).toEqual([]);
+  });
+
+  it("materializes cumulative effect states as one full-scene composition", () => {
+    const captions = [
+      { startSeconds: 0, endSeconds: 2, text: "先明确问题。" },
+      { startSeconds: 2, endSeconds: 4, text: "再分析原因。" },
+      { startSeconds: 4, endSeconds: 6, text: "最后给出解决方案。" }
+    ];
+    useEditorStore.getState().addVideo({ id: "method-video", name: "method.mp4", kind: "video", durationUs: 6_000_000, hasAudio: true });
+    useEditorStore.getState().addSubtitles("method-video", captions);
+    const subtitles = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips;
+    const matches = normalizeMotionMatches(captions.map((_, captionIndex) => ({
+      ...motionMatch,
+      captionIndex,
+      motionGroupId: "problem-solution",
+      persistUntilCaptionIndex: 2,
+      primaryEffectId: "pin-board",
+      primaryText: [
+        "核心方法｜明确问题",
+        "核心方法｜明确问题｜分析原因",
+        "核心方法｜明确问题｜分析原因｜解决方案"
+      ][captionIndex],
+      cameraPreset: "none" as const
+    })), captions, 6);
+
+    useEditorStore.getState().applyMotionMatches(subtitles.map((subtitle) => subtitle.id), matches);
+
+    const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips as CompositionClip[];
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({
+      compositionId: "pin-board",
+      startUs: 0,
+      durationUs: 6_000_000,
+      text: "核心方法｜明确问题｜分析原因｜解决方案",
+      sourceSubtitleId: subtitles[0].id,
+      params: { title: "核心方法", items: "明确问题|分析原因|解决方案" }
+    });
   });
 
   it("resolves overlapping AI motion positions before writing timeline clips", () => {

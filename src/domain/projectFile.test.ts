@@ -7,6 +7,7 @@ import { createEffectPreviewClip } from "@/domain/effectPreview";
 import { cameraMotionForPreset } from "@/domain/camera";
 import { createVideoPresentationCue, DEFAULT_VIDEO_MASK } from "@/domain/videoPresentation";
 import type { VideoClip } from "@/domain/project";
+import { lintMotionProject } from "@/domain/motionLint";
 
 describe("project files", () => {
   it("round-trips subtitle themes and migrates version 29 without recoloring existing subtitles", () => {
@@ -628,6 +629,32 @@ describe("project files", () => {
     expect(clip.scenes[0].transform).toMatchObject({ x: 50, y: 22 });
     expect(clip.scenes[0].additionalEffects?.[0].transform).toMatchObject({ x: 76, y: 30 });
     expect(clip.scenes[0].additionalEffects?.[1].transform).toMatchObject({ x: 61, y: 50 });
+  });
+
+  it("repairs fractional timeline ranges when loading an existing project", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    const generatedTrack = raw.tracks.find((track: { kind: string }) => track.kind === "generated");
+    const subtitleTrack = raw.tracks.find((track: { kind: string }) => track.kind === "subtitle");
+    generatedTrack.clips.push({
+      id: "fractional-ai", trackId: generatedTrack.id, kind: "generated", label: "AI 口播视频制作的痛点与解决方案",
+      startUs: 1_234_567.8, durationUs: 3_000_000.4, locked: false, article: "", narration: "", prompt: "", insertMode: "overlay",
+      scenes: [{
+        id: "fractional-scene", title: "痛点与解决方案", narration: "", durationUs: 3_000_000, compositionId: "quote-lockup",
+        textColor: "#ffffff", accentColor: "#47d7ac", fontSize: 58, speed: 1, transform: { x: 50, y: 30, scale: 1, rotation: 0, opacity: 1 },
+        mediaSourceInUs: 0, mediaFit: "cover", mediaVolume: 0, camera: cameraMotionForTest()
+      }]
+    });
+    subtitleTrack.clips.push({
+      id: "fractional-subtitle", trackId: subtitleTrack.id, kind: "subtitle", label: "痛点与解决方案",
+      startUs: 1_234_567.8, durationUs: 3_000_000.4, locked: false, text: "痛点与解决方案",
+      color: "#ffffff", backgroundColor: "#000000", fontSize: 44, positionY: 88
+    });
+
+    const restored = parseProject(JSON.stringify(raw));
+    const clips = restored.tracks.flatMap((track) => track.clips);
+    expect(clips.find((clip) => clip.id === "fractional-ai")).toMatchObject({ startUs: 1_234_568, durationUs: 3_000_000 });
+    expect(clips.find((clip) => clip.id === "fractional-subtitle")).toMatchObject({ startUs: 1_234_568, durationUs: 3_000_000 });
+    expect(lintMotionProject(restored).filter((issue) => issue.ruleId === "invalid-time")).toEqual([]);
   });
 });
 

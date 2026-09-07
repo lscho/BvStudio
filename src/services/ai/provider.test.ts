@@ -270,6 +270,84 @@ describe("provider requests", () => {
     expect(matches[0]).toMatchObject({ primaryEffectId: "scene-dark-grid", primaryText: "" });
   });
 
+  it("keeps only one repeated background effect in the same motion scene", () => {
+    const captions = [
+      { startSeconds: 0, endSeconds: 2, text: "先说明问题背景。" },
+      { startSeconds: 2, endSeconds: 5, text: "再说明对应解决方案。" }
+    ];
+    const base = {
+      captionIndex: 0, motionGroupId: "problem-solution", persistUntilCaptionIndex: 1,
+      primaryEffectId: "scene-dark-grid", primaryText: "", secondaryEffectId: null, secondaryText: null,
+      accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 75, secondaryY: 60,
+      cameraPreset: "none" as const, videoLayers: [], backdropPreset: "none" as const,
+      primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null,
+      secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" as const, chart: null
+    };
+
+    const matches = normalizeMotionMatches([
+      base,
+      { ...base, captionIndex: 1 }
+    ], captions, 5);
+
+    expect(matches.map((match) => match.primaryEffectId)).toEqual(["scene-dark-grid", null]);
+  });
+
+  it.each(["pin-board", "step-timeline", "checklist"] as const)(
+    "collapses cumulative %s states into the first scene layer with the fullest text",
+    (compositionId) => {
+      const captions = [
+        { startSeconds: 0, endSeconds: 2, text: "先明确问题。" },
+        { startSeconds: 2, endSeconds: 4, text: "再分析原因。" },
+        { startSeconds: 4, endSeconds: 6, text: "最后给出解决方案。" }
+      ];
+      const base = {
+        captionIndex: 0, motionGroupId: "problem-solution", persistUntilCaptionIndex: 0,
+        primaryEffectId: compositionId, primaryText: "核心方法｜明确问题", secondaryEffectId: null, secondaryText: null,
+        accentColor: "#5fa8ff", x: 50, y: 35, scale: 1, secondaryX: 75, secondaryY: 60,
+        cameraPreset: "none" as const, videoLayers: [], backdropPreset: "none" as const,
+        primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null,
+        secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" as const, chart: null
+      };
+
+      const matches = normalizeMotionMatches([
+        base,
+        { ...base, captionIndex: 1, persistUntilCaptionIndex: 1, primaryText: "核心方法｜明确问题｜分析原因" },
+        { ...base, captionIndex: 2, persistUntilCaptionIndex: 2, primaryText: "核心方法｜明确问题｜分析原因｜解决方案" }
+      ], captions, 6);
+
+      expect(matches[0]).toMatchObject({
+        captionIndex: 0,
+        primaryEffectId: compositionId,
+        primaryText: "核心方法｜明确问题｜分析原因｜解决方案",
+        persistUntilCaptionIndex: 2
+      });
+      expect(matches.slice(1).map((match) => match.primaryEffectId)).toEqual([null, null]);
+    }
+  );
+
+  it("keeps independent stateful cards in the same fallback scene", () => {
+    const captions = [
+      { startSeconds: 0, endSeconds: 2, text: "先完成发布准备。" },
+      { startSeconds: 2, endSeconds: 4, text: "随后检查运营数据。" }
+    ];
+    const base = {
+      captionIndex: 0, motionGroupId: "independent-cards", persistUntilCaptionIndex: 1,
+      primaryEffectId: "checklist", primaryText: "发布准备｜校对文案", secondaryEffectId: null, secondaryText: null,
+      accentColor: "#5fa8ff", x: 50, y: 35, scale: 1, secondaryX: 75, secondaryY: 60,
+      cameraPreset: "none" as const, videoLayers: [], backdropPreset: "none" as const,
+      primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null,
+      secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" as const, chart: null
+    };
+
+    const matches = normalizeMotionMatches([
+      base,
+      { ...base, captionIndex: 1, primaryText: "运营检查｜查看转化" }
+    ], captions, 4);
+
+    expect(matches.map((match) => match.primaryEffectId)).toEqual(["checklist", "checklist"]);
+    expect(matches.map((match) => match.primaryText)).toEqual(["发布准备｜校对文案", "运营检查｜查看转化"]);
+  });
+
   it("keeps a grounded staged motion group across multiple captions", () => {
     const captions = [
       { startSeconds: 11.36, endSeconds: 12.8, text: "市场格局上，" },

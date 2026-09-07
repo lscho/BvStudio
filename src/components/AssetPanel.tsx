@@ -39,7 +39,6 @@ export function AssetPanel({ onImport, onGenerate, onMatchEffects, onMatchSounds
   const selectedClipIds = useEditorStore((state) => state.selectedClipIds);
   const addComposition = useEditorStore((state) => state.addComposition);
   const updateMotionTheme = useEditorStore((state) => state.updateMotionTheme);
-  const updateSubtitleAppearance = useEditorStore((state) => state.updateSubtitleAppearance);
   const placeAsset = useEditorStore((state) => state.placeAsset);
   const motionAccentColor = motionThemeAccentColor(project.motionTheme);
   const subtitles = useMemo(() => project.tracks.flatMap((track) => track.clips).filter((clip): clip is SubtitleClip => clip.kind === "subtitle").sort((left, right) => left.startUs - right.startUs), [project]);
@@ -123,20 +122,6 @@ export function AssetPanel({ onImport, onGenerate, onMatchEffects, onMatchSounds
         </Tabs.Content>
         <Tabs.Content value="subtitles" className="panel-content subtitles-panel" tabIndex={-1}>
           <section className="subtitle-library">
-            <section className="effect-theme-picker subtitle-theme-picker" aria-label="字幕主题色">
-              <header><strong>主题色</strong></header>
-              {([{ key: "color", label: "文字色" }, { key: "highlightColor", label: "关键词色" }] as const).map(({ key, label }) => (
-                <div className="subtitle-theme-row" key={key}>
-                  <span>{label}</span>
-                  <div role="radiogroup" aria-label={`字幕${label}`}>
-                    {[{ id: "white", label: "白色", color: "#ffffff" }, ...MOTION_ACCENT_COLOR_PRESETS].map((preset) => {
-                      const selected = project.subtitleTheme[key] === preset.color;
-                      return <button key={preset.id} type="button" role="radio" aria-checked={selected} aria-label={preset.label} title={preset.label} style={{ "--theme-color": preset.color } as React.CSSProperties} onClick={() => updateSubtitleAppearance(null, { [key]: preset.color })}>{selected && <Check size={12} aria-hidden="true" />}</button>;
-                    })}
-                  </div>
-                </div>
-              ))}
-            </section>
             <header><span className="subtitle-library-title"><Captions size={15} /><strong>时间字幕</strong></span><span className="subtitle-library-tools"><small>{subtitles.length}</small><button type="button" aria-label="脚本记录" title="脚本记录" aria-expanded={scriptsOpen} onClick={() => setScriptsOpen(!scriptsOpen)}><FileText size={15} /></button><button type="button" aria-label="设置全局字幕样式" title="设置全局字幕样式" disabled={!subtitles.length} onClick={() => setSubtitleStyleOpen(true)}><SlidersHorizontal size={15} /></button></span></header>
             {scriptsOpen && <section className="subtitle-scripts" aria-label="脚本记录">
               {scripts.length ? scripts.map(script => <button type="button" key={script.id} aria-label={`编辑脚本 ${script.label}`} aria-pressed={selectedClipIds.includes(script.id)} title={script.label} onClick={() => { useEditorStore.getState().selectClip(script.id); useEditorStore.getState().setPlayhead(script.startUs); }}>
