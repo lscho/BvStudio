@@ -129,6 +129,14 @@ describe("material compositions", () => {
     useEditorStore.getState().undo();
     expect(clips()[0].durationUs).toBe(10_000_000);
   });
+  it("keeps grouped 3D displays independent from sequenced duration limits", () => {
+    useEditorStore.getState().addComposition("poster-wall-3d");
+    const clip = clips()[0];
+    useEditorStore.getState().updateComposition(clip.id, { durationUs: 12_000_000 });
+    expect(clips()[0]).toMatchObject({ durationUs: 12_000_000, animationDurationUs: 12_000_000 });
+    useEditorStore.getState().retimeComposition(clip.id, 20_000_000);
+    expect(clips()[0].durationUs).toBe(20_000_000);
+  });
   it("binds a presenter video to a focus card and exports its animated media layer", () => {
     const project = createEmptyProject();
     const presenter: MediaAsset = { id: "presenter", name: "presenter.mp4", kind: "video", durationUs: 12_000_000, sourcePath: "/presenter.mp4", objectUrl: "blob:presenter" };
@@ -217,6 +225,22 @@ describe("material compositions", () => {
     const overlay = buildRenderPlan(useEditorStore.getState().project, "/output.mp4").overlays[0];
     expect(overlay).toMatchObject({ kind: "composition", renderer: "three", compositionImages: [{ id: "b", path: "/images/b.png" }, { id: "a", path: "/images/a.png" }], animationDurationUs: 10_000_000 });
     expect(JSON.stringify(overlay)).not.toContain("blob:");
+  });
+
+  it("exports reference-effect bindings as local sources without persisting preview URLs", () => {
+    const recording: MediaAsset = { id: "recording", name: "screen.mp4", kind: "video", durationUs: 8_000_000, sourcePath: "/screen.mp4", objectUrl: "blob:screen" };
+    useEditorStore.getState().addComposition("cam-pan");
+    useEditorStore.getState().bindCompositionAssets(clips()[0].id, [{ slotId: "recording", assetIds: [recording.id] }], [recording]);
+
+    const clip = clips()[0];
+    expect(clip.bindings).toEqual([{ slotId: "recording", assetIds: [recording.id] }]);
+    expect(JSON.stringify(parseProject(serializeProject(useEditorStore.getState().project)))).not.toContain("blob:");
+    expect(buildRenderPlan(useEditorStore.getState().project, "/output.mp4").overlays[0]).toMatchObject({
+      compositionId: "cam-pan",
+      renderer: "react",
+      compositionImages: [{ id: recording.id, kind: "video", path: "/screen.mp4" }],
+      compositionBindings: [{ slotId: "recording", assetIds: [recording.id] }]
+    });
   });
 
   it("rejects invalid bindings and blocks export until inputs are complete", () => {

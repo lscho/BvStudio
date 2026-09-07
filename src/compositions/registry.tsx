@@ -4,6 +4,8 @@ import { measureChartBox } from "@/domain/chartEffects";
 import { allCompositions, compositionById, type CompositionDefinition, type CompositionParams, type EffectRecipe } from "@/domain/effects";
 import type { EffectBackdrop, CompositionClip, MotionTheme } from "@/domain/project";
 import { motionFontFamily, resolveEffectBackdropColor } from "@/domain/motionTheme";
+import { isReplicatedOverlayStudioEffect, replicatedOverlayStudioEffects, ReplicatedOverlayStudioCard } from "@/compositions/overlayStudioReference/adapter";
+import { overlayStudioMediaControlLabel, overlayStudioMediaControlMode } from "@/domain/overlayStudioMedia";
 import { ArgumentBoardCard, CausalChainCard, ConceptMapCard, MythFactCard, QuoteLinesCard } from "@/compositions/knowledgeCards";
 import { ChecklistCard, EntityChipsCard, PinBoardCard, StatProofCard, VersusCard } from "@/compositions/talkingHeadCards";
 import {
@@ -79,7 +81,33 @@ interface ComponentRegistration {
   motionDurationUs: number;
 }
 
+function replicatedControls(effect: (typeof replicatedOverlayStudioEffects)[number]): readonly CompositionControl[] {
+  return effect.controls.flatMap((control): CompositionControl[] => {
+    const mode = overlayStudioMediaControlMode(effect.id, control.key);
+    if (mode === "hidden") return [];
+    const label = overlayStudioMediaControlLabel(effect.id, control.key) ?? control.label.replace(/^[🌞🌙]\s*/u, "");
+    if (control.type === "text") return [{ kind: "param-text", field: control.key, label, rows: 1 }];
+    if (control.type === "textarea") return [{ kind: "param-text", field: control.key, label, rows: control.rows ?? 3 }];
+    if (control.type === "range") return [{ kind: "param-range", field: control.key, label, min: control.min, max: control.max, step: control.step, suffix: control.unit ?? "" }];
+    if (control.type === "toggle") return [{ kind: "param-toggle", field: control.key, label }];
+    if (control.type === "color") return [{ kind: "param-color", field: control.key, label }];
+    return [{
+      kind: "param-select",
+      field: control.key,
+      label,
+      options: control.options.map((option) => ({ ...option, label: option.label.replace(/^[🌞🌙]\s*/u, "") }))
+    }];
+  });
+}
+
+const replicatedComponentRegistrations = Object.fromEntries(replicatedOverlayStudioEffects.map((effect) => [effect.id, {
+  component: ReplicatedOverlayStudioCard,
+  controls: replicatedControls(effect),
+  motionDurationUs: compositionById(effect.id).defaultDurationUs
+}])) as Readonly<Record<string, ComponentRegistration>>;
+
 const componentRegistrations: Readonly<Record<string, ComponentRegistration>> = {
+  ...replicatedComponentRegistrations,
   "knowledge-concept-map": { component: ConceptMapCard, controls: structuredTextControls, motionDurationUs: 1_050_000 },
   "knowledge-causal-chain": { component: CausalChainCard, controls: structuredTextControls, motionDurationUs: 1_200_000 },
   "knowledge-argument-board": { component: ArgumentBoardCard, controls: structuredTextControls, motionDurationUs: 1_150_000 },
@@ -285,6 +313,10 @@ export function reactEffectMotionDurationUs(compositionId: string) {
 
 export function usesComponentChrome(compositionId: string) {
   return Object.hasOwn(componentRegistrations, compositionId) && !compositionId.startsWith("knowledge-");
+}
+
+export function usesFullCanvasComposition(compositionId: string) {
+  return isReplicatedOverlayStudioEffect(compositionId);
 }
 
 export function effectCardChromeStyle(clip: Pick<CompositionClip, "color" | "accentColor" | "backdrop"> & Partial<Pick<CompositionClip, "fontSize">>, recipe: EffectRecipe, length: (pixels: number, minimum?: number) => string, theme?: MotionTheme, componentOwnedChrome = false): CSSProperties {

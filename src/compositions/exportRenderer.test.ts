@@ -54,6 +54,15 @@ describe("React effect export timing", () => {
     expect(dynamicDurationUs({ ...overlay, compositionId: "knowledge-quote-lines" })).toBe(1_550_000);
   });
 
+  it("captures each replicated card through its authored duration", () => {
+    expect(dynamicDurationUs({ ...overlay, compositionId: "action-band", durationUs: 30_000_000 })).toBe(9_200_000);
+    expect(dynamicDurationUs({ ...overlay, compositionId: "info-board", durationUs: 30_000_000 })).toBe(17_800_000);
+  });
+
+  it("captures continuously animated imported backgrounds for the whole clip", () => {
+    expect(dynamicDurationUs({ ...overlay, compositionId: "dust-field", durationUs: 30_000_000 })).toBe(30_000_000);
+  });
+
   it("captures full persistent layers and parameter-driven animation timing", () => {
     expect(dynamicDurationUs({ ...overlay, compositionId: "chapter-bar", durationUs: 30_000_000 })).toBe(30_000_000);
     expect(dynamicDurationUs({ ...overlay, compositionId: "caption-track", durationUs: 12_000_000 })).toBe(12_000_000);

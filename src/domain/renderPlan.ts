@@ -9,6 +9,7 @@ import { resolveEffectAppearance } from "@/domain/motionTheme";
 import { focusCardSourceRect } from "@/domain/focusCard";
 import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
 import { videoFrameMask, videoFrameSize } from "@/domain/videoFrame";
+import { overlayStudioMediaSlots } from "@/domain/overlayStudioMedia";
 
 function activeAt<T extends { startUs: number; durationUs: number }>(clips: T[], timeUs: number): T | undefined {
   return clips.find((clip) => timeUs >= clip.startUs && timeUs < clip.startUs + clip.durationUs);
@@ -307,7 +308,19 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
       const recipe = scaleRecipe(clockControlledRecipe(clip.recipe ?? compositionById(clip.compositionId).recipe));
       const fontSize = effectiveEffectFontSize(clip.fontSize, recipe, clip.text);
       const appearance = resolveEffectAppearance(clip, project.motionTheme);
-      const reactOverlay = { kind: "text" as const, compositionId: clip.compositionId, renderer: "react" as const, startUs: clip.startUs, durationUs: clip.durationUs, sourceOffsetUs: clip.sourceOffsetUs, animationDurationUs: clip.animationDurationUs, text: clip.text, color: appearance.color, accentColor: appearance.accentColor, fontSize: fontSize * outputScale, x: clip.transform.x, y: clip.transform.y, opacity: clip.transform.opacity, scale: clip.transform.scale, rotation: clip.transform.rotation, speed: clip.speed, zIndex: compositionLayer(clip), transformKeyframes: clip.transformKeyframes, recipe, params: clip.params, backdrop: scaleBackdrop(clip.backdrop), motionTheme: project.motionTheme, dimAtUs: clip.dimAtUs };
+      const referenceSlots = overlayStudioMediaSlots(clip.compositionId);
+      const referenceImages = referenceSlots.length ? compositionAssetIds(clip).map((id) => {
+        const asset = project.assets.find((candidate) => candidate.id === id);
+        if (!asset || asset.missing) throw new Error(`${clip.label}素材缺失，请重新定位或替换`);
+        if (!asset.sourcePath) throw new Error(`${clip.label}素材缺少本地源路径，无法导出`);
+        if (asset.kind === "audio") throw new Error(`${clip.label}素材类型不符合动效要求`);
+        return { id, path: asset.sourcePath, kind: asset.kind };
+      }) : undefined;
+      if (referenceSlots.length) {
+        const issues = compositionBindingIssues(clip, project.assets);
+        if (issues.length) throw new Error(`${clip.label}：${issues[0]}`);
+      }
+      const reactOverlay = { kind: "text" as const, compositionId: clip.compositionId, renderer: "react" as const, startUs: clip.startUs, durationUs: clip.durationUs, sourceOffsetUs: clip.sourceOffsetUs, animationDurationUs: clip.animationDurationUs, text: clip.text, color: appearance.color, accentColor: appearance.accentColor, fontSize: fontSize * outputScale, x: clip.transform.x, y: clip.transform.y, opacity: clip.transform.opacity, scale: clip.transform.scale, rotation: clip.transform.rotation, speed: clip.speed, zIndex: compositionLayer(clip), transformKeyframes: clip.transformKeyframes, recipe, params: clip.params, compositionImages: referenceImages, compositionBindings: referenceSlots.length ? clip.bindings : undefined, backdrop: scaleBackdrop(clip.backdrop), motionTheme: project.motionTheme, dimAtUs: clip.dimAtUs };
       if (clip.compositionId !== "focus-card") return [reactOverlay];
       const issues = compositionBindingIssues(clip, project.assets);
       if (issues.length) throw new Error(`${clip.label}：${issues[0]}`);

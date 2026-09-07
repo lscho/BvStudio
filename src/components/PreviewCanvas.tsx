@@ -3,14 +3,14 @@ import { CompositionScene } from "@/components/CompositionScene";
 import { compositionLayer, compositionTimeUs, compositionTransformPatch, isBackgroundComposition, mediaComposition } from "@/domain/compositions";
 import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
 import { videoFrameSize } from "@/domain/videoFrame";
-import { Crosshair, FileVideo2, ListTree, Play, Settings2, Sparkles, UserRound, UserRoundX, X } from "lucide-react";
+import { Crosshair, FileVideo2, ListTree, Play, Settings2, Sparkles, UserRound, X } from "lucide-react";
 import { CanvasSettingsDialog } from "@/components/CanvasSettingsDialog";
 import { PresenterSafeAreaOverlay } from "@/components/PresenterSafeAreaOverlay";
 import { ChapterProgressDialog } from "@/components/ChapterProgressDialog";
-import { contentEndUs, type AudioClip, type CompositionClip, type GeneratedBlock, type ImageClip, type SceneClip, type SubtitleClip, type VideoClip } from "@/domain/project";
+import { contentEndUs, type AudioClip, type CompositionClip, type GeneratedBlock, type ImageClip, type MediaAsset, type SceneClip, type SubtitleClip, type VideoClip } from "@/domain/project";
 import { useEditorStore } from "@/stores/editorStore";
 import { clockControlledRecipe, effectAnimationState, compositionById, effectiveEffectFontSize, type EffectRecipe, type SceneBackgroundSpec } from "@/domain/effects";
-import { CompositionContent, effectCardChromeStyle, reactEffectMotionDurationUs, usesComponentChrome } from "@/compositions/registry";
+import { CompositionContent, effectCardChromeStyle, reactEffectMotionDurationUs, usesComponentChrome, usesFullCanvasComposition } from "@/compositions/registry";
 import { createEffectPreviewModel } from "@/domain/effectPreview";
 import { focusCardMediaRect, focusCardSourceRect } from "@/domain/focusCard";
 import { resolveEffectAppearance } from "@/domain/motionTheme";
@@ -21,6 +21,7 @@ import { activeVideoPresentationCue, focusEnvelope, momentumExitTransition, mome
 import { chapterProgressAt, displaySubtitleText, highlightedTextParts, subtitleStyle } from "@/domain/videoDecorations";
 import { localMediaUrl } from "@/services/media";
 import type { AiProviderConfig } from "@/services/ai/provider";
+import { resolveOverlayStudioMediaParams } from "@/domain/overlayStudioMedia";
 
 interface Props {
   aiProvider: AiProviderConfig;
@@ -53,6 +54,14 @@ function effectLibraryPreviewDurationUs(compositionId: string) {
   const definition = compositionById(compositionId);
   if (mediaComposition(compositionId)) return Math.min(definition.defaultDurationUs, 4_000_000);
   return Math.min(definition.defaultDurationUs, 5_000_000, Math.max(1_500_000, reactEffectMotionDurationUs(compositionId)));
+}
+
+function effectMediaParams(clip: CompositionClip, assets: readonly MediaAsset[]) {
+  return resolveOverlayStudioMediaParams(clip.compositionId, clip.params, clip.bindings, (assetId) => {
+    const asset = assets.find((candidate) => candidate.id === assetId);
+    const url = asset?.proxyObjectUrl ?? asset?.objectUrl;
+    return asset && url && asset.kind !== "audio" ? { id: asset.id, kind: asset.kind, url } : undefined;
+  });
 }
 
 export function previewAudioGain(volume: number, fadeInGain: number, fadeOutGain: number, ducked: boolean) {
@@ -256,12 +265,13 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
   const setFocusPickClip = useEditorStore((state) => state.setFocusPickClip);
   const presenterConfigured = project.presenterSafeArea.position !== "none";
   const presenterEditing = showPresenterSafeArea && presenterConfigured && !playing && !effectPreview && !focusPickClipId;
-  const presenterButtonLabel = !presenterConfigured ? "设置人物避让区" : showPresenterSafeArea ? "隐藏人物避让框" : "显示人物避让框";
+  const presenterButtonLabel = !presenterConfigured ? "设置人物避让区" : showPresenterSafeArea ? "清除人物避让区" : "显示人物避让框";
   function togglePresenterArea() {
     if (!presenterConfigured) {
       updatePresenterSafeArea({ position: "center", widthPercent: project.presenterSafeArea.widthPercent });
       setShowPresenterSafeArea(true);
-    } else setShowPresenterSafeArea((visible) => !visible);
+    } else if (showPresenterSafeArea) clearPresenterArea();
+    else setShowPresenterSafeArea(true);
     setFocusPickClip(null);
   }
   function clearPresenterArea() {
@@ -327,13 +337,6 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
     ? [...activeScenes, selectedScene]
     : activeScenes;
   const foregroundEffects = visibleEffects;
-  const hasPreviewBackdrop = visibleScenes.length > 0
-    || Boolean(generated)
-    || activeVideos.some((clip) => {
-      const asset = project.assets.find((candidate) => candidate.id === clip.assetId);
-      return Boolean(asset?.proxyObjectUrl ?? asset?.objectUrl);
-    })
-    || activeImages.some((clip) => Boolean(project.assets.find((asset) => asset.id === clip.assetId)?.objectUrl));
   const activeAudio = clipIndex.audio.filter((clip) => playheadUs >= clip.startUs && playheadUs < clip.startUs + clip.durationUs);
   const activeEffectSounds = [...activeScenes, ...activeEffects].flatMap((sourceClip) => (sourceClip.soundCues ?? []).flatMap((cue, cueIndex) => {
     const startUs = sourceClip.startUs + cue.offsetUs;
@@ -428,7 +431,7 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
   };
   return (
     <section className="preview-stage">
-      <div className={`preview-toolbar ${effectPreview ? "effect-preview-active" : ""}`}>{effectPreview && previewDefinition ? <><span className="effect-preview-label"><Play size={12} fill="currentColor" aria-hidden="true" /><span>预览 · {previewDefinition.name}</span></span><button type="button" aria-label="关闭动效预览" title="关闭预览" onClick={onCloseEffectPreview}><X size={13} /></button></> : <><span>{project.canvas.width} × {project.canvas.height}</span><span>{Number((project.canvas.fpsNumerator / project.canvas.fpsDenominator).toFixed(3))} fps</span><button type="button" className={presenterConfigured ? "active" : ""} aria-label={presenterButtonLabel} aria-pressed={presenterConfigured && showPresenterSafeArea} title={presenterButtonLabel} disabled={playing} onClick={togglePresenterArea}><UserRound size={13} /></button><button type="button" aria-label="清除人物避让区" title="清除人物避让区" disabled={!presenterConfigured || playing} onClick={clearPresenterArea}><UserRoundX size={13} /></button><button type="button" aria-label="设置章节进度" title="顶部章节进度" onClick={() => setChapterSettingsOpen(true)}><ListTree size={13} /></button><button type="button" aria-label="设置画布" title="画布与输出规格" onClick={() => setCanvasSettingsOpen(true)}><Settings2 size={13} /></button></>}</div>
+      <div className={`preview-toolbar ${effectPreview ? "effect-preview-active" : ""}`}>{effectPreview && previewDefinition ? <><span className="effect-preview-label"><Play size={12} fill="currentColor" aria-hidden="true" /><span>预览 · {previewDefinition.name}</span></span><button type="button" aria-label="关闭动效预览" title="关闭预览" onClick={onCloseEffectPreview}><X size={13} /></button></> : <><span>{project.canvas.width} × {project.canvas.height}</span><span>{Number((project.canvas.fpsNumerator / project.canvas.fpsDenominator).toFixed(3))} fps</span><button type="button" className={presenterConfigured ? "active" : ""} aria-label={presenterButtonLabel} aria-pressed={presenterConfigured} title={presenterButtonLabel} disabled={playing} onClick={togglePresenterArea}><UserRound size={13} /></button><button type="button" aria-label="设置章节进度" title="顶部章节进度" onClick={() => setChapterSettingsOpen(true)}><ListTree size={13} /></button><button type="button" aria-label="设置画布" title="画布与输出规格" onClick={() => setCanvasSettingsOpen(true)}><Settings2 size={13} /></button></>}</div>
       <div className="canvas-wrap">
         <div className={`preview-canvas ${!hasContent && !effectPreview ? "empty-preview" : ""} ${focusPickClipId ? "picking-focus" : ""}`} onPointerDownCapture={pickFocus} data-orientation={canvasRatioNumber < 0.8 ? "portrait" : canvasRatioNumber < 1.2 ? "square" : "landscape"} style={{ aspectRatio: canvasRatio, "--canvas-ratio": canvasRatioNumber } as React.CSSProperties}>
           {activeAudio.map((clip) => {
@@ -495,7 +498,7 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
             const appearance = resolveEffectAppearance(effect, project.motionTheme);
             const themedEffect = { ...effect, ...appearance, fontSize };
             const dim = effect.dimAtUs !== undefined && localUs >= effect.dimAtUs ? 0.35 : 1;
-            return <InteractiveEffectOverlay key={effect.id} className={`effect-overlay react-effect component-${effect.compositionId} motion-${project.motionTheme.skin} style-${project.motionTheme.style} recipe-${recipe.layout} entrance-none`} transform={transform} selected={selectedClipId === effect.id} onSelect={() => selectClip(effect.id)} onCommit={(nextTransform) => updateComposition(effect.id, effect.transformKeyframes?.length ? { transformKeyframes: upsertVisualKeyframe(effect.transformKeyframes, localUs, nextTransform) } : { transform: nextTransform })} styleFor={(nextTransform) => ({ left: `${nextTransform.x}%`, top: `${nextTransform.y}%`, zIndex: compositionLayer(effect), ...effectCardChromeStyle(themedEffect, recipe, canvasLength, project.motionTheme, usesComponentChrome(effect.compositionId)), ...animatedStyle(recipe, { ...nextTransform, opacity: nextTransform.opacity * dim }, effect.startUs - (effect.sourceOffsetUs ?? 0) / effect.speed, effect.speed), fontSize: canvasLength(fontSize) } as React.CSSProperties)}><CompositionContent compositionId={effect.compositionId} text={effect.text} color={appearance.color} accentColor={appearance.accentColor} fontSize={fontSize} recipe={recipe} params={effect.params} timeUs={compositionTimeUs(effect, localUs)} durationUs={effect.animationDurationUs ?? effect.durationUs} canvasWidth={project.canvas.width} canvasHeight={project.canvas.height} /></InteractiveEffectOverlay>;
+            return <InteractiveEffectOverlay key={effect.id} className={`effect-overlay react-effect ${usesFullCanvasComposition(effect.compositionId) ? "reference-full-canvas-effect" : ""} component-${effect.compositionId} motion-${project.motionTheme.skin} style-${project.motionTheme.style} recipe-${recipe.layout} entrance-none`} transform={transform} selected={selectedClipId === effect.id} onSelect={() => selectClip(effect.id)} onCommit={(nextTransform) => updateComposition(effect.id, effect.transformKeyframes?.length ? { transformKeyframes: upsertVisualKeyframe(effect.transformKeyframes, localUs, nextTransform) } : { transform: nextTransform })} styleFor={(nextTransform) => ({ left: `${nextTransform.x}%`, top: `${nextTransform.y}%`, zIndex: compositionLayer(effect), ...effectCardChromeStyle(themedEffect, recipe, canvasLength, project.motionTheme, usesComponentChrome(effect.compositionId)), ...animatedStyle(recipe, { ...nextTransform, opacity: nextTransform.opacity * dim }, effect.startUs - (effect.sourceOffsetUs ?? 0) / effect.speed, effect.speed), fontSize: canvasLength(fontSize) } as React.CSSProperties)}><CompositionContent compositionId={effect.compositionId} text={effect.text} color={appearance.color} accentColor={appearance.accentColor} fontSize={fontSize} recipe={recipe} params={effectMediaParams(effect, project.assets)} timeUs={compositionTimeUs(effect, localUs)} durationUs={effect.animationDurationUs ?? effect.durationUs} canvasWidth={project.canvas.width} canvasHeight={project.canvas.height} /></InteractiveEffectOverlay>;
           })}
           {showTimelineGraphics && foregroundEffects.filter((effect) => effect.compositionId === "focus-card").map((effect) => renderFocusCardMedia(effect, project.assets, Math.max(0, Math.min(effect.durationUs, playheadUs - effect.startUs))))}
           {showTimelineGraphics && project.chapterProgress.enabled && project.chapterProgress.chapters.length > 0 && <div
@@ -514,11 +517,10 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
           >{project.chapterProgress.chapters.map((chapter, index) => <div key={chapter.id} className={`chapter-progress-item ${index === chapterState.activeIndex ? "active" : ""} ${index < chapterState.activeIndex ? "completed" : ""}`} style={{ "--chapter-fill": `${index === chapterState.activeIndex ? chapterState.localProgress * 100 : index < chapterState.activeIndex ? 100 : 0}%` } as React.CSSProperties}><span>{chapter.title}</span></div>)}</div>}
           {showTimelineGraphics && subtitle && activeSubtitleStyle && <div className={`subtitle-overlay preset-${activeSubtitleStyle.stylePreset}`} style={{ bottom: `${100 - subtitle.positionY}%`, color: subtitle.color, backgroundColor: colorWithOpacity(subtitle.backgroundColor, activeSubtitleStyle.stylePreset === "minimal" ? 0 : activeSubtitleStyle.backgroundOpacity), borderRadius: canvasLength(activeSubtitleStyle.borderRadius), fontSize: canvasLength(subtitle.fontSize, 9), WebkitTextStroke: activeSubtitleStyle.outlineWidth > 0 ? `${canvasLength(activeSubtitleStyle.outlineWidth)} ${activeSubtitleStyle.outlineColor}` : undefined }}>{highlightedTextParts(displaySubtitleText(subtitle.text), activeSubtitleStyle.highlightWords).map((part, index) => <span key={`${index}-${part.text}`} className={part.highlighted ? "subtitle-highlight" : undefined} style={part.highlighted ? { color: activeSubtitleStyle.highlightColor } : undefined}>{part.text}</span>)}</div>}
           {effectPreview && previewClip && previewDefinition && previewRecipe && previewAppearance && <div className="effect-library-preview" key={`${effectPreview.compositionId}:${effectPreview.requestId}`}>
-            {!hasPreviewBackdrop && !mediaComposition(previewClip.compositionId) && <div className={`effect-preview-sample-backdrop motion-${project.motionTheme.skin}`} aria-hidden="true"><i /><i /><i /></div>}
             {previewClip.recipe?.sceneBackground ? <div className="scene-background" style={{ ...sceneBackgroundStyle(previewClip.recipe.sceneBackground), zIndex: compositionLayer(previewClip) }} /> : mediaComposition(previewClip.compositionId) ? <div className="composition-overlay effect-preview-composition" style={{ left: `${previewClip.transform.x}%`, top: `${previewClip.transform.y}%`, zIndex: compositionLayer(previewClip), opacity: previewClip.transform.opacity, transform: `translate(-50%, -50%) scale(${previewClip.transform.scale}) rotate(${previewClip.transform.rotation}deg)` }}>
               <CompositionScene clip={previewClip} assets={previewModel?.assets ?? project.assets} width={project.canvas.width} height={project.canvas.height} localUs={effectPreviewTimeUs} selected={false} onSelect={() => undefined} />
-            </div> : <div className={`effect-overlay react-effect component-${previewClip.compositionId} motion-${project.motionTheme.skin} style-${project.motionTheme.style} recipe-${previewRecipe.layout} entrance-none`} style={{ left: `${previewClip.transform.x}%`, top: `${previewClip.transform.y}%`, zIndex: compositionLayer(previewClip), ...effectCardChromeStyle({ ...previewClip, ...previewAppearance }, previewRecipe, canvasLength, project.motionTheme, usesComponentChrome(previewClip.compositionId)), ...animatedStyle(previewRecipe, previewClip.transform, 0, previewClip.speed, {}, effectPreviewTimeUs), fontSize: canvasLength(previewClip.fontSize) } as React.CSSProperties}>
-              <CompositionContent compositionId={previewClip.compositionId} text={previewClip.text} color={previewAppearance.color} accentColor={previewAppearance.accentColor} fontSize={previewClip.fontSize} recipe={previewRecipe} params={previewClip.params} timeUs={compositionTimeUs(previewClip, effectPreviewTimeUs)} durationUs={previewClip.animationDurationUs ?? previewClip.durationUs} canvasWidth={project.canvas.width} canvasHeight={project.canvas.height} />
+            </div> : <div className={`effect-overlay react-effect ${usesFullCanvasComposition(previewClip.compositionId) ? "reference-full-canvas-effect" : ""} component-${previewClip.compositionId} motion-${project.motionTheme.skin} style-${project.motionTheme.style} recipe-${previewRecipe.layout} entrance-none`} style={{ left: `${previewClip.transform.x}%`, top: `${previewClip.transform.y}%`, zIndex: compositionLayer(previewClip), ...effectCardChromeStyle({ ...previewClip, ...previewAppearance }, previewRecipe, canvasLength, project.motionTheme, usesComponentChrome(previewClip.compositionId)), ...animatedStyle(previewRecipe, previewClip.transform, 0, previewClip.speed, {}, effectPreviewTimeUs), fontSize: canvasLength(previewClip.fontSize) } as React.CSSProperties}>
+              <CompositionContent compositionId={previewClip.compositionId} text={previewClip.text} color={previewAppearance.color} accentColor={previewAppearance.accentColor} fontSize={previewClip.fontSize} recipe={previewRecipe} params={effectMediaParams(previewClip, previewModel?.assets ?? project.assets)} timeUs={compositionTimeUs(previewClip, effectPreviewTimeUs)} durationUs={previewClip.animationDurationUs ?? previewClip.durationUs} canvasWidth={project.canvas.width} canvasHeight={project.canvas.height} />
             </div>}
             {renderFocusCardMedia(previewClip, previewModel?.assets ?? project.assets, effectPreviewTimeUs)}
           </div>}

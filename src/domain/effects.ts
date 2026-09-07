@@ -1,5 +1,6 @@
 import { EASING_NAMES, eased as evaluateEasing, type EasingName } from "@/domain/easing";
 import { FOCUS_CARD_SLOTS, MEDIA_COMPOSITIONS, type CompositionSlot } from "@/domain/compositions";
+import { importedOverlayStudioEffectIds, importedOverlayStudioEffects, importedOverlayStudioTextParamKeys } from "@/domain/overlayStudioCatalog";
 
 export type EffectCategory = "标题" | "强调" | "卡片" | "标注" | "数据" | "布局" | "场景" | "背景" | "展示";
 export type EffectLayout = "highlight" | "number" | "panel" | "underline" | "frame";
@@ -481,7 +482,7 @@ const TALKING_HEAD_EFFECTS: readonly CompositionDefinition[] = [
     recipe: { layout: "frame", entrance: "none", paddingX: 28, paddingY: 22, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.84 }
   },
   {
-    id: "step-timeline", name: "步骤时间线", category: "卡片", description: "章节或操作步骤沿时间线逐条出现", tags: ["口播", "步骤", "章节", "流程", "教程", "大纲"],
+    id: "step-timeline", name: "步骤时间线", category: "布局", description: "章节或操作步骤沿时间线逐条出现", tags: ["口播", "步骤", "章节", "流程", "教程", "大纲"],
     defaultDurationUs: 6_000_000, defaultText: "开场钩子｜干货主体｜结尾升华", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
     defaultParams: { theme: "dark", position: "right", title: "本期*章节*大纲", steps: "开场钩子|干货主体|结尾升华", revealed: 3, offsetX: 0, offsetY: 0 },
     recipe: { layout: "panel", entrance: "none", paddingX: 24, paddingY: 20, borderWidth: 3, borderRadius: 4, backgroundOpacity: 0.84 }
@@ -511,7 +512,7 @@ const TALKING_HEAD_EFFECTS: readonly CompositionDefinition[] = [
     recipe: { layout: "panel", entrance: "none", paddingX: 24, paddingY: 20, borderWidth: 3, borderRadius: 4, backgroundOpacity: 0.84 }
   },
   {
-    id: "checklist", name: "步骤清单", category: "卡片", description: "教程与方法口播中的步骤逐项打勾；文案格式：清单标题｜步骤一｜步骤二｜步骤三", tags: ["口播", "步骤", "流程", "方法", "教程", "清单", "行动"],
+    id: "checklist", name: "步骤清单", category: "布局", description: "教程与方法口播中的步骤逐项打勾；文案格式：清单标题｜步骤一｜步骤二｜步骤三", tags: ["口播", "步骤", "流程", "方法", "教程", "清单", "行动"],
     defaultDurationUs: 6_000_000, defaultText: "行动清单｜整理素材｜确认结构｜完成输出", defaultColor: "#ffffff", defaultAccentColor: "#47d7ac",
     defaultParams: { theme: "dark", position: "left", title: "步骤打勾", items: "整理素材|确认结构|完成输出|没讲到的先灰着", checked: 3, stepMs: 160, offsetX: 0, offsetY: 0 },
     recipe: { layout: "frame", entrance: "none", paddingX: 24, paddingY: 20, borderWidth: 1, borderRadius: 4, backgroundOpacity: 0.84 }
@@ -599,10 +600,13 @@ const TALKING_HEAD_EFFECTS: readonly CompositionDefinition[] = [
 
 export const OVERLAY_STUDIO_EFFECT_IDS = [
   "quote-lockup", "step-timeline", "rank-bars", "punch-pill", "term-card", "checklist", "terminal-3d", "ring-metric", "versus-card", "ui-callout",
-  "type-shift", "blur-text", "odometer", "focus-card", "chapter-bar", "caption-track", "stat-proof", "growth-curve", "entity-chips", "pin-board"
+  "type-shift", "blur-text", "odometer", "focus-card", "chapter-bar", "caption-track", "stat-proof", "growth-curve", "entity-chips", "pin-board",
+  ...importedOverlayStudioEffectIds
 ] as const;
 
-const overlayStudioDefaultPosition: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT_IDS)[number], { x: number; y: number }>> = {
+const overlayStudioEffectIdSet = new Set<string>(OVERLAY_STUDIO_EFFECT_IDS);
+
+const overlayStudioDefaultPosition: Partial<Record<string, { x: number; y: number }>> = {
   "quote-lockup": { x: 72, y: 50 },
   "step-timeline": { x: 73, y: 50 },
   "rank-bars": { x: 28, y: 50 },
@@ -626,7 +630,7 @@ const overlayStudioDefaultPosition: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT
 };
 
 export function defaultEffectTransform(compositionId: string) {
-  const position = overlayStudioDefaultPosition[compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]] ?? { x: 50, y: 30 };
+  const position = overlayStudioDefaultPosition[compositionId] ?? (overlayStudioEffectIdSet.has(compositionId) ? { x: 50, y: 50 } : { x: 50, y: 30 });
   return { ...position, scale: 1, rotation: 0, opacity: 1 };
 }
 
@@ -707,11 +711,53 @@ const TEST_EFFECTS: readonly CompositionDefinition[] = [
   }))
 ] as const;
 
-const removedStandaloneFeatureIds = new Set(["chapter-bar", "caption-track"]);
-const REMOVED_STANDALONE_EFFECTS = TALKING_HEAD_EFFECTS.filter((effect) => removedStandaloneFeatureIds.has(effect.id));
+const importedOverlayStudioCategoryOverrides: Readonly<Partial<Record<string, EffectCategory>>> = {
+  "glass-pane": "背景",
+  "frost-screen": "背景",
+  "dot-crowd": "数据",
+  "proof-shot": "展示",
+  "proof-wall": "展示",
+  "ghost-video": "展示",
+  "phone-shot": "展示",
+  "doc-scroll": "展示",
+  "win-lose": "数据",
+  "bar-race": "数据",
+  "photo-halo": "展示",
+  "clip-flow": "布局",
+  "chat-volley": "布局",
+  "action-band": "布局",
+  "stepper-flow": "布局",
+  "studio-build": "布局",
+  "replicate-loop": "布局",
+  "timeline-h": "布局",
+  "flow-chart": "布局",
+  converge: "布局",
+  "section-head": "标题",
+  "stroke-title": "标题",
+  "duo-title": "标题",
+  "screen-demo": "展示",
+  "demo-tour": "展示",
+  "cam-pan": "展示",
+  "cover-stack": "展示",
+  "cover-flow": "展示",
+  "video-showcase": "展示",
+  "clip-parade": "展示",
+  "demo-rail": "展示",
+  "light-sweep": "强调",
+  "warp-title": "标题"
+};
+
+const REPLICATED_OVERLAY_STUDIO_EFFECTS: readonly CompositionDefinition[] = importedOverlayStudioEffects.map((effect) => ({
+  ...effect,
+  category: importedOverlayStudioCategoryOverrides[effect.id] ?? effect.category,
+  tags: [...effect.tags],
+  defaultParams: { ...effect.defaultParams },
+  recipe: { ...effect.recipe }
+}));
 
 export const BUILTIN_EFFECTS: readonly CompositionDefinition[] = [
-  ...TALKING_HEAD_EFFECTS.filter((effect) => !removedStandaloneFeatureIds.has(effect.id)),
+  ...TALKING_HEAD_EFFECTS,
+  ...REPLICATED_OVERLAY_STUDIO_EFFECTS,
   ...MEDIA_COMPOSITIONS
 ];
 export const OVERLAY_STUDIO_BASE_FONT_SIZE = 48;
@@ -719,7 +765,6 @@ export const OVERLAY_STUDIO_BASE_FONT_SIZE = 48;
 // Old project files may still reference these IDs, but they are intentionally hidden from
 // the library, local retrieval, AI candidates, and newly created projects.
 const ARCHIVED_BUILTIN_EFFECTS: readonly CompositionDefinition[] = [
-  ...REMOVED_STANDALONE_EFFECTS,
   ...TEST_EFFECTS,
   ...KNOWLEDGE_EFFECTS,
   ...LEGACY_EFFECTS
@@ -746,6 +791,11 @@ export function effectParamsForText(compositionId: string, text: string): Compos
   const params = structuredClone(compositionById(compositionId).defaultParams ?? {});
   const normalized = text.replaceAll("｜", "|").trim();
   const parts = normalized.split("|").map((part) => part.trim()).filter(Boolean);
+  const importedTextKey = importedOverlayStudioTextParamKeys[compositionId];
+  if (importedTextKey) {
+    params[importedTextKey] = normalized;
+    return params;
+  }
   if (compositionId === "pin-board") {
     params.title = parts[0] ?? "";
     params.subtitle = "";
@@ -854,7 +904,7 @@ export function effectParamsForText(compositionId: string, text: string): Compos
   return params;
 }
 
-const effectTextParamKeys: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT_IDS)[number], readonly string[]>> = {
+const effectTextParamKeys: Partial<Record<string, readonly string[]>> = {
   "quote-lockup": ["quote", "author"],
   "step-timeline": ["title", "steps", "revealed"],
   "rank-bars": ["title", "rows"],
@@ -878,7 +928,8 @@ const effectTextParamKeys: Partial<Record<(typeof OVERLAY_STUDIO_EFFECT_IDS)[num
 };
 
 export function remapEffectTextParams(compositionId: string, text: string, current: CompositionParams): CompositionParams {
-  const keys = effectTextParamKeys[compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]];
+  const importedTextKey = importedOverlayStudioTextParamKeys[compositionId];
+  const keys = effectTextParamKeys[compositionId] ?? (importedTextKey ? [importedTextKey] : undefined);
   if (!keys) return current;
   const mapped = effectParamsForText(compositionId, text);
   const next = { ...current };
@@ -890,7 +941,7 @@ export function remapEffectTextParams(compositionId: string, text: string, curre
 }
 
 export function recommendedEffectFontSizeForId(compositionId: string, recipe: EffectRecipe, text = ""): number {
-  return OVERLAY_STUDIO_EFFECT_IDS.includes(compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number])
+  return overlayStudioEffectIdSet.has(compositionId)
     ? OVERLAY_STUDIO_BASE_FONT_SIZE
     : recommendedEffectFontSize(recipe, text);
 }

@@ -71,13 +71,25 @@ describe("PreviewCanvas effect manipulation", () => {
     }));
 
     expect(container.querySelector(".effect-library-preview .component-punch-pill")).toHaveTextContent("一句金句，定格三秒");
+    expect(container.querySelector(".effect-preview-sample-backdrop")).not.toBeInTheDocument();
     expect(screen.getByText("预览 · 金句强调条")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "关闭动效预览" }));
     expect(onCloseEffectPreview).toHaveBeenCalledOnce();
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips).toHaveLength(0);
   });
 
-  it("uses a temporary demonstration image for a focus-card preview", () => {
+  it("renders a bound recording from the current project inside a reference camera effect", () => {
+    useEditorStore.getState().addComposition("cam-pan");
+    const clip = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((candidate) => candidate.kind === "composition")!;
+    useEditorStore.getState().bindCompositionAssets(clip.id, [{ slotId: "recording", assetIds: ["screen"] }], [{
+      id: "screen", name: "screen.mp4", kind: "video", durationUs: 8_000_000, objectUrl: "blob:screen"
+    }]);
+
+    const { container } = render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
+    expect(container.querySelector(".component-cam-pan video")).toHaveAttribute("src", "blob:screen#bvideo-video");
+  });
+
+  it("uses a neutral temporary material placeholder for a focus-card preview", () => {
     const { container } = render(createElement(PreviewCanvas, {
       aiProvider,
       onNeedSettings: vi.fn(),
@@ -128,7 +140,7 @@ describe("PreviewCanvas effect manipulation", () => {
     }));
 
     expect(container.querySelectorAll(".component-punch-pill")).toHaveLength(1);
-    expect(container.querySelector(".effect-preview-sample-backdrop")).toHaveClass("motion-light");
+    expect(container.querySelector(".effect-preview-sample-backdrop")).not.toBeInTheDocument();
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips).toHaveLength(1);
   });
 
@@ -136,30 +148,48 @@ describe("PreviewCanvas effect manipulation", () => {
     expect(previewCanvasLength(48, 1920)).toBe("2.5cqw");
     expect(previewCanvasLength(48, 1920, 10)).toBe("clamp(10px, 2.5cqw, 48px)");
   });
-  it("creates an editable presenter area in one click and keeps avoidance when hidden", () => {
+  it("uses one toolbar button to create and clear the presenter area with undo support", () => {
     render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
 
     const presenterButton = screen.getByRole("button", { name: "设置人物避让区" });
     expect(presenterButton).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "清除人物避让区" })).not.toBeInTheDocument();
+    expect(presenterButton).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(presenterButton);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "移动人物避让区" })).toBeVisible();
     const settings = useEditorStore.getState().project.presenterSafeArea;
     expect(settings.position).not.toBe("none");
-    const historyLength = useEditorStore.getState().past.length;
-
-    fireEvent.click(screen.getByRole("button", { name: "隐藏人物避让框" }));
+    expect(screen.getByRole("button", { name: "清除人物避让区" })).toBe(presenterButton);
+    expect(presenterButton).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(presenterButton);
     expect(screen.queryByRole("button", { name: "移动人物避让区" })).not.toBeInTheDocument();
-    expect(useEditorStore.getState().project.presenterSafeArea).toEqual(settings);
-    fireEvent.click(screen.getByRole("button", { name: "显示人物避让框" }));
-    expect(screen.getByRole("button", { name: "移动人物避让区" })).toBeVisible();
-    expect(useEditorStore.getState().past).toHaveLength(historyLength);
-
-    fireEvent.click(screen.getByRole("button", { name: "清除人物避让区" }));
+    expect(screen.getByRole("button", { name: "设置人物避让区" })).toBe(presenterButton);
+    expect(presenterButton).toHaveAttribute("aria-pressed", "false");
     expect(useEditorStore.getState().project.presenterSafeArea.position).toBe("none");
     act(() => useEditorStore.getState().undo());
     expect(useEditorStore.getState().project.presenterSafeArea).toEqual(settings);
     expect(screen.getByRole("button", { name: "移动人物避让区" })).toBeVisible();
+    act(() => useEditorStore.getState().redo());
+    expect(useEditorStore.getState().project.presenterSafeArea.position).toBe("none");
+    fireEvent.click(presenterButton);
+    expect(screen.getByRole("button", { name: "移动人物避让区" })).toBeVisible();
+  });
+
+  it("shows an existing or dismissed presenter area before offering to clear it", () => {
+    const settings = { position: "custom" as const, xPercent: 18, yPercent: 12, widthPercent: 36, heightPercent: 65 };
+    useEditorStore.getState().updatePresenterSafeArea(settings);
+    const historyLength = useEditorStore.getState().past.length;
+    render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
+
+    fireEvent.click(screen.getByRole("button", { name: "显示人物避让框" }));
+    expect(screen.getByRole("button", { name: "清除人物避让区" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.keyDown(screen.getByRole("button", { name: "移动人物避让区" }), { key: "Escape" });
+    expect(screen.queryByRole("button", { name: "移动人物避让区" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "显示人物避让框" }));
+    expect(screen.getByRole("button", { name: "移动人物避让区" })).toBeVisible();
+    expect(useEditorStore.getState().project.presenterSafeArea).toEqual(settings);
+    expect(useEditorStore.getState().past).toHaveLength(historyLength);
   });
 
   it("hides presenter editing during playback and library previews", () => {

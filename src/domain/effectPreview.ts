@@ -19,17 +19,9 @@ function previewBindings(compositionId: string, assets: readonly MediaAsset[]): 
   });
 }
 
-const demoPalettes = [
-  ["#183b4a", "#4ecdc4", "#f7f8fa"],
-  ["#402b3a", "#ff8c6b", "#fff4df"],
-  ["#263748", "#73a9ff", "#e9f1ff"],
-  ["#3c3829", "#f4c95d", "#fff8df"]
-] as const;
-
-function demoImageUrl(index: number) {
-  const [background, accent, ink] = demoPalettes[index % demoPalettes.length];
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540"><rect width="960" height="540" fill="${background}"/><rect x="56" y="52" width="848" height="436" rx="18" fill="none" stroke="${ink}" stroke-opacity=".26" stroke-width="4"/><circle cx="300" cy="232" r="96" fill="${accent}"/><path d="M144 438c54-112 151-168 290-168 116 0 208 42 276 126v42H144z" fill="${ink}" fill-opacity=".92"/><rect x="590" y="104" width="230" height="22" fill="${accent}"/><rect x="590" y="148" width="154" height="14" fill="${ink}" fill-opacity=".58"/></svg>`;
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+function previewPlaceholderUrl(theme: MotionTheme, width = 960, height = 540) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" fill="${theme.colors.surface}" fill-opacity=".16"/><rect x="3" y="3" width="${width - 6}" height="${height - 6}" rx="12" fill="none" stroke="${theme.colors.text}" stroke-opacity=".28" stroke-width="6" stroke-dasharray="18 14"/></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}#bvideo-placeholder`;
 }
 
 export interface EffectPreviewModel {
@@ -40,22 +32,29 @@ export interface EffectPreviewModel {
 export function createEffectPreviewModel(compositionId: string, theme: MotionTheme, assets: readonly MediaAsset[]): EffectPreviewModel {
   const previewAssets = [...assets];
   const slots = compositionSlots(compositionId);
-  let demoIndex = 0;
+  const usedIds = new Set<string>();
   for (const slot of slots) {
-    const available = previewAssets.filter((asset) => !asset.missing && Boolean(asset.objectUrl) && slotAccepts(slot, asset.kind)).length;
+    const available = previewAssets
+      .filter((asset) => !asset.missing && Boolean(asset.objectUrl) && !usedIds.has(asset.id) && slotAccepts(slot, asset.kind))
+      .slice(0, slot.maxItems);
+    available.forEach((asset) => usedIds.add(asset.id));
     const desired = Math.min(slot.maxItems, Math.max(slot.minItems, slot.kind === "video" ? 1 : 3));
-    for (let index = available; index < desired; index += 1) {
+    for (let index = available.length; index < desired; index += 1) {
+      const documentPlaceholder = compositionId === "doc-scroll" && slot.id === "document";
+      const width = documentPlaceholder ? 680 : 960;
+      const height = documentPlaceholder ? 1_340 : 540;
+      const placeholderId = `effect-demo:${compositionId}:${slot.id}:${index}`;
       previewAssets.push({
-        id: `effect-demo:${compositionId}:${slot.id}:${index}`,
-        name: "演示素材",
+        id: placeholderId,
+        name: "素材占位",
         kind: slot.kind === "video" ? "video" : "image",
         durationUs: 8_000_000,
-        objectUrl: demoImageUrl(demoIndex),
-        width: 960,
-        height: 540,
+        objectUrl: previewPlaceholderUrl(theme, width, height),
+        width,
+        height,
         hasAudio: false
       });
-      demoIndex += 1;
+      usedIds.add(placeholderId);
     }
   }
   return { clip: createEffectPreviewClip(compositionId, theme, previewAssets), assets: previewAssets };

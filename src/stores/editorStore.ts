@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { compositionLayer, mediaComposition, normalizeBindings, compositionBindingIssues, compositionSlots, compositionTimeUs, compositionRetimeBounds, sceneGroupRetimeRatio, slotAccepts, isBackgroundComposition, type CompositionBinding } from "@/domain/compositions";
+import { compositionLayer, mediaComposition, normalizeBindings, compositionBindingIssues, compositionSlots, compositionTimeUs, compositionRetimeBounds, sceneGroupRetimeRatio, slotAccepts, isBackgroundComposition, isSequencedMediaComposition, type CompositionBinding } from "@/domain/compositions";
 import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
 import { normalizeVideoMask } from "@/domain/videoFrame";
 import { normalizePresenterSafeArea } from "@/domain/presenterSafeArea";
@@ -1161,7 +1161,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           if (mediaComposition(definition.id)) {
             const bindings = normalizeBindings(match.compositionBindings);
             if (compositionBindingIssues({ compositionId: definition.id, bindings }, project.assets).length) { summary.skippedEffectCount += 1; continue; }
-            const durationUs = definition.category === "展示" ? Math.max(2_000_000, Math.min(10_000_000, matchDurationUs)) : matchDurationUs;
+            const durationUs = isSequencedMediaComposition(definition.id) ? Math.max(2_000_000, Math.min(10_000_000, matchDurationUs)) : matchDurationUs;
             effectTrack.clips.push({
               id: crypto.randomUUID(), trackId: effectTrack.id, kind: "composition", label: `AI 动效 · ${definition.name}`,
               startUs: subtitle.startUs, durationUs, animationDurationUs: durationUs, sourceOffsetUs: 0,
@@ -1409,7 +1409,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       clip.zIndex = compositionLayer(clip);
       clip.speed = Math.max(0.25, Math.min(3, Number.isFinite(clip.speed) ? clip.speed : 1));
       clip.durationUs = Math.max(100_000, Math.round(Number.isFinite(clip.durationUs) ? clip.durationUs : existing.durationUs));
-      if (patch.durationUs !== undefined && mediaComposition(clip.compositionId)?.category === "展示") clip.durationUs = Math.max(2_000_000, Math.min(10_000_000, clip.durationUs));
+      if (patch.durationUs !== undefined && isSequencedMediaComposition(clip.compositionId)) clip.durationUs = Math.max(2_000_000, Math.min(10_000_000, clip.durationUs));
       clip.startUs = Math.max(0, Math.round(Number.isFinite(clip.startUs) ? clip.startUs : existing.startUs));
       if (patch.bindings) clip.bindings = normalizeBindings(patch.bindings);
       if (patch.durationUs !== undefined && mediaComposition(clip.compositionId)) clip.animationDurationUs = Math.round(clip.durationUs * clip.speed + (clip.sourceOffsetUs ?? 0));

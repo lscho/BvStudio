@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Select } from "@/components/Select";
 import { CompositionTiming } from "@/components/CompositionTiming";
 import type { CompositionClip, TransformProps } from "@/domain/project";
-import { compositionBindingIssues, compositionLayer, compositionNumber, compositionSlots, compositionTransformPatch, isBackgroundComposition, mediaComposition, slotAccepts, type CompositionSlot } from "@/domain/compositions";
+import { compositionBindingIssues, compositionLayer, compositionNumber, compositionSlots, compositionTransformPatch, isBackgroundComposition, isSequencedMediaComposition, mediaComposition, slotAccepts, type CompositionSlot } from "@/domain/compositions";
 import { DEFAULT_TRANSFORM, visualTransformAt } from "@/domain/transforms";
 import { importCompositionImages } from "@/services/compositionMedia";
 import { isDesktopRuntime } from "@/services/runtime";
@@ -18,7 +18,7 @@ export function CompositionInspector({ clip }: { clip: CompositionClip }) {
   const patchTransform = (patch: Partial<TransformProps>) => update(clip.id, compositionTransformPatch(clip, localUs, patch));
   const definition = mediaComposition(clip.compositionId);
   const background = isBackgroundComposition(clip.compositionId);
-  const short = definition?.category === "展示";
+  const sequenced = isSequencedMediaComposition(clip.compositionId);
   const locked = clip.locked || Boolean(project.tracks.find((track) => track.id === clip.trackId)?.locked);
   const params = { ...definition?.defaultParams, ...clip.params };
   const issues = compositionBindingIssues(clip, project.assets);
@@ -47,8 +47,8 @@ export function CompositionInspector({ clip }: { clip: CompositionClip }) {
     <section className="camera-fields">
       <span>场景</span>
       <label><span>{background ? "流动幅度" : "镜头幅度"}</span><input type="range" min={0} max={1} step={0.05} value={compositionNumber(params, "travel", 0.65, 0, 1)} onChange={(event) => patchNumber("travel", Number(event.target.value))} /></label>
-      {(!short && !background || clip.compositionId === "slide-gallery") && <label><span>素材间距</span><input type="range" min={0.8} max={1.6} step={0.05} value={compositionNumber(params, "spacing", 1, 0.8, 1.6)} onChange={(event) => patchNumber("spacing", Number(event.target.value))} /></label>}
-      {short && <label><span>画面适配</span><Select label="画面适配" disabled={locked} value={params.fit === "cover" ? "cover" : "contain"} options={[{ value: "contain", label: "完整显示" }, { value: "cover", label: "裁切填满" }]} onChange={(fit) => update(clip.id, { params: { ...params, fit } })} /></label>}
+      {((!sequenced && !background) || clip.compositionId === "slide-gallery") && <label><span>素材间距</span><input type="range" min={0.8} max={1.6} step={0.05} value={compositionNumber(params, "spacing", 1, 0.8, 1.6)} onChange={(event) => patchNumber("spacing", Number(event.target.value))} /></label>}
+      {sequenced && <label><span>画面适配</span><Select label="画面适配" disabled={locked} value={params.fit === "cover" ? "cover" : "contain"} options={[{ value: "contain", label: "完整显示" }, { value: "cover", label: "裁切填满" }]} onChange={(fit) => update(clip.id, { params: { ...params, fit } })} /></label>}
       {background && <>
         <label><span>纹理密度</span><input type="range" min={0.5} max={2} step={0.1} value={compositionNumber(params, "density", 1, 0.5, 2)} onChange={(event) => patchNumber("density", Number(event.target.value))} /></label>
         <div className="two-column">{[{ field: "background", label: "背景色" }, { field: "gridColor", label: "纹理色" }].map(({ field, label }) => <label key={field}><span>{label}</span><input type="color" value={typeof params[field] === "string" ? params[field] : "#191d20"} onChange={(event) => update(clip.id, { params: { ...params, [field]: event.target.value } })} /></label>)}</div>

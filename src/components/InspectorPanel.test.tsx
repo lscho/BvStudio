@@ -17,6 +17,17 @@ beforeEach(() => {
 });
 
 describe("InspectorPanel generated metadata", () => {
+  it("uses project material slots instead of path fields for imported camera effects", () => {
+    useEditorStore.setState({ project: createEmptyProject(), selectedClipId: null, selectedClipIds: [], playheadUs: 0, past: [], future: [] });
+    useEditorStore.getState().addComposition("screen-demo");
+    render(<InspectorPanel />);
+
+    expect(screen.getByLabelText("演示录屏素材槽")).toBeInTheDocument();
+    expect(screen.getByLabelText("口播视频素材槽")).toBeInTheDocument();
+    expect(screen.queryByLabelText("录屏路径(/demo/xxx.mp4)")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("口播视频(烤进导出)")).not.toBeInTheDocument();
+  });
+
   it("edits crop focus and absolute layer without manual container controls", () => {
     useEditorStore.getState().addVideo({ id: "portrait", name: "portrait.mp4", kind: "video", durationUs: 8_000_000 });
     const id = useEditorStore.getState().selectedClipId!;

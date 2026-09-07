@@ -239,18 +239,6 @@ h1, h2, h3, p { margin: 0; }
 .effect-library-preview * { pointer-events: none; }
 .effect-library-preview .effect-overlay { cursor: default; }
 .effect-preview-composition { cursor: default; }
-.effect-preview-sample-backdrop { position: absolute; inset: 0; z-index: 0; overflow: hidden; background: #171a1e; }
-.effect-preview-sample-backdrop::before { position: absolute; left: 7%; top: 12%; width: 42%; height: 38%; border: max(1px, 0.08cqw) solid rgb(255 255 255 / 0.16); background: #262c32; content: ""; }
-.effect-preview-sample-backdrop::after { position: absolute; right: 8%; bottom: 10%; width: 34%; height: 52%; border-left: max(2px, 0.22cqw) solid var(--accent); background: #101316; content: ""; }
-.effect-preview-sample-backdrop i { position: absolute; display: block; height: max(2px, 0.32cqw); background: rgb(255 255 255 / 0.18); }
-.effect-preview-sample-backdrop i:nth-child(1) { left: 11%; top: 20%; width: 30%; }
-.effect-preview-sample-backdrop i:nth-child(2) { left: 11%; top: 29%; width: 21%; background: color-mix(in srgb, var(--accent) 72%, white); }
-.effect-preview-sample-backdrop i:nth-child(3) { right: 13%; bottom: 20%; width: 23%; }
-.effect-preview-sample-backdrop.motion-light { background: #eef1f4; }
-.effect-preview-sample-backdrop.motion-light::before { border-color: rgb(27 29 33 / 0.16); background: #ffffff; }
-.effect-preview-sample-backdrop.motion-light::after { background: #dce2e8; }
-.effect-preview-sample-backdrop.motion-light i { background: rgb(27 29 33 / 0.22); }
-.effect-preview-sample-backdrop.motion-light i:nth-child(2) { background: var(--accent); }
 .generated-scene { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; gap: 10px; padding: 10%; color: #f6f7f9; background: #171a1e; }
 .generated-background { position: absolute; inset: 0; background: #171a1e; }
 .generated-scene::before { position: absolute; left: 0; top: 0; width: 5px; height: 100%; background: var(--scene-color); content: ""; }
@@ -264,6 +252,7 @@ h1, h2, h3, p { margin: 0; }
 .image-overlay.selected, .effect-overlay.selected { outline: 1px solid rgb(255 255 255 / 0.75); outline-offset: 3px; }
 .effect-overlay.manipulating { animation: none !important; }
 .effect-overlay.component-focus-card { width: 100%; height: 100%; max-width: none; }
+.effect-overlay.reference-full-canvas-effect { width: 100%; height: 100%; max-width: none; padding: 0; overflow: visible; }
 .focus-card-linked-media { position: absolute; width: 100%; height: 100%; pointer-events: none; transform-origin: center; }
 .focus-card-media-frame { position: absolute; overflow: hidden; border: max(1px, 0.16cqw) solid; background: #171a1e; box-shadow: 0 0.8cqw 2.2cqw rgb(0 0 0 / 0.3); }
 .focus-card-media-frame > img, .focus-card-media-content, .focus-card-media-content video { display: block; width: 100%; height: 100%; object-fit: cover; }

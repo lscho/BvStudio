@@ -99,6 +99,7 @@ export interface RenderTextOverlay extends RenderOverlayBase {
   compositionId?: string;
   renderer?: "legacy" | "react" | "three" | "canvas";
   compositionImages?: { id: string; path: string; kind?: "image" | "video" }[];
+  compositionBindings?: { slotId: string; assetIds: string[] }[];
   sourceOffsetUs?: number;
   animationDurationUs?: number;
   sequenceId?: string;

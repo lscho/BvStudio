@@ -3,6 +3,8 @@ import type { CompositionDefinition, CompositionParams } from "@/domain/effects"
 import type { CompositionClip, MediaAsset, SceneClip, TransformProps } from "@/domain/project";
 import { upsertVisualKeyframe, visualTransformAt } from "@/domain/transforms";
 import { DEFAULT_BACKGROUND_LAYER, DEFAULT_EFFECT_LAYER, normalizeLayer } from "@/domain/layers";
+import { importedOverlayStudioBackgroundIds } from "@/domain/overlayStudioCatalog";
+import { overlayStudioMediaSlots } from "@/domain/overlayStudioMedia";
 
 export interface CompositionSlot {
   id: string;
@@ -21,6 +23,13 @@ export const FOCUS_CARD_SLOTS: readonly CompositionSlot[] = [
   { id: "presenter", label: "人物视频", kind: "video", minItems: 1, maxItems: 1 }
 ];
 
+const SEQUENCED_MEDIA_COMPOSITION_SPECS = [
+  ["motion-zoom", "动势缩放", "连续推近与切点加速", 2, 10],
+  ["slide-gallery", "横向轮播", "横向滑移与中心聚焦", 2, 8],
+  ["card-stack", "叠卡翻展", "错位叠卡与逐张翻展", 2, 8],
+  ["split-reveal", "分屏揭幕", "分栏错峰展开", 2, 4]
+] as const;
+
 const bindingSchema = z.array(z.object({
   slotId: z.string().min(1).max(64),
   assetIds: z.array(z.string().min(1).max(256)).max(12)
@@ -28,7 +37,7 @@ const bindingSchema = z.array(z.object({
 
 export const MEDIA_COMPOSITIONS: readonly CompositionDefinition[] = [
   {
-    id: "poster-wall-3d", name: "3D 海报墙", category: "场景",
+    id: "poster-wall-3d", name: "3D 海报墙", category: "展示",
     description: "2–12 张图片 · 透明底摄像机运镜", tags: ["图片", "海报", "3D", "多图", "展示"],
     renderer: "three", slots: [{ id: "posters", label: "海报", kind: "image", minItems: 2, maxItems: 12 }],
     defaultDurationUs: 10_000_000, defaultText: "", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
@@ -36,7 +45,7 @@ export const MEDIA_COMPOSITIONS: readonly CompositionDefinition[] = [
     recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 }
   },
   {
-    id: "image-duet-3d", name: "双图展示", category: "场景",
+    id: "image-duet-3d", name: "双图展示", category: "展示",
     description: "固定 2 张图片 · 双卡片透视入场", tags: ["图片", "对比", "双图", "3D"],
     renderer: "three", slots: [
       { id: "left", label: "左图", kind: "image", minItems: 1, maxItems: 1 },
@@ -46,12 +55,7 @@ export const MEDIA_COMPOSITIONS: readonly CompositionDefinition[] = [
     defaultParams: { travel: 0.35, spacing: 1 },
     recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 }
   },
-  ...([
-    ["motion-zoom", "动势缩放", "连续推近与切点加速", 2, 10],
-    ["slide-gallery", "横向轮播", "横向滑移与中心聚焦", 2, 8],
-    ["card-stack", "叠卡翻展", "错位叠卡与逐张翻展", 2, 8],
-    ["split-reveal", "分屏揭幕", "分栏错峰展开", 2, 4]
-  ] as const).map(([id, name, description, minItems, maxItems]): CompositionDefinition => ({
+  ...SEQUENCED_MEDIA_COMPOSITION_SPECS.map(([id, name, description, minItems, maxItems]): CompositionDefinition => ({
     id, name, category: "展示", renderer: "canvas", description: `${minItems}–${maxItems} 个素材 · ${description}`,
     tags: ["展示", "图片", "视频", "多素材", name],
     slots: [{ id: "media", label: "素材", kind: "visual", minItems, maxItems }],
@@ -74,7 +78,11 @@ export const MEDIA_COMPOSITIONS: readonly CompositionDefinition[] = [
 ];
 
 export function isBackgroundComposition(id: string) {
-  return mediaComposition(id)?.category === "背景";
+  return mediaComposition(id)?.category === "背景" || importedOverlayStudioBackgroundIds.includes(id);
+}
+
+export function isSequencedMediaComposition(id: string) {
+  return SEQUENCED_MEDIA_COMPOSITION_SPECS.some(([compositionId]) => compositionId === id);
 }
 
 export function slotAccepts(slot: CompositionSlot, kind: MediaAsset["kind"] | undefined) {
@@ -92,7 +100,7 @@ export function mediaComposition(id: string) {
 
 export function compositionSlots(id: string): readonly CompositionSlot[] {
   if (id === "focus-card") return FOCUS_CARD_SLOTS;
-  return mediaComposition(id)?.slots ?? [];
+  return mediaComposition(id)?.slots ?? overlayStudioMediaSlots(id);
 }
 
 export function normalizeBindings(value: unknown): CompositionBinding[] {
@@ -138,7 +146,7 @@ export function compositionTimeUs(clip: Pick<CompositionClip, "sourceOffsetUs" |
 
 export function compositionRetimeBounds(clip: CompositionClip) {
   const definition = mediaComposition(clip.compositionId);
-  if (definition?.category === "展示") return { min: 2_000_000, max: 10_000_000 };
+  if (isSequencedMediaComposition(clip.compositionId)) return { min: 2_000_000, max: 10_000_000 };
   if (definition || clip.recipe?.sceneBackground) return { min: 250_000, max: Number.MAX_SAFE_INTEGER };
   return { min: Math.max(250_000, Math.ceil(clip.durationUs * clip.speed / 3)), max: Math.floor(clip.durationUs * clip.speed / 0.25) };
 }

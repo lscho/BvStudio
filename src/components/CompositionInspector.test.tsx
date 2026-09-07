@@ -58,6 +58,8 @@ describe("composition inspector", () => {
     expect(screen.getByRole("status")).toHaveTextContent("海报需要 2–12 张图片");
     expect(screen.getByRole("button", { name: "播放动效" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "导入海报图片" })).toBeEnabled();
+    expect(screen.getByRole("slider", { name: "素材间距" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "画面适配" })).not.toBeInTheDocument();
   });
   it("reorders and removes assets without modifying their media records", () => {
     useEditorStore.getState().bindCompositionAssets(selected().id, [{ slotId: "posters", assetIds: ["a", "b"] }], ["a", "b"].map(id => ({ id, name: id, kind: "image", durationUs: 0 })));

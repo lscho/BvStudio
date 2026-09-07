@@ -1,8 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { CompositionContent, effectCardChromeStyle, reactEffectDefinition } from "@/compositions/registry";
-import type { CompositionParams } from "@/domain/effects";
+import { replicatedOverlayStudioEffectIds } from "@/compositions/overlayStudioReference/adapter";
+import { CompositionContent, effectCardChromeStyle, reactEffectDefinition, usesComponentChrome, usesFullCanvasComposition } from "@/compositions/registry";
+import { allCompositions, OVERLAY_STUDIO_EFFECT_IDS, type CompositionParams } from "@/domain/effects";
+import { importedOverlayStudioEffectIds } from "@/domain/overlayStudioCatalog";
 
 function show(compositionId: string, timeUs: number, params: CompositionParams) {
   const definition = reactEffectDefinition(compositionId).definition;
@@ -12,6 +14,59 @@ function show(compositionId: string, timeUs: number, params: CompositionParams) 
 }
 
 describe("Overlay Studio visual contracts", () => {
+  it("registers every reference effect exactly once", () => {
+    expect(OVERLAY_STUDIO_EFFECT_IDS).toHaveLength(102);
+    expect(new Set(OVERLAY_STUDIO_EFFECT_IDS).size).toBe(102);
+    expect(replicatedOverlayStudioEffectIds).toHaveLength(82);
+    expect(new Set(replicatedOverlayStudioEffectIds).size).toBe(82);
+    expect(new Set(replicatedOverlayStudioEffectIds)).toEqual(new Set(importedOverlayStudioEffectIds));
+
+    const registered = new Set(allCompositions().map((definition) => definition.id));
+    expect(OVERLAY_STUDIO_EFFECT_IDS.every((id) => registered.has(id))).toBe(true);
+    expect(replicatedOverlayStudioEffectIds.every((id) => usesComponentChrome(id))).toBe(true);
+    expect(replicatedOverlayStudioEffectIds.every((id) => usesFullCanvasComposition(id))).toBe(true);
+  });
+
+  it("renders imported cards in the reference stage at horizontal and vertical ratios", () => {
+    const definition = reactEffectDefinition("action-band").definition;
+    const common = {
+      compositionId: definition.id,
+      text: definition.defaultText,
+      color: definition.defaultColor,
+      accentColor: definition.defaultAccentColor,
+      fontSize: 48,
+      recipe: definition.recipe,
+      durationUs: definition.defaultDurationUs,
+      params: definition.defaultParams,
+      timeUs: 2_000_000
+    };
+    const horizontal = renderToStaticMarkup(<CompositionContent {...common} canvasWidth={1920} canvasHeight={1080} />);
+    const vertical = renderToStaticMarkup(<CompositionContent {...common} canvasWidth={1080} canvasHeight={1920} />);
+
+    expect(horizontal).toContain("class=\"stage\"");
+    expect(horizontal).toContain("data-ratio=\"h\"");
+    expect(horizontal).toContain("该怎么做");
+    expect(vertical).toContain("data-ratio=\"v\"");
+  });
+
+  it("keeps imported canvas effects on their native canvas renderer", () => {
+    const definition = reactEffectDefinition("dust-field").definition;
+    const markup = renderToStaticMarkup(<CompositionContent
+      compositionId={definition.id}
+      text={definition.defaultText}
+      color={definition.defaultColor}
+      accentColor={definition.defaultAccentColor}
+      fontSize={48}
+      recipe={definition.recipe}
+      durationUs={definition.defaultDurationUs}
+      params={definition.defaultParams}
+      timeUs={2_000_000}
+      canvasWidth={1920}
+      canvasHeight={1080}
+    />);
+    expect(markup).toContain("class=\"df-canvas\"");
+  });
+
   it("interpolates type hierarchy throughout the reflow, including when seeking backwards", () => {
     // happy-dom drops valid calc() lengths containing var(); inspect the emitted CSS.
     const at = (timeUs: number) => renderToStaticMarkup(<CompositionContent compositionId="type-shift" timeUs={timeUs}

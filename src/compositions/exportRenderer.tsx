@@ -3,9 +3,13 @@ import { createRoot } from "react-dom/client";
 import { toPng } from "html-to-image";
 import { clockControlledRecipe, effectAnimationState } from "@/domain/effects";
 import { visualTransformAt } from "@/domain/transforms";
-import { CompositionContent, effectCardChromeStyle, reactEffectMotionDurationUs, usesComponentChrome } from "@/compositions/registry";
+import { isBackgroundComposition } from "@/domain/compositions";
+import { CompositionContent, effectCardChromeStyle, reactEffectMotionDurationUs, usesComponentChrome, usesFullCanvasComposition } from "@/compositions/registry";
+import { prepareReferenceVideoFrames } from "@/compositions/overlayStudioReference/videoFrames";
 import type { RenderPlan, RenderTextOverlay } from "@/services/media";
 import { streamCompositionFrames, type CompositionExportOptions } from "@/compositions/frameExport";
+import { resolveOverlayStudioMediaParams } from "@/domain/overlayStudioMedia";
+import { localMediaUrl } from "@/services/media";
 
 const neutralRecipe = {
   layout: "frame" as const,
@@ -59,7 +63,7 @@ export function inlineReactOverlaySvgStyles(host: HTMLElement) {
 }
 
 export function dynamicDurationUs(overlay: RenderTextOverlay) {
-  if (overlay.compositionId === "chapter-bar" || overlay.compositionId === "caption-track" || overlay.compositionId === "terminal-3d") return overlay.durationUs;
+  if (overlay.compositionId === "chapter-bar" || overlay.compositionId === "caption-track" || overlay.compositionId === "terminal-3d" || (overlay.compositionId && isBackgroundComposition(overlay.compositionId))) return overlay.durationUs;
   const recipe = clockControlledRecipe(overlay.recipe);
   const entranceUs = (recipe.animation?.durationSeconds ?? 0) * 1_000_000 / Math.max(0.1, overlay.speed);
   let registeredUs = overlay.compositionId ? reactEffectMotionDurationUs(overlay.compositionId) : 0;
@@ -92,6 +96,10 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
   document.body.prepend(host);
   const root = createRoot(host);
   const length = (pixels: number) => `${pixels}px`;
+  const resolvedParams = resolveOverlayStudioMediaParams(overlay.compositionId ?? "", overlay.params, overlay.compositionBindings, (assetId) => {
+    const source = overlay.compositionImages?.find((candidate) => candidate.id === assetId);
+    return source ? { id: source.id, kind: source.kind === "video" ? "video" : "image", url: localMediaUrl(source.path) } : undefined;
+  });
   const renderAt = async (localUs: number) => {
     signal?.throwIfAborted();
     const animationLocalUs = localUs + (overlay.sourceOffsetUs ?? 0) / Math.max(0.25, overlay.speed);
@@ -100,7 +108,7 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
     const animation = effectAnimationState(recipe, animationLocalUs, overlay.speed);
     flushSync(() => root.render(
       <div
-        className={`effect-overlay react-effect component-${overlay.compositionId ?? "unknown"} recipe-${recipe.layout} entrance-none`}
+        className={`effect-overlay react-effect ${usesFullCanvasComposition(overlay.compositionId ?? "") ? "reference-full-canvas-effect" : ""} component-${overlay.compositionId ?? "unknown"} recipe-${recipe.layout} entrance-none`}
         style={{
           left: `${transform.x}%`,
           top: `${transform.y}%`,
@@ -110,10 +118,11 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
           transform: `translate(-50%, -50%) translate(${animation.translateX}%, ${animation.translateY}%) scale(${transform.scale * animation.scale}) rotate(${transform.rotation + animation.rotation}deg)`
         }}
       >
-        <CompositionContent compositionId={overlay.compositionId ?? "quote-lockup"} text={overlay.text} color={overlay.color} accentColor={overlay.accentColor} fontSize={overlay.fontSize} recipe={recipe} params={overlay.params} timeUs={animationLocalUs * overlay.speed} durationUs={overlay.animationDurationUs ?? overlay.durationUs} canvasWidth={plan.width} canvasHeight={plan.height} />
+        <CompositionContent compositionId={overlay.compositionId ?? "quote-lockup"} text={overlay.text} color={overlay.color} accentColor={overlay.accentColor} fontSize={overlay.fontSize} recipe={recipe} params={resolvedParams} timeUs={animationLocalUs * overlay.speed} durationUs={overlay.animationDurationUs ?? overlay.durationUs} canvasWidth={plan.width} canvasHeight={plan.height} />
       </div>
     ));
     await nextPaint();
+    await prepareReferenceVideoFrames(host, animationLocalUs * overlay.speed / 1_000_000, signal);
     const restoreSvgStyles = inlineReactOverlaySvgStyles(host);
     try {
       return dataUrlPayload(await toPng(host, {
@@ -132,7 +141,7 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
     await document.fonts.ready;
     const durationUs = dynamicDurationUs(overlay);
     if (durationUs <= 0) {
-      return { ...overlay, imageDataBase64: await renderAt(overlay.durationUs), recipe: neutralRecipe, x: 50, y: 50, scale: 1, rotation: 0, opacity: 1, transformKeyframes: undefined };
+      return { ...overlay, compositionImages: undefined, compositionBindings: undefined, imageDataBase64: await renderAt(overlay.durationUs), recipe: neutralRecipe, x: 50, y: 50, scale: 1, rotation: 0, opacity: 1, transformKeyframes: undefined };
     }
     const fps = Math.max(1, Math.min(60, plan.fps));
     const frameCount = Math.max(2, Math.ceil(durationUs / 1_000_000 * fps) + 1);
@@ -145,6 +154,8 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
       sequenceFramesBase64: frames,
       sequenceFps: fps,
       imageDataBase64: undefined,
+      compositionImages: undefined,
+      compositionBindings: undefined,
       recipe: neutralRecipe,
       x: 50,
       y: 50,

@@ -1093,10 +1093,12 @@ export async function matchTimelineMotion(
   onProgress?: AiProgressHandler
 ): Promise<MatchedTimelineMotion> {
   validateProviderConfig(config);
+  const manualOnlyEffectIds = new Set(["chapter-bar", "caption-track", "focus-card"]);
   const candidateText = `${input.topic} ${input.article ?? ""} ${input.captions.map((caption) => caption.text).join(" ")}`;
   const imageIds = input.materials.filter((material) => material.kind === "image").map((material) => material.id);
   const mediaIds = input.materials.filter((material) => material.kind !== "image").map((material) => material.id);
   const activeEffects = allCompositions().filter((definition) => {
+    if (manualOnlyEffectIds.has(definition.id)) return false;
     if (!definition.slots?.length) return true;
     if (definition.renderer !== "three" && definition.renderer !== "canvas") return false;
     return definition.slots.every((slot) => (slot.kind === "image" ? imageIds.length : slot.kind === "video" ? mediaIds.length : imageIds.length + mediaIds.length) >= slot.minItems);
