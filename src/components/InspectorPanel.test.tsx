@@ -17,6 +17,24 @@ beforeEach(() => {
 });
 
 describe("InspectorPanel generated metadata", () => {
+  it("edits reference cards through internal scale instead of the full stage transform", () => {
+    useEditorStore.setState({ project: createEmptyProject(), selectedClipId: null, selectedClipIds: [], playheadUs: 0, past: [], future: [] });
+    useEditorStore.getState().addComposition("info-board");
+    const id = useEditorStore.getState().selectedClipId!;
+    render(<InspectorPanel />);
+
+    fireEvent.change(screen.getByRole("slider", { name: "大小" }), { target: { value: "1.4" } });
+
+    const effect = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === id);
+    expect(effect).toMatchObject({
+      transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 },
+      transformKeyframes: [],
+      params: { scale: 1.4 }
+    });
+    expect(screen.queryByRole("slider", { name: "旋转" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/位置与缩放关键帧/u)).not.toBeInTheDocument();
+  });
+
   it("uses project material slots instead of path fields for imported camera effects", () => {
     useEditorStore.setState({ project: createEmptyProject(), selectedClipId: null, selectedClipIds: [], playheadUs: 0, past: [], future: [] });
     useEditorStore.getState().addComposition("screen-demo");

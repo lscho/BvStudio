@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { desktopCompositionFrames } from "@/services/compositionFrames";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { Download, FileVideo2, FolderOpen, History, LoaderCircle, Redo2, Save, Settings, Square, Undo2 } from "lucide-react";
+import { Download, FolderOpen, History, LoaderCircle, Redo2, Save, Settings, Square, Undo2 } from "lucide-react";
 import { AiGenerateDialog } from "@/components/AiGenerateDialog";
-import { AiSettingsDialog } from "@/components/AiSettingsDialog";
+import { AiSettingsDialog, type SettingsSection } from "@/components/AiSettingsDialog";
 import { AudioCreateDialog, type CreatedAudioSource } from "@/components/AudioCreateDialog";
 import { EditorWorkspace } from "@/components/EditorWorkspace";
 import { ExportDialog, type VideoExportOptions } from "@/components/ExportDialog";
 import { EffectLibraryDialog } from "@/components/EffectLibraryDialog";
+import { MotionMatchingFeedbackDialog } from "@/components/MotionMatchingFeedbackDialog";
 import { ProjectRecoveryDialog } from "@/components/ProjectRecoveryDialog";
 import { RecentProjectsDialog } from "@/components/RecentProjectsDialog";
 import { UpdateModal } from "@/components/UpdateModal";
@@ -16,6 +17,7 @@ import { useAppUpdater } from "@/hooks/useAppUpdater";
 import { useSettings } from "@/hooks/useSettings";
 import type { GeneratedBlock } from "@/domain/project";
 import { buildRenderPlan } from "@/domain/renderPlan";
+import { buildSrtDocument } from "@/domain/srt";
 import { narrationContext } from "@/domain/scriptContext";
 import { parseProject, serializeProject } from "@/domain/projectFile";
 import {
@@ -32,6 +34,7 @@ import {
   selectProjectDestination,
   selectProjectToOpen,
   selectReplacementMediaPath,
+  selectSrtDestination,
   selectVideoDestination,
   startProxyGeneration,
   startAudioExtraction,
@@ -63,6 +66,7 @@ import { rasterizeCompositions } from "@/compositions/exportRenderer";
 import { lintMotionProject } from "@/domain/motionLint";
 import { builtinSoundAssetId, builtinSoundEffectById, type BuiltinSoundEffectId } from "@/domain/soundEffects";
 import { createBuiltinSoundAsset, previewBuiltinSound } from "@/services/builtinSounds";
+import { createMotionMatchingFeedbackRecord, readConfirmedMotionPreferences, saveMotionMatchingFeedback } from "@/services/motionMatchingFeedback";
 
 function loadVideoMetadata(url: string) {
   return new Promise<{ duration: number; width: number; height: number }>((resolve, reject) => {
@@ -104,11 +108,13 @@ export default function App() {
   const { settings, setSettings } = useSettings();
   const updater = useAppUpdater();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>("provider");
   const [generateOpen, setGenerateOpen] = useState(false);
   const [audioOpen, setAudioOpen] = useState(false);
   const [audioContext, setAudioContext] = useState<ReturnType<typeof narrationContext> | null>(null);
   const speechSegments = useMemo(() => audioContext?.subtitles.map(subtitle => ({ id: subtitle.id, text: subtitle.text })) ?? [], [audioContext]);
   const [effectLibraryOpen, setEffectLibraryOpen] = useState(false);
+  const [motionFeedbackOpen, setMotionFeedbackOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
@@ -153,7 +159,9 @@ export default function App() {
   const pastCount = useEditorStore((state) => state.past.length);
   const futureCount = useEditorStore((state) => state.future.length);
   const generatedClips = project.tracks.flatMap((track) => track.clips).filter((clip): clip is GeneratedBlock => clip.kind === "generated");
+  const srtSubtitleCount = project.tracks.filter((track) => track.kind === "subtitle" && !track.hidden).flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle" && clip.durationUs > 0 && clip.text.trim().length > 0).length;
   const loadEffectLibrary = useEffectLibraryStore((state) => state.load);
+  const vipStatus = useLicenseStore((state) => state.status);
   const initializeLicense = useLicenseStore((state) => state.initialize);
 
   useEffect(() => () => compositionExportController.current?.abort(), []);
@@ -503,7 +511,7 @@ export default function App() {
       setSettingsOpen(true);
       return;
     }
-    const subtitles = subtitlesForMotionMatch(allSubtitles, useEditorStore.getState().selectedClipIds).slice(0, 80);
+    const subtitles = subtitlesForMotionMatch(allSubtitles, useEditorStore.getState().selectedClipIds);
     const videoClips = project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "video");
     const controller = new AbortController();
     setAiRequestController(controller);
@@ -528,13 +536,17 @@ export default function App() {
         setNotice(count ? `音效匹配完成：写入 ${count} 个音效` : "本次未添加音效；模型未选择音效，或对应音效片段、轨道已锁定");
         return;
       }
+      const motionPreferences = await readConfirmedMotionPreferences(project.id).catch((preferenceError) => {
+        console.warn("Failed to read motion matching preferences", preferenceError);
+        return [];
+      });
       const result = await matchTimelineMotion(settings.aiProvider, {
         topic: project.name,
         style: "内容优先、关键词精炼、时间轴感知、避免遮挡字幕",
         article: generatedClips.map((clip) => clip.article).filter(Boolean).join("\n").slice(0, 8_000),
         captions: subtitles.map((clip) => ({ startSeconds: clip.startUs / 1_000_000, endSeconds: (clip.startUs + clip.durationUs) / 1_000_000, text: clip.text })),
         timelineDurationSeconds: Math.max(0.1, project.durationUs / 1_000_000),
-        materials: project.assets.filter((asset) => (asset.kind === "video" || asset.kind === "image") && !asset.missing).slice(0, 40).map((asset) => {
+        materials: project.assets.filter((asset) => (asset.kind === "video" || asset.kind === "image") && !asset.missing).map((asset) => {
           const sourceSubtitles = allSubtitles.filter((subtitle) => subtitle.sourceAssetId === asset.id);
           const placedRole = videoClips.find((clip) => clip.assetId === asset.id)?.role;
           return {
@@ -547,7 +559,8 @@ export default function App() {
             roleHint: sourceSubtitles.length ? "a-roll" as const : placedRole ?? "unspecified" as const,
             transcriptExcerpt: sourceSubtitles.map((subtitle) => subtitle.text).join(" ").slice(0, 500)
           };
-        })
+        }),
+        motionPreferences
       }, browserApiKey(), controller.signal, (progress) => setBusyMessage(progress.message));
       if (controller.signal.aborted) throw new Error("动效匹配已取消");
       if (useEditorStore.getState().project !== project) throw new Error("工程已发生变化，请重新匹配动效");
@@ -557,6 +570,15 @@ export default function App() {
       if (errors.length) {
         undo();
         throw new Error(`AI 编排未通过动效检查：${errors[0].message}`);
+      }
+      try {
+        await saveMotionMatchingFeedback(createMotionMatchingFeedbackRecord(
+          useEditorStore.getState().project,
+          subtitles.map((clip) => clip.id),
+          result.selection
+        ));
+      } catch (feedbackError) {
+        console.warn("Failed to save motion matching feedback", feedbackError);
       }
       const warnings = lintIssues.filter((issue) => issue.severity === "warning");
       const visualCount = applied.effectCount + applied.sceneCount;
@@ -639,6 +661,32 @@ export default function App() {
       setBusyMessage(null);
       setExportJobId("");
       setExportProgress(null);
+    }
+  }
+
+  async function exportSubtitles() {
+    setExportOpen(false);
+    const srt = buildSrtDocument(project.tracks.filter((track) => track.kind === "subtitle" && !track.hidden).flatMap((track) => track.clips));
+    if (!srt) {
+      setNotice("时间线上没有可导出的字幕");
+      return;
+    }
+    if (!isDesktopRuntime()) {
+      const url = URL.createObjectURL(new Blob([srt], { type: "application/x-subrip" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${project.name}.srt`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+    const outputPath = await selectSrtDestination(project.name);
+    if (!outputPath) return;
+    try {
+      await saveProjectFile(outputPath, srt);
+      setNotice(`字幕已导出到 ${outputPath}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error || "字幕导出失败"));
     }
   }
 
@@ -740,30 +788,39 @@ export default function App() {
         <header className="app-header" data-tauri-drag-region>
           <div className="brand"><span className="brand-mark">B</span><strong>BVideo Studio</strong><span className="project-name">{project.name}</span></div>
           <div className="header-tools">
+            <button
+              type="button"
+              className={`header-license-chip ${vipStatus.isVip ? "pro" : "free"}`}
+              title="会员与授权"
+              onClick={() => { setSettingsInitialSection("license"); setSettingsOpen(true); }}
+            >
+              {vipStatus.isVip ? `Pro${vipStatus.expireAt ? ` · ${new Date(vipStatus.expireAt).toLocaleDateString()}` : ""}` : "Free"}
+            </button>
+            <span className="toolbar-divider" />
             <ToolButton label="撤销" disabled={!pastCount} onClick={undo}><Undo2 size={16} /></ToolButton>
             <ToolButton label="重做" disabled={!futureCount} onClick={redo}><Redo2 size={16} /></ToolButton>
             <span className="toolbar-divider" />
             <ToolButton label="打开工程" onClick={() => void openProject()}><FolderOpen size={16} /></ToolButton>
             {isDesktopRuntime() && <ToolButton label="最近工程" onClick={() => setRecentOpen(true)}><History size={16} /></ToolButton>}
             <ToolButton label="保存工程" onClick={() => void saveProject()}><Save size={16} /></ToolButton>
-            <button className="button header-button" type="button" onClick={() => void requestImport()}><FileVideo2 size={16} />导入</button>
             <button className="button header-button export" type="button" disabled={Boolean(busyMessage)} onClick={() => setExportOpen(true)}>{busyMessage ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{exportProgress ? `${Math.round(exportProgress.progress * 100)}%` : busyMessage ? "处理中" : "导出"}</button>
-            <ToolButton label="模型与客户端设置" onClick={() => setSettingsOpen(true)}><Settings size={17} /></ToolButton>
+            <ToolButton label="模型与客户端设置" onClick={() => { setSettingsInitialSection("provider"); setSettingsOpen(true); }}><Settings size={17} /></ToolButton>
           </div>
           <WindowControls />
         </header>
-        <EditorWorkspace aiProvider={settings.aiProvider} onNeedSettings={() => setSettingsOpen(true)} onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onMatchEffects={() => void matchSubtitleEffects()} onMatchSounds={() => void matchSubtitleEffects("sound")} matching={Boolean(aiRequestController)} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => { const state = useEditorStore.getState(); setAudioContext(narrationContext(state.project, state.selectedClipIds, state.playheadUs)); setAudioOpen(true); }} onManageEffects={() => setEffectLibraryOpen(true)} onPreviewBuiltinSound={playBuiltinSound} onAddBuiltinSound={(soundId) => void addBuiltinSound(soundId)} />
+        <EditorWorkspace aiProvider={settings.aiProvider} onNeedSettings={() => setSettingsOpen(true)} onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onMatchEffects={() => void matchSubtitleEffects()} onReviewMotionMatching={() => setMotionFeedbackOpen(true)} onMatchSounds={() => void matchSubtitleEffects("sound")} matching={Boolean(aiRequestController)} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => { const state = useEditorStore.getState(); setAudioContext(narrationContext(state.project, state.selectedClipIds, state.playheadUs)); setAudioOpen(true); }} onManageEffects={() => setEffectLibraryOpen(true)} onPreviewBuiltinSound={playBuiltinSound} onAddBuiltinSound={(soundId) => void addBuiltinSound(soundId)} />
         <input ref={fileInput} className="visually-hidden" type="file" accept="video/*,audio/*,image/png,image/jpeg,image/webp,image/bmp" onChange={(event) => void importBrowserMedia(event)} />
       </div>
       {(busyMessage || notice) && <div className={`status-toast ${busyMessage ? "busy" : ""}`}>{busyMessage && <LoaderCircle className="spin" size={15} />}<span>{busyMessage ?? notice}{exportProgress ? <small>{Math.round(exportProgress.progress * 100)}% · {exportProgress.segmentIndex}/{exportProgress.segmentCount || "-"}</small> : proxyProgress ? <small>{Math.round(proxyProgress.progress * 100)}%</small> : asrProgress ? <small>{Math.round(asrProgress.progress * 100)}% · 云端处理</small> : null}</span>{(compositionExportController.current || aiRequestController || exportJobId || proxyJobId || audioExtractionJobId || asrJobId) && <button type="button" aria-label={aiRequestController ? "取消 AI 匹配" : (exportJobId || compositionExportController.current) ? "取消视频导出" : proxyJobId ? "取消代理生成" : audioExtractionJobId ? "取消音频分离" : "取消字幕识别"} title="取消任务" onClick={() => void cancelCurrentTask()}><Square size={12} fill="currentColor" /></button>}{notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button>}</div>}
-      <AiSettingsDialog open={settingsOpen} settings={settings} onOpenChange={setSettingsOpen} onSave={setSettings} />
+      <AiSettingsDialog open={settingsOpen} initialSection={settingsInitialSection} settings={settings} onOpenChange={setSettingsOpen} onSave={setSettings} />
       <AiGenerateDialog open={generateOpen} settings={settings} onOpenChange={setGenerateOpen} onNeedSettings={() => { setGenerateOpen(false); setSettingsOpen(true); }} />
       <AudioCreateDialog open={audioOpen} defaultText={audioContext?.text ?? ""} targetLabel={audioContext ? `${audioContext.block ? `脚本：${audioContext.block.label}` : audioContext.subtitles.length ? "选中字幕" : "自由配音"} · 起点 ${(audioContext.startUs / 1_000_000).toFixed(3)} 秒` : undefined} speechSegments={speechSegments} cloudSpeech={settings.cloudSpeech} onOpenChange={setAudioOpen} onCreated={(source) => addCreatedAudio(source, audioContext?.startUs, audioContext?.block?.id)} />
       <EffectLibraryDialog open={effectLibraryOpen} onOpenChange={setEffectLibraryOpen} />
-      <ExportDialog open={exportOpen} canvas={project.canvas} defaultEncoder={settings.media.encoder} busy={Boolean(busyMessage)} onOpenChange={setExportOpen} onExport={(options) => void exportVideo(options)} />
+      <MotionMatchingFeedbackDialog open={motionFeedbackOpen} project={project} onOpenChange={setMotionFeedbackOpen} />
       <ProjectRecoveryDialog snapshot={recoverySnapshot} restoring={restoringRecovery} error={recoveryError} onDiscard={() => void discardRecovery()} onRestore={() => void restoreProject()} />
       <RecentProjectsDialog open={recentOpen} projects={recentProjects} onOpenChange={setRecentOpen} onOpenProject={(path) => void openProjectPath(path)} onBrowse={() => { setRecentOpen(false); void openProject(); }} />
       {updater.visible && updater.info && <UpdateModal info={updater.info} status={updater.status} canDismiss={updater.canDismiss} downloadedBytes={updater.downloadedBytes} totalBytes={updater.totalBytes} progressPercent={updater.progressPercent} errorMessage={updater.errorMessage} installed={updater.installed} onDismiss={() => updater.setVisible(false)} onInstall={() => void updater.installAndRestart()} onRestart={() => void updater.retryRestart()} />}
+      <ExportDialog open={exportOpen} canvas={project.canvas} defaultEncoder={settings.media.encoder} busy={Boolean(busyMessage)} subtitleCount={srtSubtitleCount} onOpenChange={setExportOpen} onExport={(options) => void exportVideo(options)} onExportSrt={() => void exportSubtitles()} />
     </Tooltip.Provider>
   );
 }

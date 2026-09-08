@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CompositionScene } from "@/components/CompositionScene";
 import { compositionLayer, compositionTimeUs, compositionTransformPatch, isBackgroundComposition, mediaComposition } from "@/domain/compositions";
 import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
@@ -22,6 +22,7 @@ import { chapterProgressAt, displaySubtitleText, highlightedTextParts, subtitleS
 import { localMediaUrl } from "@/services/media";
 import type { AiProviderConfig } from "@/services/ai/provider";
 import { resolveOverlayStudioMediaParams } from "@/domain/overlayStudioMedia";
+import { isReferenceStageComposition, referenceStageInteractionPatch, referenceStageOuterTransform } from "@/domain/overlayStudioReference";
 
 interface Props {
   aiProvider: AiProviderConfig;
@@ -39,6 +40,11 @@ function activeAt<T extends { startUs: number; durationUs: number }>(clips: T[],
 
 type EffectTransform = CompositionClip["transform"];
 type ResizeHandle = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
+type ScreenPoint = { x: number; y: number };
+type InteractionBounds = { left: number; top: number; width: number; height: number };
+
+const resizeHandles: readonly ResizeHandle[] = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
+const overlayContentBoundsSelector = "[data-overlay-content-root] > *";
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -100,11 +106,76 @@ export function moveEffectTransform(transform: EffectTransform, deltaX: number, 
   };
 }
 
-export function resizeEffectTransform(transform: EffectTransform, handle: ResizeHandle, deltaX: number, deltaY: number, width: number, height: number): EffectTransform {
+export function resizeEffectTransform(transform: EffectTransform, handle: ResizeHandle, deltaX: number, deltaY: number, width: number, height: number, sensitivity = 3): EffectTransform {
   const horizontal = handle.includes("e") ? deltaX / Math.max(1, width) : handle.includes("w") ? -deltaX / Math.max(1, width) : 0;
   const vertical = handle.includes("s") ? deltaY / Math.max(1, height) : handle.includes("n") ? -deltaY / Math.max(1, height) : 0;
   const axes = Number(handle.includes("e") || handle.includes("w")) + Number(handle.includes("n") || handle.includes("s"));
-  return { ...transform, scale: clamp(transform.scale * (1 + (horizontal + vertical) / Math.max(1, axes) * 3), 0.3, 3) };
+  return { ...transform, scale: clamp(transform.scale * (1 + (horizontal + vertical) / Math.max(1, axes) * sensitivity), 0.3, 3) };
+}
+
+export function interactionBoundsFromScreenPoints(points: readonly ScreenPoint[], origin: ScreenPoint, xAxis: ScreenPoint, yAxis: ScreenPoint): InteractionBounds | null {
+  if (!points.length) return null;
+  const ax = xAxis.x - origin.x;
+  const ay = xAxis.y - origin.y;
+  const bx = yAxis.x - origin.x;
+  const by = yAxis.y - origin.y;
+  const determinant = ax * by - ay * bx;
+  if (!Number.isFinite(determinant) || Math.abs(determinant) < 0.000001) return null;
+  const local = points.map((point) => {
+    const dx = point.x - origin.x;
+    const dy = point.y - origin.y;
+    return {
+      x: (dx * by - dy * bx) / determinant,
+      y: (dy * ax - dx * ay) / determinant
+    };
+  });
+  if (local.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return null;
+  const left = Math.min(...local.map((point) => point.x));
+  const right = Math.max(...local.map((point) => point.x));
+  const top = Math.min(...local.map((point) => point.y));
+  const bottom = Math.max(...local.map((point) => point.y));
+  if (right - left < 1 || bottom - top < 1) return null;
+  return { left, top, width: right - left, height: bottom - top };
+}
+
+export function anchorContentResizeTransform(start: EffectTransform, resized: EffectTransform, handle: ResizeHandle, content: InteractionBounds, canvas: InteractionBounds): EffectTransform {
+  const ratio = resized.scale / Math.max(0.000001, start.scale);
+  const horizontalDirection = handle.includes("e") ? 1 : handle.includes("w") ? -1 : 0;
+  const verticalDirection = handle.includes("s") ? 1 : handle.includes("n") ? -1 : 0;
+  const contentCenterX = content.left + content.width / 2;
+  const contentCenterY = content.top + content.height / 2;
+  const anchorX = canvas.left + canvas.width * start.x / 100;
+  const anchorY = canvas.top + canvas.height * start.y / 100;
+  const desiredCenterX = contentCenterX + horizontalDirection * content.width * (ratio - 1) / 2;
+  const desiredCenterY = contentCenterY + verticalDirection * content.height * (ratio - 1) / 2;
+  const scaledCenterX = anchorX + (contentCenterX - anchorX) * ratio;
+  const scaledCenterY = anchorY + (contentCenterY - anchorY) * ratio;
+  return {
+    ...resized,
+    x: clamp(start.x + (desiredCenterX - scaledCenterX) / Math.max(1, canvas.width) * 100, 0, 100),
+    y: clamp(start.y + (desiredCenterY - scaledCenterY) / Math.max(1, canvas.height) * 100, 0, 100)
+  };
+}
+
+function elementScreenPoints(element: HTMLElement): ScreenPoint[] {
+  const boxQuadElement = element as HTMLElement & { getBoxQuads?: () => readonly { p1: ScreenPoint; p2: ScreenPoint; p3: ScreenPoint; p4: ScreenPoint }[] };
+  const quad = boxQuadElement.getBoxQuads?.()[0];
+  if (quad) return [quad.p1, quad.p2, quad.p3, quad.p4];
+  const bounds = element.getBoundingClientRect();
+  return [
+    { x: bounds.left, y: bounds.top },
+    { x: bounds.right, y: bounds.top },
+    { x: bounds.right, y: bounds.bottom },
+    { x: bounds.left, y: bounds.bottom }
+  ];
+}
+
+function sameInteractionBounds(left: InteractionBounds | null, right: InteractionBounds | null) {
+  if (!left || !right) return left === right;
+  return Math.abs(left.left - right.left) < 0.25
+    && Math.abs(left.top - right.top) < 0.25
+    && Math.abs(left.width - right.width) < 0.25
+    && Math.abs(left.height - right.height) < 0.25;
 }
 
 export function videoTargetPoint(clientX: number, clientY: number, bounds: Pick<DOMRect, "left" | "top" | "width" | "height">): VideoTargetPoint {
@@ -114,20 +185,63 @@ export function videoTargetPoint(clientX: number, clientY: number, bounds: Pick<
   };
 }
 
-function InteractiveEffectOverlay({ className, transform, selected, locked = false, styleFor, onSelect, onCommit, children }: {
+function InteractiveEffectOverlay({ className, transform, selected, locked = false, contentBoundsSelector, styleFor, onSelect, onCommit, children }: {
   className: string;
   transform: EffectTransform;
   selected: boolean;
   locked?: boolean;
+  contentBoundsSelector?: string;
   styleFor: (transform: EffectTransform) => React.CSSProperties;
   onSelect: () => void;
   onCommit: (transform: EffectTransform) => void;
   children: React.ReactNode;
 }) {
   const [draft, setDraft] = useState<EffectTransform | null>(null);
+  const [contentBounds, setContentBounds] = useState<InteractionBounds | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
-  const gesture = useRef<null | { pointerId: number; handle: ResizeHandle | null; startX: number; startY: number; start: EffectTransform; width: number; height: number; latest: EffectTransform }>(null);
+  const selectionRef = useRef<HTMLDivElement>(null);
+  const originMarkerRef = useRef<HTMLSpanElement>(null);
+  const xMarkerRef = useRef<HTMLSpanElement>(null);
+  const yMarkerRef = useRef<HTMLSpanElement>(null);
+  const gesture = useRef<null | { pointerId: number; handle: ResizeHandle | null; startX: number; startY: number; start: EffectTransform; canvasBounds: InteractionBounds; resizeBounds: InteractionBounds | null; resizeWidth: number; resizeHeight: number; resizeSensitivity: number; latest: EffectTransform }>(null);
   const liveTransform = draft ?? transform;
+
+  useLayoutEffect(() => {
+    if (!contentBoundsSelector) {
+      setContentBounds(null);
+      return;
+    }
+    const overlay = overlayRef.current;
+    const originMarker = originMarkerRef.current;
+    const xMarker = xMarkerRef.current;
+    const yMarker = yMarkerRef.current;
+    if (!overlay || !originMarker || !xMarker || !yMarker) return;
+    const measure = () => {
+      const target = overlay.querySelector<HTMLElement>(contentBoundsSelector);
+      if (!target) return;
+      const originRect = originMarker.getBoundingClientRect();
+      const xRect = xMarker.getBoundingClientRect();
+      const yRect = yMarker.getBoundingClientRect();
+      const next = interactionBoundsFromScreenPoints(elementScreenPoints(target),
+        { x: originRect.left, y: originRect.top },
+        { x: xRect.left, y: xRect.top },
+        { x: yRect.left, y: yRect.top });
+      setContentBounds((current) => sameInteractionBounds(current, next) ? current : next);
+    };
+    measure();
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    resizeObserver?.observe(overlay);
+    const mutationObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(measure);
+    mutationObserver?.observe(overlay, { attributes: true, characterData: true, childList: true, subtree: true });
+    window.addEventListener("resize", measure);
+    const animationFrame = typeof requestAnimationFrame === "function" ? requestAnimationFrame(measure) : 0;
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      window.removeEventListener("resize", measure);
+      if (animationFrame) cancelAnimationFrame(animationFrame);
+    };
+  }, [contentBoundsSelector]);
 
   function startGesture(event: React.PointerEvent, handle: ResizeHandle | null) {
     if (event.button !== 0) return;
@@ -138,7 +252,21 @@ function InteractiveEffectOverlay({ className, transform, selected, locked = fal
     const canvas = overlayRef.current?.closest(".preview-canvas");
     if (!(canvas instanceof HTMLElement) || !overlayRef.current) return;
     const bounds = canvas.getBoundingClientRect();
-    gesture.current = { pointerId: event.pointerId, handle, startX: event.clientX, startY: event.clientY, start: transform, width: bounds.width, height: bounds.height, latest: transform };
+    const selectionBounds = handle ? selectionRef.current?.getBoundingClientRect() : null;
+    const canvasBounds = { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height };
+    gesture.current = {
+      pointerId: event.pointerId,
+      handle,
+      startX: event.clientX,
+      startY: event.clientY,
+      start: transform,
+      canvasBounds,
+      resizeBounds: selectionBounds ? { left: selectionBounds.left, top: selectionBounds.top, width: selectionBounds.width, height: selectionBounds.height } : null,
+      resizeWidth: selectionBounds?.width ?? bounds.width,
+      resizeHeight: selectionBounds?.height ?? bounds.height,
+      resizeSensitivity: selectionBounds ? 1 : 3,
+      latest: transform
+    };
     setDraft(transform);
     overlayRef.current.setPointerCapture(event.pointerId);
   }
@@ -148,9 +276,10 @@ function InteractiveEffectOverlay({ className, transform, selected, locked = fal
     if (!active || active.pointerId !== event.pointerId) return;
     const deltaX = event.clientX - active.startX;
     const deltaY = event.clientY - active.startY;
-    const next = active.handle
-      ? resizeEffectTransform(active.start, active.handle, deltaX, deltaY, active.width, active.height)
-      : moveEffectTransform(active.start, deltaX, deltaY, active.width, active.height);
+    let next = active.handle
+      ? resizeEffectTransform(active.start, active.handle, deltaX, deltaY, active.resizeWidth, active.resizeHeight, active.resizeSensitivity)
+      : moveEffectTransform(active.start, deltaX, deltaY, active.canvasBounds.width, active.canvasBounds.height);
+    if (active.handle && active.resizeBounds) next = anchorContentResizeTransform(active.start, next, active.handle, active.resizeBounds, active.canvasBounds);
     active.latest = next;
     setDraft(next);
   }
@@ -166,15 +295,31 @@ function InteractiveEffectOverlay({ className, transform, selected, locked = fal
   return (
     <div
       ref={overlayRef}
-      className={`${className} ${selected ? "selected" : ""} ${draft ? "manipulating" : ""}`}
+      className={`${className} ${contentBoundsSelector ? "content-bounded-overlay" : ""} ${selected ? "selected" : ""} ${draft ? "manipulating" : ""}`}
+      data-interaction-bounds={contentBoundsSelector ? "content" : "canvas"}
       style={{ ...styleFor(liveTransform), "--handle-scale": 1 / liveTransform.scale } as React.CSSProperties}
-      onPointerDown={(event) => startGesture(event, null)}
+      onPointerDown={contentBoundsSelector ? undefined : (event) => startGesture(event, null)}
       onPointerMove={continueGesture}
       onPointerUp={finishGesture}
       onPointerCancel={finishGesture}
     >
       {children}
-      {selected && !locked && (["n", "ne", "e", "se", "s", "sw", "w", "nw"] as ResizeHandle[]).map((handle) => (
+      {contentBoundsSelector && <>
+        <span ref={originMarkerRef} className="effect-coordinate-marker marker-origin" />
+        <span ref={xMarkerRef} className="effect-coordinate-marker marker-x" />
+        <span ref={yMarkerRef} className="effect-coordinate-marker marker-y" />
+        {contentBounds && <div
+          ref={selectionRef}
+          className={`effect-selection-bounds ${selected ? "selected" : ""}`}
+          style={{ left: contentBounds.left, top: contentBounds.top, width: contentBounds.width, height: contentBounds.height }}
+          onPointerDown={(event) => startGesture(event, null)}
+        >
+          {selected && !locked && resizeHandles.map((handle) => (
+            <i key={handle} className={`canvas-resize-handle handle-${handle}`} aria-hidden="true" onPointerDown={(event) => startGesture(event, handle)} />
+          ))}
+        </div>}
+      </>}
+      {!contentBoundsSelector && selected && !locked && resizeHandles.map((handle) => (
         <i key={handle} className={`canvas-resize-handle handle-${handle}`} aria-hidden="true" onPointerDown={(event) => startGesture(event, handle)} />
       ))}
     </div>
@@ -498,7 +643,15 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
             const appearance = resolveEffectAppearance(effect, project.motionTheme);
             const themedEffect = { ...effect, ...appearance, fontSize };
             const dim = effect.dimAtUs !== undefined && localUs >= effect.dimAtUs ? 0.35 : 1;
-            return <InteractiveEffectOverlay key={effect.id} className={`effect-overlay react-effect ${usesFullCanvasComposition(effect.compositionId) ? "reference-full-canvas-effect" : ""} component-${effect.compositionId} motion-${project.motionTheme.skin} style-${project.motionTheme.style} recipe-${recipe.layout} entrance-none`} transform={transform} selected={selectedClipId === effect.id} onSelect={() => selectClip(effect.id)} onCommit={(nextTransform) => updateComposition(effect.id, effect.transformKeyframes?.length ? { transformKeyframes: upsertVisualKeyframe(effect.transformKeyframes, localUs, nextTransform) } : { transform: nextTransform })} styleFor={(nextTransform) => ({ left: `${nextTransform.x}%`, top: `${nextTransform.y}%`, zIndex: compositionLayer(effect), ...effectCardChromeStyle(themedEffect, recipe, canvasLength, project.motionTheme, usesComponentChrome(effect.compositionId), usesFullCanvasComposition(effect.compositionId)), ...animatedStyle(recipe, { ...nextTransform, opacity: nextTransform.opacity * dim }, effect.startUs - (effect.sourceOffsetUs ?? 0) / effect.speed, effect.speed), fontSize: canvasLength(fontSize) } as React.CSSProperties)}><CompositionContent compositionId={effect.compositionId} text={effect.text} color={appearance.color} accentColor={appearance.accentColor} fontSize={fontSize} recipe={recipe} params={effectMediaParams(effect, project.assets)} timeUs={compositionTimeUs(effect, localUs)} durationUs={effect.animationDurationUs ?? effect.durationUs} autoTiming={Boolean(effect.sourceSubtitleId)} canvasWidth={project.canvas.width} canvasHeight={project.canvas.height} /></InteractiveEffectOverlay>;
+            const fullCanvasComposition = usesFullCanvasComposition(effect.compositionId);
+            const referenceStage = isReferenceStageComposition(effect.compositionId);
+            const renderedTransform = referenceStage ? referenceStageOuterTransform(transform) : transform;
+            const contentBounded = referenceStage && !isBackgroundComposition(effect.compositionId);
+            return <InteractiveEffectOverlay key={effect.id} className={`effect-overlay react-effect ${fullCanvasComposition ? "reference-full-canvas-effect" : ""} component-${effect.compositionId} motion-${project.motionTheme.skin} style-${project.motionTheme.style} recipe-${recipe.layout} entrance-none`} transform={renderedTransform} selected={selectedClipId === effect.id} contentBoundsSelector={contentBounded ? overlayContentBoundsSelector : undefined} onSelect={() => selectClip(effect.id)} onCommit={(nextTransform) => updateComposition(effect.id, referenceStage
+              ? referenceStageInteractionPatch(effect.params, nextTransform, project.canvas)
+              : effect.transformKeyframes?.length
+                ? { transformKeyframes: upsertVisualKeyframe(effect.transformKeyframes, localUs, nextTransform) }
+                : { transform: nextTransform })} styleFor={(nextTransform) => ({ left: `${nextTransform.x}%`, top: `${nextTransform.y}%`, zIndex: compositionLayer(effect), ...effectCardChromeStyle(themedEffect, recipe, canvasLength, project.motionTheme, usesComponentChrome(effect.compositionId), fullCanvasComposition), ...animatedStyle(recipe, { ...nextTransform, opacity: nextTransform.opacity * dim }, effect.startUs - (effect.sourceOffsetUs ?? 0) / effect.speed, effect.speed), fontSize: canvasLength(fontSize) } as React.CSSProperties)}><CompositionContent compositionId={effect.compositionId} text={effect.text} color={appearance.color} accentColor={appearance.accentColor} fontSize={fontSize} recipe={recipe} params={effectMediaParams(effect, project.assets)} timeUs={compositionTimeUs(effect, localUs)} durationUs={effect.animationDurationUs ?? effect.durationUs} autoTiming={Boolean(effect.sourceSubtitleId)} canvasWidth={project.canvas.width} canvasHeight={project.canvas.height} /></InteractiveEffectOverlay>;
           })}
           {showTimelineGraphics && foregroundEffects.filter((effect) => effect.compositionId === "focus-card").map((effect) => renderFocusCardMedia(effect, project.assets, Math.max(0, Math.min(effect.durationUs, playheadUs - effect.startUs))))}
           {showTimelineGraphics && project.chapterProgress.enabled && project.chapterProgress.chapters.length > 0 && <div

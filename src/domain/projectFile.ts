@@ -13,6 +13,7 @@ import { compositionAssetIds, compositionLayer, isBackgroundComposition, normali
 import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
 import { normalizeVideoMask } from "@/domain/videoFrame";
 import { migrateSceneTracks } from "@/domain/sceneBackground";
+import { isReferenceStageComposition, referenceStageOuterTransform } from "@/domain/overlayStudioReference";
 
 function normalizeEffectSoundCues(value: unknown): EffectSoundCue[] {
   if (!Array.isArray(value)) return [];
@@ -136,6 +137,13 @@ function migrateGeneratedOverlayStudioLayout(project: EditorProject, sourceSchem
   for (const effect of movable) {
     const placement = placements.get(effect.id);
     if (placement) effect.transform = { ...effect.transform, ...placement };
+  }
+}
+
+function normalizeGeneratedReferenceStageLayout(project: EditorProject) {
+  for (const clip of project.tracks.flatMap((track) => track.clips)) {
+    if (clip.kind !== "composition" || !isGeneratedOverlayStudioEffect(clip) || !isReferenceStageComposition(clip.compositionId) || clip.transformKeyframes?.length) continue;
+    clip.transform = referenceStageOuterTransform(clip.transform);
   }
 }
 
@@ -429,6 +437,7 @@ export function parseProject(contents: string): EditorProject {
     }
   }
   migrateGeneratedOverlayStudioLayout(project, sourceSchemaVersion);
+  normalizeGeneratedReferenceStageLayout(project);
   const assetById = new Map(project.assets.map((asset) => [asset.id, asset]));
   const generatedById = new Map(project.tracks
     .flatMap((track) => track.clips)

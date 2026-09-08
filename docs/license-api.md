@@ -77,21 +77,29 @@ bvideo-license-v1\n{ts}\n{isVip}\n{planName}\n{expireAt}\n{activatedAt}\n{licens
 
 1. ESA 控制台创建 EdgeKV 命名空间（仅字母、数字、中划线、下划线）。
 2. 复制 `edge/config.example.js` 为 `edge/config.js`（已被 `.gitignore` 忽略），填入命名空间与至少 32 位强随机 `HMAC_SECRET`。
-3. 将 `edge/` 下 `license-core.mjs`、`license-server.mjs`、`index.js`、`config.js` 粘贴到 ESA 边缘函数编辑器（或用 erc CLI 部署），绑定域名并开启函数。
+3. 将 `edge/` 下 `license-core.mjs`、`license-server.mjs`、`index.js`、`config.js` 粘贴到 ESA 边缘函数编辑器（或用 esa-cli 部署，见仓库根目录 `esa.jsonc`），绑定域名并开启函数。
 4. 客户端发布构建注入上表两个环境变量。
 
 ## 卡密生成与导入
 
+
+完整命令与参数见 [`license-card-operations.md`](license-card-operations.md)。速查：
+
 ```bash
-# 永久卡 100 张
-node scripts/generate-license-cards.mjs --count 100 --plan lifetime --output license-cards-lifetime.json
-# 年卡（365 天）50 张
-node scripts/generate-license-cards.mjs --count 50 --plan period --days 365 --output license-cards-yearly.json
+# 生成 100 张永久卡并直接写入线上 KV，终端输出卡密列表
+npm run esa:import -- --count 100 --plan lifetime
+
+# 限时卡（365 天）
+npm run esa:import -- --count 50 --plan period --days 365
+
+# 只生成不入库
+node scripts/generate-license-cards.mjs --count 100 --plan lifetime --output license-cards-batch1.json
+npm run esa:import -- --input license-cards-batch1.json
 ```
 
 - 输出 JSON 含卡密明文与可直接导入的 KV 记录；文件已被 `.gitignore` 忽略，仅限离线保存与发放。
 - 卡密字符集剔除易混淆的 `I/L/O/0/1`，格式 `VIP-XXXX-XXXX-XXXX-XXXX`（见 `edge/license-core.mjs` 的 `CARD_KEY_RE`）。
-- 导入：对每张卡在 EdgeKV 执行 `put(cards[i].kvKey, JSON.stringify(cards[i].kvValue))`。
+- 导入：对每张卡在 EdgeKV 执行 `put(cards[i].kvKey, JSON.stringify(cards[i].kvValue))`（脚本已自动完成）。
 - 吊销：将对应 `card:*` 记录的 `status` 改为 `"revoked"`；该设备下次 verify 自动降级。
 
 ## 本地验证

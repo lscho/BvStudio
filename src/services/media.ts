@@ -275,6 +275,11 @@ export async function selectAudioDestination(defaultName: string): Promise<strin
   });
 }
 
+export async function selectSrtDestination(defaultName: string): Promise<string | null> {
+  if (!isDesktopRuntime()) return null;
+  return save({ defaultPath: `${defaultName}.srt`, filters: [{ name: "SRT 字幕", extensions: ["srt"] }] });
+}
+
 export function localMediaUrl(path: string): string {
   return convertFileSrc(path);
 }

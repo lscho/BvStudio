@@ -5,14 +5,10 @@ import { EFFECTS } from "@/compositions/overlayStudioReference/effects/registry"
 import type { EffectProps } from "@/compositions/overlayStudioReference/effects/types";
 import { FxTimelineMsContext } from "@/compositions/overlayStudioReference/effects/useAnimation";
 import { StageRatioContext, StageSizeContext, type StageRatio } from "@/compositions/overlayStudioReference/stage";
+import { isReferenceStageComposition } from "@/domain/overlayStudioReference";
 import "@/compositions/overlayStudioReference/reference.css";
 
-const retainedNativeIds = new Set([
-  "quote-lockup", "step-timeline", "rank-bars", "punch-pill", "term-card", "checklist", "terminal-3d", "ring-metric", "versus-card", "ui-callout",
-  "type-shift", "blur-text", "odometer", "focus-card", "chapter-bar", "caption-track", "stat-proof", "growth-curve", "entity-chips", "pin-board"
-]);
-
-export const replicatedOverlayStudioEffects = EFFECTS.filter((effect) => !retainedNativeIds.has(effect.id));
+export const replicatedOverlayStudioEffects = EFFECTS.filter((effect) => isReferenceStageComposition(effect.id));
 export const replicatedOverlayStudioEffectIds = replicatedOverlayStudioEffects.map((effect) => effect.id);
 
 const effectsById = new Map(replicatedOverlayStudioEffects.map((effect) => [effect.id, effect]));
@@ -95,6 +91,9 @@ export function ReplicatedOverlayStudioCard(props: CompositionRenderProps) {
     __end: props.durationUs / 1_000_000
   };
   const theme = params.theme === "light" ? "light" : "dark";
+  const cardScale = typeof params.scale === "number" && Number.isFinite(params.scale)
+    ? Math.max(0.3, Math.min(3, params.scale))
+    : 1;
   const Component = definition.Component as unknown as ComponentType<EffectProps<RuntimeParams>>;
   const stageStyle = {
     position: "absolute",
@@ -119,7 +118,7 @@ export function ReplicatedOverlayStudioCard(props: CompositionRenderProps) {
       <StageSizeContext.Provider value={{ w: props.canvasWidth, h: canvasHeight }}>
         <FxTimelineMsContext.Provider value={displayTimeUs / 1_000}>
           <div className="stage" data-ratio={ratio} data-theme={theme} style={stageStyle}>
-            <div data-card-theme={theme} data-card-vtier={definition.vTier} style={{ display: "contents" }}>
+            <div data-card-theme={theme} data-card-vtier={definition.vTier} data-overlay-content-root style={{ display: "contents", "--hud-scale": cardScale } as CSSProperties}>
               <Component params={params} playToken={0} />
             </div>
           </div>

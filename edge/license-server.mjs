@@ -7,6 +7,7 @@
  */
 import {
   cardKeyFor,
+  cardExpiryAt,
   decideRedemption,
   deviceKeyFor,
   failureKeyFor,
@@ -38,7 +39,7 @@ export function createEdgeKv(namespace) {
       if (raw === null || raw === undefined || raw === "") return null;
       try {
         return JSON.parse(raw);
-      } catch {
+      } catch (error) { console.error("DEBUG:", error);
         return null;
       }
     },
@@ -59,7 +60,7 @@ async function readJsonBody(request) {
   try {
     const parsed = await request.json();
     return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
+  } catch (error) { console.error("DEBUG:", error);
     return null;
   }
 }
@@ -106,6 +107,12 @@ async function handleVerify(body, { kv, secret, now }) {
       await kv.remove(deviceKeyFor(deviceId));
       return jsonResponse(200, await signLicenseStatus(secret, freeStatus(), now));
     }
+    // 到期时间自愈：以卡密记录为准修复历史写入错误（如重复兑换把年卡刷成永久）。
+    const expectedExpireAt = card.expireAt ?? cardExpiryAt(card, card.boundAt ?? now);
+    if (device.expireAt !== expectedExpireAt) {
+      device.expireAt = expectedExpireAt;
+      await kv.put(deviceKeyFor(deviceId), device);
+    }
   }
 
   return jsonResponse(200, await signLicenseStatus(secret, statusForDeviceRecord(device, now), now));
@@ -135,9 +142,10 @@ async function handleRedeem(body, { kv, secret, now }) {
     await kv.put(cardKeyFor(hash), decision.cardPatch);
     await kv.put(deviceKeyFor(deviceId), decision.deviceRecord);
 
-    // EdgeKV 无事务：put 后回读做二次确认，收敛并发绑定同一张卡的竞态窗口。
+    // EdgeKV 最终一致：回读可能拿到写入前的旧值（unused），不能视为冲突。
+    // 只有明确读到"已绑定到其他设备"才认定并发抢绑失败。
     const persisted = await kv.get(cardKeyFor(hash));
-    if (!persisted || persisted.boundDeviceId !== deviceId) {
+    if (persisted?.boundDeviceId && persisted.boundDeviceId !== deviceId) {
       await kv.remove(deviceKeyFor(deviceId));
       return jsonResponse(409, { message: "卡密激活冲突，请稍后重试" });
     }

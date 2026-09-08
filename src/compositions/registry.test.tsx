@@ -78,6 +78,13 @@ describe("React effect registry", () => {
     expect(render("pain-points")).toContain("background:transparent");
     expect(render("frost-screen")).toContain('data-composition-layer="background"');
 
+    const scaled = reactEffectDefinition("pain-points").definition;
+    expect(renderToStaticMarkup(<CompositionContent
+      compositionId={scaled.id} text={scaled.defaultText} color={scaled.defaultColor} accentColor={scaled.defaultAccentColor}
+      fontSize={48} recipe={scaled.recipe} params={{ ...scaled.defaultParams, scale: 0.8 }} timeUs={0}
+      durationUs={scaled.defaultDurationUs} canvasWidth={1920} canvasHeight={1080}
+    />)).toContain("--hud-scale:0.8");
+
     const definition = reactEffectDefinition("pain-points").definition;
     expect(effectCardChromeStyle({
       color: definition.defaultColor,

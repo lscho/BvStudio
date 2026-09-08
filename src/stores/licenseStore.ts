@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import {
-  clearCachedVipStatus,
   DEFAULT_VIP_STATUS,
   getHardwareDeviceId,
   redeemCardKey,
@@ -19,7 +18,6 @@ interface LicenseState {
   initialize: () => Promise<void>;
   checkVipStatus: () => Promise<void>;
   redeem: (cardKey: string) => Promise<RedeemResult>;
-  resetLicense: () => Promise<void>;
 }
 
 export const useLicenseStore = create<LicenseState>((set, get) => ({
@@ -85,13 +83,5 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
     } finally {
       set({ isRedeeming: false });
     }
-  },
-
-  resetLicense: async () => {
-    clearCachedVipStatus();
-    set({
-      status: DEFAULT_VIP_STATUS,
-      error: null
-    });
   }
 }));

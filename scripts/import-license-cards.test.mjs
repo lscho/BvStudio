@@ -29,6 +29,57 @@ test("writes every card into the target namespace with compact JSON values", asy
   assert.deepEqual(JSON.parse(written[0].value), cards[0].kvValue);
 });
 
+test("retries throttled writes with backoff and eventually succeeds", async () => {
+  const cards = makeCards(1);
+  let attempts = 0;
+  const retries = [];
+  const failures = await importCards({
+    cards,
+    namespace: "ns",
+    putKv: async () => {
+      attempts += 1;
+      if (attempts < 3) throw new Error("Throttling.Api: code: 400, Request was denied due to user flow control");
+    },
+    onRetry: (cardKey, attempt) => retries.push({ cardKey, attempt })
+  });
+
+  assert.equal(attempts, 3);
+  assert.equal(failures.length, 0);
+  assert.deepEqual(retries.map((r) => r.attempt), [1, 2]);
+});
+
+test("gives up after exhausting retries and reports the throttle failure", async () => {
+  const cards = makeCards(1);
+  let attempts = 0;
+  const failures = await importCards({
+    cards,
+    namespace: "ns",
+    putKv: async () => {
+      attempts += 1;
+      throw new Error("Throttling.Api: Request was denied due to user flow control");
+    }
+  });
+
+  assert.equal(attempts, 6); // 首次 + 5 次退避重试
+  assert.equal(failures.length, 1);
+  assert.match(failures[0].error, /Throttling/);
+});
+
+test("does not retry non-throttle errors", async () => {
+  let attempts = 0;
+  const failures = await importCards({
+    cards: makeCards(1),
+    namespace: "ns",
+    putKv: async () => {
+      attempts += 1;
+      throw new Error("InvalidNamespace: not found");
+    }
+  });
+
+  assert.equal(attempts, 1);
+  assert.equal(failures.length, 1);
+});
+
 test("collects failures without aborting the remaining writes", async () => {
   const cards = makeCards(4);
   const written = [];

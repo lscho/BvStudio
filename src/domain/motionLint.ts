@@ -1,6 +1,8 @@
 import { allCompositions } from "@/domain/effects";
 import { compositionBindingIssues } from "@/domain/compositions";
+import { motionMatchingProfile, referenceMotionMatchingPolicy } from "@/domain/motionMatching";
 import type { EditorProject, CompositionClip, SceneClip, TimelineClip } from "@/domain/project";
+import { isReferenceStageComposition } from "@/domain/overlayStudioReference";
 
 export interface MotionLintIssue {
   ruleId: string;
@@ -30,12 +32,16 @@ export function lintMotionProject(project: EditorProject): MotionLintIssue[] {
       issue(issues, clip, "invalid-time", "error", `“${clip.label}”的时间范围无效`);
     }
     if (clip.kind !== "composition") continue;
-    if (!project.tracks.find((track) => track.id === clip.trackId)?.hidden) {
+    if (!project.tracks.find((track) => track.id === clip.trackId)?.hidden && !ignores(clip, "composition-input")) {
       for (const message of compositionBindingIssues(clip, project.assets)) issues.push({ ruleId: "composition-input", severity: "error", clipId: clip.id, message: `${clip.label}：${message}` });
     }
     if (!registered.has(clip.compositionId) && !clip.recipe) issue(issues, clip, "unknown-effect", "error", `“${clip.label}”引用了不可用的动效 ${clip.compositionId}`);
     if (clip.transform.x < 5 || clip.transform.x > 95 || clip.transform.y < 5 || clip.transform.y > 95 || clip.transform.scale > 2.5) {
       issue(issues, clip, "unsafe-bounds", "warning", `“${clip.label}”接近或超出画布安全边界`);
+    }
+    if (isReferenceStageComposition(clip.compositionId)
+      && (Math.abs(clip.transform.x - 50) > 0.001 || Math.abs(clip.transform.y - 50) > 0.001 || Math.abs(clip.transform.scale - 1) > 0.001 || Math.abs(clip.transform.rotation) > 0.001)) {
+      issue(issues, clip, "reference-stage-transform", "warning", `“${clip.label}”移动了参考动效的完整舞台，请改用动效内部落位和位置微调`);
     }
     const chart = clip.recipe?.chart;
     const facts = chart?.kind === "counter" ? [chart.endValue] : chart?.series;
@@ -53,21 +59,37 @@ export function lintMotionProject(project: EditorProject): MotionLintIssue[] {
   }
   for (const group of groups.values()) {
     const ordered = [...group].sort((left, right) => left.startUs - right.startUs);
+    const aiGeneratedGroup = ordered.some((clip) => clip.sceneGroupId?.startsWith("ai-motion:"));
     let coveredUntilUs = ordered[0]?.startUs ?? 0;
     for (const clip of ordered) {
       if (clip.startUs - coveredUntilUs > 250_000) issue(issues, clip, "group-gap", "warning", `场景组“${clip.label}”之前存在时间空档`);
       coveredUntilUs = Math.max(coveredUntilUs, clip.startUs + clip.durationUs);
     }
-    const events = ordered.flatMap((clip) => clip.kind === "composition" && !clip.recipe?.sceneBackground ? [
+    const contentClips = ordered.filter((clip): clip is CompositionClip => {
+      if (clip.kind !== "composition" || clip.recipe?.sceneBackground) return false;
+      const definition = allCompositions().find((effect) => effect.id === clip.compositionId);
+      const role = definition ? motionMatchingProfile(definition).layerRole : "content";
+      return role === "content" || role === "exclusive";
+    });
+    const events = contentClips.flatMap((clip) => [
       { timeUs: clip.startUs, delta: 1, clip },
       { timeUs: clip.startUs + clip.durationUs, delta: -1, clip }
-    ] : []).sort((left, right) => left.timeUs - right.timeUs || left.delta - right.delta);
+    ]).sort((left, right) => left.timeUs - right.timeUs || left.delta - right.delta);
     let active = 0;
+    const layerLimit = aiGeneratedGroup ? referenceMotionMatchingPolicy.maxConcurrentContentLayers : 4;
     for (const event of events) {
       active += event.delta;
-      if (active > 4) {
-        issue(issues, event.clip, "too-many-layers", "error", `场景组“${event.clip.label}”同时显示超过 4 个动效层`);
+      if (active > layerLimit) {
+        issue(issues, event.clip, "too-many-layers", "error", `场景组“${event.clip.label}”同时显示超过 ${layerLimit} 个内容动效层`);
         break;
+      }
+    }
+    if (aiGeneratedGroup) {
+      for (let index = 1; index < contentClips.length; index += 1) {
+        if (contentClips[index].startUs - contentClips[index - 1].startUs < referenceMotionMatchingPolicy.minContentEntryStaggerSeconds * 1_000_000) {
+          issue(issues, contentClips[index], "entry-stagger", "error", `场景组“${contentClips[index].label}”的内容动效进场间隔不足 ${referenceMotionMatchingPolicy.minContentEntryStaggerSeconds} 秒`);
+          break;
+        }
       }
     }
   }

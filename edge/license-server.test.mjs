@@ -118,9 +118,23 @@ describe("verify", () => {
     const rebounded = await handleLicenseRequest(request("/api/license/verify", { deviceId: DEVICE_ID }), { kv: rebound.kv, secret: SECRET, now: NOW });
     expect((await rebounded.json()).status.isVip).toBe(false);
   });
+  it("repairs a device record whose expireAt was corrupted to lifetime", async () => {
+    const boundAt = NOW - 3 * 24 * 60 * 60 * 1000;
+    const expectedExpireAt = boundAt + 365 * 24 * 60 * 60 * 1000;
+    const { kv } = await seededKv({ plan: "period", days: 365, status: "bound", boundDeviceId: DEVICE_ID, boundAt, expireAt: expectedExpireAt });
+    await kv.put(deviceKeyFor(DEVICE_ID), { isVip: true, planName: "365 天 VIP 会员", expireAt: null, activatedAt: boundAt, licenseKey: "VIP-ABCD****QRST", cardHash: await sha256Hex(CARD_KEY) });
+
+    const response = await handleLicenseRequest(request("/api/license/verify", { deviceId: DEVICE_ID }), { kv, secret: SECRET, now: NOW });
+    const envelope = await verifyEnvelope(response);
+    expect(envelope.status.expireAt).toBe(expectedExpireAt);
+    expect((await kv.get(deviceKeyFor(DEVICE_ID))).expireAt).toBe(expectedExpireAt);
+  });
+
   it("expires time-limited plans at read time", async () => {
-    const { kv } = await seededKv({ status: "bound", boundDeviceId: DEVICE_ID, boundAt: NOW - 3000, expireAt: null });
-    await kv.put(deviceKeyFor(DEVICE_ID), { isVip: true, planName: "365 天 VIP 会员", expireAt: NOW - 1000, activatedAt: NOW - 2000, licenseKey: "VIP-ABCD****QRST", cardHash: await sha256Hex(CARD_KEY) });
+    const boundAt = NOW - 400 * 24 * 60 * 60 * 1000;
+    const expireAt = NOW - 1000;
+    const { kv } = await seededKv({ plan: "period", days: 365, status: "bound", boundDeviceId: DEVICE_ID, boundAt, expireAt });
+    await kv.put(deviceKeyFor(DEVICE_ID), { isVip: true, planName: "365 天 VIP 会员", expireAt, activatedAt: boundAt, licenseKey: "VIP-ABCD****QRST", cardHash: await sha256Hex(CARD_KEY) });
     const response = await handleLicenseRequest(request("/api/license/verify", { deviceId: DEVICE_ID }), { kv, secret: SECRET, now: NOW });
     const envelope = await verifyEnvelope(response);
     expect(envelope.status.isVip).toBe(false);
@@ -179,5 +193,22 @@ describe("redeem", () => {
     expect(response.status).toBe(409);
     expect((await response.json()).message).toContain("冲突");
     expect(racingKv.store.has(deviceKeyFor(DEVICE_ID))).toBe(false);
+  });
+
+  it("treats a stale pre-write read as success, not a conflict", async () => {
+    const { kv, hash } = await seededKv();
+    // 模拟最终一致：写入后回读仍返回写入前的 unused 旧值
+    const staleKv = {
+      ...kv,
+      async get(key) {
+        if (key === cardKeyFor(hash)) return unusedCard({ hash });
+        return kv.get(key);
+      }
+    };
+
+    const response = await handleLicenseRequest(request("/api/license/redeem", { deviceId: DEVICE_ID, cardKey: CARD_KEY }), { kv: staleKv, secret: SECRET, now: NOW });
+    const payload = await verifyEnvelope(response);
+    expect(payload.status.isVip).toBe(true);
+    expect(staleKv.store.has(deviceKeyFor(DEVICE_ID))).toBe(true);
   });
 });

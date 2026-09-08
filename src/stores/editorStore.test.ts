@@ -952,6 +952,38 @@ describe("editorStore", () => {
     expect(motionLayoutRectsOverlap(estimateMotionLayoutRect(layer, effect.transform, project.canvas), presenterRect)).toBe(false);
   });
 
+  it("keeps replicated reference-stage effects centered and delegates placement to card params", () => {
+    useEditorStore.getState().addVideo({ id: "reference-video", name: "speech.mp4", kind: "video", durationUs: 4_000_000, sourcePath: "/media/speech.mp4", hasAudio: true });
+    useEditorStore.getState().addSubtitles("reference-video", [{ startSeconds: 0, endSeconds: 4, text: "文案通顺不等于表达自然。" }]);
+    const subtitle = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [{
+      ...motionMatch,
+      primaryEffectId: "info-board",
+      primaryText: "表达问题｜文案通顺｜仍不自然｜需要调整",
+      primaryParams: [{ key: "position", value: "right" }],
+      x: 88,
+      y: 24,
+      scale: 2.2,
+      cameraPreset: "none"
+    }]);
+
+    const project = useEditorStore.getState().project;
+    const effect = project.tracks.find((track) => track.kind === "composition")!.clips[0] as CompositionClip;
+    expect(effect).toMatchObject({
+      compositionId: "info-board",
+      transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 },
+      params: { position: "right" }
+    });
+    expect(buildRenderPlan(project, "/output.mp4").overlays.find((overlay) => overlay.kind === "text" && overlay.compositionId === "info-board")).toMatchObject({
+      compositionId: "info-board",
+      x: 50,
+      y: 50,
+      scale: 1,
+      params: { position: "right" }
+    });
+  });
+
   it.each([[1920, 1080], [1080, 1920], [1080, 1080]])("matches outside a custom presenter area and exports the same placement at %i x %i", (width, height) => {
     useEditorStore.getState().addVideo({ id: "voice", name: "presenter.mp4", kind: "video", durationUs: 3_000_000, sourcePath: "/media/presenter.mp4", hasAudio: true });
     useEditorStore.getState().updateCanvas({ width, height, fpsNumerator: 30, fpsDenominator: 1 });

@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { ZodError } from "zod";
 import { isDesktopRuntime } from "@/services/runtime";
 import { allCompositions, compositionById } from "@/domain/effects";
 import { aiCompositionSlots, compositionSlots } from "@/domain/compositions";
@@ -7,23 +8,28 @@ import {
   aiSoundMatchesSchema,
   aiTimedScriptSchema,
   CHAPTER_PLAN_JSON_SCHEMA,
-  createAiEffectSelectionSchema,
+  createAiMotionSelectionSchema,
   createAiMotionMatchesSchema,
-  createEffectSelectionJsonSchema,
+  createMotionSelectionJsonSchema,
   createMotionMatchesJsonSchema,
   TIMED_SCRIPT_JSON_SCHEMA,
   SOUND_MATCHES_JSON_SCHEMA,
   type AiSoundMatch,
   type AiMotionMatch,
+  type AiMotionSelection,
   type AiChapterPlan,
   type AiTimedScript,
   type AiVideoPlan
 } from "@/services/ai/schema";
 import type { CompositionDefinition } from "@/domain/effects";
+import { allowedAiMotionParameterKeys, motionMatchingProfile, referenceMotionMatchingPolicy } from "@/domain/motionMatching";
+import { assertMotionMatchPlan, assertMotionSelectionPlan, MotionPlanValidationError } from "@/domain/motionMatchingPlan";
+import { isReferenceStageComposition } from "@/domain/overlayStudioReference";
 import { CAMERA_PRESETS } from "@/domain/camera";
 import { mergeLeadingCaptionFragments } from "@/domain/captions";
 import { subtitleKeywordsForText } from "@/domain/videoDecorations";
 import { BUILTIN_SOUND_EFFECTS } from "@/domain/soundEffects";
+import type { MotionMatchingPreference } from "@/services/motionMatchingFeedback";
 
 export type AiProtocol = "openai-responses" | "openai-chat" | "anthropic";
 
@@ -97,10 +103,12 @@ export interface MatchTimelineMotionInput {
   captions: AiTimedScript["captions"];
   timelineDurationSeconds: number;
   materials: AiMaterialCandidate[];
+  motionPreferences?: MotionMatchingPreference[];
 }
 
 export interface MatchedTimelineMotion {
   matches: NonNullable<AiVideoPlan["matches"]>;
+  selection: AiMotionSelection;
   usage: AiTokenUsage;
 }
 
@@ -183,7 +191,7 @@ function modelsEndpoint(config: AiProviderConfig) {
   return base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
 }
 
-const manualOnlyMotionEffectIds = new Set(["chapter-bar", "caption-track", "focus-card"]);
+const manualOnlyMotionEffectIds = new Set(["chapter-bar", "caption-track"]);
 const structuredCopyFormats: Readonly<Record<string, string>> = {
   "pin-board": "标题｜要点一｜要点二｜要点三",
   checklist: "标题｜步骤一｜步骤二｜步骤三",
@@ -201,10 +209,6 @@ const structuredCopyFormats: Readonly<Record<string, string>> = {
   "flow-chart": "标题｜节点一｜节点二｜结果",
   "compare-split": "标题｜A项名称｜A项真实数字｜B项名称｜B项真实数字"
 };
-
-function motionPurposeGroup(effect: CompositionDefinition) {
-  return effect.tags[0] === "Overlay Studio" ? effect.tags[1] ?? effect.category : effect.category;
-}
 
 function materialCountForSlot(slot: ReturnType<typeof aiCompositionSlots>[number], materials: readonly AiMaterialCandidate[]) {
   if (slot.kind === "image") return materials.filter((material) => material.kind === "image").length;
@@ -228,10 +232,10 @@ export function selectMotionCandidates(_input: MatchTimelineMotionInput): Compos
 function motionSelectionSystemPrompt(candidates: readonly CompositionDefinition[], input: MatchTimelineMotionInput) {
   const sourceText = `${input.topic} ${input.article ?? ""} ${input.captions.map((caption) => caption.text).join(" ")}`;
   const effects = candidates.map(({ id, name, category, description, tags, recipe, renderer }) => ({
+    ...motionMatchingProfile(compositionById(id)),
     id,
     name,
     category,
-    purposeGroup: motionPurposeGroup(compositionById(id)),
     description,
     tags,
     renderer: renderer ?? "react",
@@ -239,6 +243,7 @@ function motionSelectionSystemPrompt(candidates: readonly CompositionDefinition[
     copyFormat: structuredCopyFormats[id] ?? null,
     chartKind: recipe.chart?.kind ?? null,
     sceneBackground: recipe.sceneBackground?.preset ?? null,
+    referenceStage: isReferenceStageComposition(id),
     availableForTimeline: canUseMotionEffect(compositionById(id), input.materials, sourceText)
   }));
   const materialSummary = input.materials.map(({ id, name, kind, durationSeconds, width, height, roleHint }) => ({
@@ -250,15 +255,122 @@ function motionSelectionSystemPrompt(candidates: readonly CompositionDefinition[
     height,
     roleHint: roleHint ?? "unspecified"
   }));
-  return `你是视频动效选型编辑。这是第一阶段，只从完整动效目录中选出适合整段内容的动效集合，不分配素材、不生成时间线。完整动效目录：${JSON.stringify(effects)}。当前项目素材概况：${JSON.stringify(materialSummary)}。只选择 availableForTimeline=true 的动效；结合 category、purposeGroup、description、素材槽和文案格式判断。优先覆盖内容真正出现的痛点、流程、对比、证据、数据、教程、运镜、开场与收束需求，并在同一用途下选择最贴切的少数效果。不要固定偏向简单标题、胶囊或旧模板。返回 6 到 24 个不重复 effectIds；内容很短时可以更少，但至少一个。`;
+  const confirmedPreferences = (input.motionPreferences ?? []).map(({ effectId, acceptedCount, removedCount, replacementEffectIds }) => ({ effectId, acceptedCount, removedCount, replacementEffectIds }));
+  return `你是视频动效选型编辑。这是第一阶段：先把完整字幕按语义拆成连续的论点段，再为每段选择画面方案；不分配具体素材、不填写最终动效参数。完整动效目录：${JSON.stringify(effects)}。当前项目素材概况：${JSON.stringify(materialSummary)}。用户已确认的历史偏好：${JSON.stringify(confirmedPreferences)}。参考默认编排策略：${JSON.stringify(referenceMotionMatchingPolicy)}。
+分段规则：segments 必须从字幕 0 开始，按索引连续覆盖到最后一条字幕，段间无空洞、无重叠；通常一个段落承载恰好一个论点并持续 10 到 30 秒，钩子、转场或结论可以更短。0 到 5 秒必须建立 intent=hook 的钩子段并选择钩子动效。先识别该段是痛点、证据、数据、定义、流程、对比、列举、引用、演示、转场、总结还是氛围，再判断证据形态。是用动画呈现语义，不是给每条字幕机械加特效。
+选型规则：完整目录中的每张卡都给出了 triggerWhen、avoidWhen、distinguishFrom、layerRole、durationScope 和 parameterGuide。目标密度为每分钟 8 到 12 张内容卡或等量卡内动作，约每 2 到 4 秒出现一个语义驱动的新动作；相邻内容卡不能使用同一个 kind。优先选择 availableForTimeline=true 的动效；如果某张素材动效在语义上明显最合适但当前没有对应素材，仍可选择它并在 materialNeed 中写清需要补什么，第二阶段会生成半透明占位。证据优先于复述：有真实截图、原文、录屏或引用时优先选择对应素材卡，并在 materialNeed 写明来源；数据必须来自字幕，证据卡必须保留出处信息。多个要点优先一段一板、逐条累积，板内优先数据、对比、流程、图标或截图等图形结构；纯文字卡只用于单个短观点、钩子或金句。不要固定偏向标题、胶囊、简单清单或旧模板。历史偏好只作为同等合适候选之间的软排序依据，不能覆盖当前字幕证据、素材要求、互斥和层级规则。primaryEffectId 是本段主角；secondaryEffectId 只在承载不同且必要的信息时使用。同段最多两个内容动效，进场应错开至少 0.5 秒；exclusive 动效不能有辅助动效；同段最多一个 background。没有必要动效的过渡段可以两个 ID 都返回 null，但仍要保留对应 segment 以覆盖字幕。每个选择都写清具体依据和素材需求。`;
 }
 
-function motionSystemPrompt(candidates: CompositionDefinition[], materials: AiMaterialCandidate[]) {
+export function normalizeMotionSelection(
+  selection: AiMotionSelection,
+  candidates: readonly CompositionDefinition[],
+  input: MatchTimelineMotionInput
+): AiMotionSelection {
+  const available = new Map(candidates.map((effect) => [effect.id, effect]));
+  const usedSegmentIds = new Set<string>();
+  let occupiedUntil = -1;
+  const segments = [...selection.segments]
+    .sort((left, right) => left.startCaptionIndex - right.startCaptionIndex || left.endCaptionIndex - right.endCaptionIndex)
+    .flatMap((rawSegment) => {
+      const startCaptionIndex = Math.max(rawSegment.startCaptionIndex, occupiedUntil + 1);
+      const endCaptionIndex = Math.min(input.captions.length - 1, rawSegment.endCaptionIndex);
+      if (endCaptionIndex < startCaptionIndex) return [];
+      occupiedUntil = endCaptionIndex;
+      let primaryEffectId = rawSegment.primaryEffectId && available.has(rawSegment.primaryEffectId) ? rawSegment.primaryEffectId : null;
+      let secondaryEffectId = rawSegment.secondaryEffectId && available.has(rawSegment.secondaryEffectId) ? rawSegment.secondaryEffectId : null;
+      if (!primaryEffectId && secondaryEffectId) {
+        primaryEffectId = secondaryEffectId;
+        secondaryEffectId = null;
+      }
+      if (primaryEffectId) {
+        const primaryRole = motionMatchingProfile(available.get(primaryEffectId)!).layerRole;
+        const secondaryRole = secondaryEffectId ? motionMatchingProfile(available.get(secondaryEffectId)!).layerRole : null;
+        if (primaryRole === "exclusive" || secondaryRole === "exclusive" || (primaryRole === "background" && secondaryRole === "background")) secondaryEffectId = null;
+      }
+      let segmentId = rawSegment.segmentId;
+      for (let suffix = 2; usedSegmentIds.has(segmentId); suffix += 1) {
+        segmentId = `${rawSegment.segmentId.slice(0, Math.max(1, 39 - String(suffix).length))}-${suffix}`;
+      }
+      usedSegmentIds.add(segmentId);
+      return [{ ...rawSegment, segmentId, startCaptionIndex, endCaptionIndex, primaryEffectId, secondaryEffectId }];
+    });
+  return { segments };
+}
+
+export function groundMotionMatchesToSelection(
+  matches: readonly AiMotionMatch[],
+  selection: AiMotionSelection,
+  captions: readonly AiTimedScript["captions"][number][]
+) {
+  const seenCaptions = new Set<number>();
+  return [...matches]
+    .sort((left, right) => left.captionIndex - right.captionIndex)
+    .flatMap((match) => {
+      if (seenCaptions.has(match.captionIndex) || !captions[match.captionIndex]) return [];
+      const segment = selection.segments.find((candidate) => (
+        match.captionIndex >= candidate.startCaptionIndex && match.captionIndex <= candidate.endCaptionIndex
+      ));
+      if (!segment) return [];
+      seenCaptions.add(match.captionIndex);
+      const allowed = new Set([segment.primaryEffectId, segment.secondaryEffectId].filter((id): id is string => Boolean(id)));
+      let primaryEffectId = match.primaryEffectId && allowed.has(match.primaryEffectId) ? match.primaryEffectId : null;
+      let secondaryEffectId = match.secondaryEffectId && allowed.has(match.secondaryEffectId) ? match.secondaryEffectId : null;
+      let primaryText = match.primaryText;
+      let primaryParams = match.primaryParams ?? [];
+      let primaryTimingCaptionIndices = match.primaryTimingCaptionIndices ?? [];
+      let compositionBindings = match.compositionBindings;
+      let materialPlaceholder = match.materialPlaceholder;
+      let secondaryText = match.secondaryText;
+      let secondaryParams = match.secondaryParams ?? [];
+      let secondaryTimingCaptionIndices = match.secondaryTimingCaptionIndices ?? [];
+      if (!primaryEffectId && secondaryEffectId) {
+        primaryEffectId = secondaryEffectId;
+        primaryText = secondaryText ?? "";
+        primaryParams = secondaryParams;
+        primaryTimingCaptionIndices = secondaryTimingCaptionIndices;
+        compositionBindings = [];
+        materialPlaceholder = false;
+        secondaryEffectId = null;
+        secondaryText = null;
+        secondaryParams = [];
+        secondaryTimingCaptionIndices = [];
+      }
+      if (primaryEffectId && motionMatchingProfile(compositionById(primaryEffectId)).layerRole === "exclusive") {
+        secondaryEffectId = null;
+        secondaryText = null;
+        secondaryParams = [];
+        secondaryTimingCaptionIndices = [];
+      }
+      const multiCaption = segment.endCaptionIndex > segment.startCaptionIndex;
+      return [{
+        ...match,
+        motionGroupId: multiCaption ? segment.segmentId : null,
+        persistUntilCaptionIndex: multiCaption ? segment.endCaptionIndex : null,
+        primaryEffectId,
+        primaryText: primaryEffectId ? primaryText : "",
+        primaryParams: primaryEffectId ? primaryParams : [],
+        primaryTimingCaptionIndices: primaryEffectId
+          ? primaryTimingCaptionIndices.filter((index) => index >= segment.startCaptionIndex && index <= segment.endCaptionIndex)
+          : [],
+        compositionBindings: primaryEffectId ? compositionBindings : [],
+        materialPlaceholder: Boolean(primaryEffectId && materialPlaceholder),
+        secondaryEffectId,
+        secondaryText: secondaryEffectId ? secondaryText : null,
+        secondaryParams: secondaryEffectId ? secondaryParams : [],
+        secondaryTimingCaptionIndices: secondaryEffectId
+          ? secondaryTimingCaptionIndices.filter((index) => index >= segment.startCaptionIndex && index <= segment.endCaptionIndex)
+          : [],
+        chart: primaryEffectId || secondaryEffectId ? match.chart : null
+      }];
+    });
+}
+
+function motionSystemPrompt(candidates: CompositionDefinition[], materials: AiMaterialCandidate[], selection: AiMotionSelection, preferences: readonly MotionMatchingPreference[] = []) {
   const effects = candidates.map(({ id, name, category, description, tags, recipe, renderer }) => ({
+    ...motionMatchingProfile(compositionById(id)),
     id,
     name,
     category,
-    purposeGroup: motionPurposeGroup(compositionById(id)),
     description,
     tags,
     renderer: renderer ?? "react",
@@ -266,15 +378,19 @@ function motionSystemPrompt(candidates: CompositionDefinition[], materials: AiMa
     copyFormat: structuredCopyFormats[id] ?? null,
     chartKind: recipe.chart?.kind ?? null,
     has3d: Boolean(recipe.animation?.keyframes.some((frame) => frame.rotateX || frame.rotateY)),
-    sceneBackground: recipe.sceneBackground?.preset ?? null
+    sceneBackground: recipe.sceneBackground?.preset ?? null,
+    referenceStage: isReferenceStageComposition(id),
+    allowedParams: allowedAiMotionParameterKeys(compositionById(id))
   }));
   const media = materials.map(({ id, name, kind, durationSeconds, width, height, roleHint, transcriptExcerpt }) => ({ id, name, kind: kind ?? "video", durationSeconds, width, height, roleHint: roleHint ?? "unspecified", transcriptExcerpt: transcriptExcerpt?.slice(0, 500) ?? "" }));
   const cameras = CAMERA_PRESETS.map(({ id, name, description }) => ({ id, name, description }));
-  return `你是视频场景、A-roll/B-roll、多图层动效编排器。输入已经包含最终逐条时间字幕、绝对时间和所处阶段。先在内部按语义将连续字幕规划为约 6 到 15 秒的场景，再为每个场景选择统一的画面方案；不要按每条字幕机械切换动效。只能使用这些动效：${JSON.stringify(effects)}。可用运镜：${JSON.stringify(cameras)}。可用本地素材：${JSON.stringify(media)}。
-素材动效规则：带 slots 的动效只可作为 primaryEffectId。compositionBindings 按 slots 填写 slotId 和 assetIds，严格满足 minItems/maxItems，kind=image 槽只选图片，kind=video 槽只选视频，kind=visual 槽可选图片或视频；没有 slots 的动效 compositionBindings=[]。素材展示动效限制为 2–10 秒，素材不要重复放入 videoLayers。\n场景连续性规则：同一主题、对比、流程或递进关系的连续 2 到 8 条字幕必须使用相同 motionGroupId（只能用小写字母、数字、横线），组内每条 persistUntilCaptionIndex 指向场景最后一条字幕。一个场景最多逐步加入 4 个文字或图表层；第一层保持到场景结束，后续只在出现新的关键信息时增加，不能清空旧层再换一套。普通过渡字幕应返回 primaryEffectId=null、secondaryEffectId=null，只保留字幕高亮，不需要每条字幕都有动效。相邻场景避免连续使用强冲击、3D 或有声音的动效。
-A-roll/B-roll 规则：roleHint=a-roll 表示当前口播主叙事素材，通常继续播放，不要在 videoLayers 中重复插入；需要强调时使用 cameraPreset 做克制运镜。B-roll 用于例证、产品画面、操作画面或信息密集段落，每个场景最多选择一段主要 B-roll，通常持续 3 到 8 秒并覆盖多条字幕，volume=0 以保留口播。场景有 3 个以上独立文字要点时，优先选择语义相关的 B-roll，以 full+rectangle+fade 呈现，再在其上逐步叠加 2 到 4 个短文字层；不要让多个小文字卡在每条字幕间闪烁。roleHint、文件名和 transcriptExcerpt 都是素材判断依据。讲解人适合 presenter-bottom-right+circle；教程操作画面适合 screen 全屏并启用 focus，没有准确鼠标坐标时焦点必须用 50/50，等待用户手动调整。多个视频同屏时使用分屏或画中画，避免完全遮挡。
+  const placementPreferences = preferences.map(({ effectId, averageDurationRatio, averageX, averageY, averageScale }) => ({ effectId, averageDurationRatio, averageX, averageY, averageScale }));
+  return `你是视频场景、A-roll/B-roll、多图层动效编排器。这是第二阶段。第一阶段已经完成语义分段和选型：${JSON.stringify(selection.segments)}。不要重新选其他动效，也不要改变段落范围。只能使用这些已选动效：${JSON.stringify(effects)}。可用运镜：${JSON.stringify(cameras)}。可用本地素材：${JSON.stringify(media)}。用户已确认的时长与位置偏好：${JSON.stringify(placementPreferences)}，只能作为安全区内的软建议。
+素材动效规则：带 slots 的动效只可作为 primaryEffectId。compositionBindings 按 slots 填写 slotId 和 assetIds，严格满足 minItems/maxItems，kind=image 槽只选图片，kind=video 槽只选视频，kind=visual 槽可选图片或视频；没有 slots 的动效 compositionBindings=[]。如果第一阶段选中了素材动效但没有任何兼容素材，必须返回 compositionBindings=[]、materialPlaceholder=true，使用半透明占位等待用户补素材，禁止填写示例图、虚构路径或拿不相关素材凑数；有完整素材或动效没有 slots 时 materialPlaceholder=false。素材展示动效限制为 2–10 秒，素材不要重复放入 videoLayers。proof-shot、doc-scroll、quote-cite 等证据卡必须在对应文案或 source/caption/title 参数中写明真实来源。\n场景连续性规则：第一阶段同一语义段的连续字幕必须使用该段 segmentId 作为 motionGroupId，persistUntilCaptionIndex 指向该段 endCaptionIndex；单条字幕段可将两者设为 null。第一阶段选中的每个动效必须在该段恰好返回一次，禁止把同一卡拆成多个逐步累积状态；多条内容应在一张卡内部按字幕锚点逐项出现。同段最多逐步加入 2 个内容层，两个内容层必须放在不同 captionIndex，且真实进场时间至少错开 0.5 秒；第一层保持到场景结束。不要按每条字幕机械切换动效，不要清空旧层再换一套。普通过渡字幕可以不返回 match；不需要每条字幕都有动效。相邻场景不能连续使用相同 kind，并避免连续使用强冲击、3D 或有声音的动效。同一段所有返回项的 accentColor 必须完全一致。
+A-roll/B-roll 规则：roleHint=a-roll 表示当前口播主叙事素材，通常继续播放，不要在 videoLayers 中重复插入；需要强调时使用 cameraPreset 做克制运镜。B-roll 用于例证、产品画面、操作画面或信息密集段落，每个场景最多选择一段主要 B-roll，通常持续 3 到 8 秒并覆盖多条字幕，volume=0 以保留口播。场景有多个独立信息点时，优先选择语义相关的 B-roll，以 full+rectangle+fade 呈现，再在其上逐步叠加最多 2 个短内容层；不要让多个小文字卡在每条字幕间闪烁。roleHint、文件名和 transcriptExcerpt 都是素材判断依据。讲解人适合 presenter-bottom-right+circle；教程操作画面适合 screen 全屏并启用 focus，没有准确鼠标坐标时焦点必须用 50/50，等待用户手动调整。多个视频同屏时使用分屏或画中画，避免完全遮挡。
 选型规则：先按 purposeGroup 判断用途，再根据 description 选具体表现。证据、原文、真实图片或录屏优先使用“证据实证”“场景 · 运镜”；多个痛点、步骤、流程、对比或信息层级优先使用对应的结构化动效；只有单个短观点才使用纯文字强调或文字进场。内容有两个以上可视化要点时，优先选择能承载完整结构的动效，不要总是退化成简单标题、胶囊或通用清单。同一语义只选最贴切的一种，避免堆叠同类效果。章节导航和字幕由编辑器独立处理，不参与自动匹配。
 文字规则：每条字幕默认最多一个主动效；只有辅助动效承载不同且必要的信息时才使用，否则 secondaryEffectId=null。subtitleKeywords 返回 0 到 3 个逐字存在于当前字幕原文的关键词，只用于字幕高亮。primaryText/secondaryText 是简洁且有信息增量的画面文案，中文通常 2 到 14 个字，不照抄完整字幕，不虚构数字、品牌、事实或因果。候选动效带有 copyFormat 时，严格按该结构用“｜”组织文案，普通结构总长度可以放宽到 48 个汉字；quote-lockup 可使用最多 5 行金句，总长度不超过 64 个汉字。每一段都必须有字幕依据，禁止模板示例和占位文字。只有字幕或同场景字幕包含明确数字时才用图表或数字对比；单值只用 counter，line/bar 至少两个真实数据点，donut 至少两个真实占比。
+参数与节奏规则：primaryParams/secondaryParams 只填写对应动效 allowedParams 中确有必要覆盖的非媒体、非时间参数；素材路径只能通过 compositionBindings。referenceStage=true 时，外层 x=50、y=50、scale=1，必须使用 primaryParams/secondaryParams 内的 position 或 side 选择参考落位，只在确有避让需要时小幅调整 offsetX/offsetY，并用 0.3–1 范围内的参数 scale 调整卡片大小；禁止用外层坐标移动或缩放完整舞台。逐条、逐词、逐步、滚动、多阶段或动作剧本动效必须填写 primaryTimingCaptionIndices/secondaryTimingCaptionIndices，按内容条目或阶段顺序给出每项开始口播的字幕索引。客户端会从真实字幕时间计算全部 times、At、Ms、Sec、cps 以及 acts 中的时间部分，不要直接猜时间值；acts 只填写“任意时间|动作”内容，客户端会重写时间。
 音效由用户单独匹配，此次所有 soundEffectId 必须为 null。
 时间轴规则：opening 用于主题建立；middle 用于稳定的信息累积、B-roll 和克制运镜；ending 用于总结收束。场景背景仅用于建立整段环境或章节切换，作为主动效时文字留空。3D 动效只用于场景转场或一个真正的重点。x/y 应避开底部字幕并避让同场景仍在显示的图层。videoLayers 最多 6 层，不要使用旧的 primary/secondary 素材字段。所有文字默认使用客户端半透明自适应背景。captionIndex 必须与输入字幕索引一致。`;
 }
@@ -677,6 +793,71 @@ function recordUsage(usage: AiTokenUsage) {
   usageListeners.forEach((listener) => listener());
 }
 
+function structuredValidationSummary(error: unknown) {
+  if (error instanceof MotionPlanValidationError) {
+    return error.issues.slice(0, 8).map((issue) => `${issue.code} (${issue.path}): ${issue.message}`).join("；");
+  }
+  if (error instanceof ZodError) {
+    return error.issues.slice(0, 8).map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`).join("；");
+  }
+  if (error instanceof SyntaxError) return "返回内容不是有效 JSON";
+  return error instanceof Error ? error.message.slice(0, 1_000) : "返回内容无法通过本地校验";
+}
+
+function repairPrompt(user: string, invalidOutput: unknown, error: unknown) {
+  let serialized = "无法解析上一次输出";
+  if (invalidOutput !== undefined) {
+    try {
+      serialized = JSON.stringify(invalidOutput).slice(0, 16_000);
+    } catch {
+      serialized = "无法序列化上一次输出";
+    }
+  }
+  return `${user}\n\n上一次返回未通过本地校验。校验问题：${structuredValidationSummary(error)}。\n上一次输出：${serialized}\n请修正全部问题，只返回修正后的完整 JSON，不要解释。`;
+}
+
+async function requestValidatedStructured<T>(input: {
+  config: AiProviderConfig;
+  system: string;
+  user: string;
+  jsonSchema: object;
+  name: string;
+  parse: (value: unknown) => T;
+  validatingMessage: string;
+  failureLabel: string;
+  browserApiKey?: string;
+  signal?: AbortSignal;
+  onProgress?: AiProgressHandler;
+}): Promise<{ data: T; usage: AiTokenUsage }> {
+  const usages: AiTokenUsage[] = [];
+  let currentUser = input.user;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const payload = structuredRequestPayload(input.config, input.system, currentUser, input.jsonSchema, input.name);
+    const response = await withRetry(() => callProvider(input.config, payload, input.browserApiKey, input.signal, input.onProgress), input.signal);
+    throwIfCancelled(input.signal);
+    if (response.status < 200 || response.status >= 300) throw new Error(providerError(response.body, response.status));
+    const usage = extractTokenUsage(input.config.protocol, response.body, input.config);
+    usages.push(usage);
+    recordUsage(usage);
+    input.onProgress?.({
+      phase: "validating",
+      message: attempt === 0 ? input.validatingMessage : `${input.validatingMessage}（已自动修正）`,
+      receivedCharacters: 0
+    });
+
+    let raw: unknown;
+    try {
+      raw = extractPlan(input.config.protocol, response.body);
+      return { data: input.parse(raw), usage: combinedTokenUsage(...usages) };
+    } catch (error) {
+      if (attempt === 1) throw new Error(`${input.failureLabel}未通过本地校验：${structuredValidationSummary(error)}`);
+      input.onProgress?.({ phase: "validating", message: `${input.failureLabel}格式有误，正在自动修正`, receivedCharacters: 0 });
+      currentUser = repairPrompt(input.user, raw, error);
+    }
+  }
+  throw new Error(`${input.failureLabel}未通过本地校验`);
+}
+
 export function getAiSessionUsage(): AiSessionUsage {
   return sessionUsage;
 }
@@ -823,6 +1004,57 @@ function chartSeriesMatchesCaption(series: readonly number[], facts: readonly Ca
   return series.every((value) => facts.some((fact) => Math.abs(fact.value - value) <= Math.max(0.001, Math.abs(fact.value) * 0.001)));
 }
 
+function chartKindHasCaptionEvidence(kind: NonNullable<ReturnType<typeof chartEffectKind>>, caption: string) {
+  const facts = captionNumericData(caption);
+  if (kind === "counter") return facts.length >= 1;
+  if (kind === "donut") return facts.length >= 2 && /[%％占比比例份额构成]/u.test(caption);
+  return facts.length >= 2;
+}
+
+function motionChartIsSupported(match: AiMotionMatch, caption: string) {
+  const kind = chartEffectKind(match.primaryEffectId) ?? chartEffectKind(match.secondaryEffectId);
+  if (!kind || !chartKindHasCaptionEvidence(kind, caption)) return !kind;
+  const facts = captionNumericData(caption);
+  const chart = match.chart;
+  if (!chart || chart.series.length !== chart.categories.length) return false;
+  if (kind === "counter") return chart.series.length >= 1 && chartSeriesMatchesCaption(chart.series.slice(0, 1), facts);
+  if (chart.series.length < 2 || !chartSeriesMatchesCaption(chart.series, facts)) return false;
+  return kind !== "donut" || chart.series.every((value) => value >= 0);
+}
+
+function assertMotionSelectionChartEvidence(selection: AiMotionSelection, captions: readonly AiTimedScript["captions"][number][]) {
+  const issues = selection.segments.flatMap((segment, segmentIndex) => {
+    const evidence = captions.slice(segment.startCaptionIndex, segment.endCaptionIndex + 1).map((caption) => caption.text).join(" ");
+    const chartEffects = [segment.primaryEffectId, segment.secondaryEffectId]
+      .filter((effectId): effectId is string => Boolean(effectId && chartEffectKind(effectId)));
+    if (chartEffects.length <= 1 && chartEffects.every((effectId) => chartKindHasCaptionEvidence(chartEffectKind(effectId)!, evidence))) return [];
+    return [{
+      code: "unsupported-chart-data" as const,
+      path: `segments.${segmentIndex}`,
+      message: chartEffects.length > 1
+        ? `语义段“${segment.title}”只能选择一个图表动效`
+        : `语义段“${segment.title}”没有足够的真实字幕数据支撑图表 ${chartEffects[0]}`
+    }];
+  });
+  if (issues.length) throw new MotionPlanValidationError(issues);
+}
+
+function assertMotionMatchChartEvidence(matches: readonly AiMotionMatch[], selection: AiMotionSelection, captions: readonly AiTimedScript["captions"][number][]) {
+  const issues = matches.flatMap((match, matchIndex) => {
+    if (!chartEffectKind(match.primaryEffectId) && !chartEffectKind(match.secondaryEffectId)) return [];
+    const segment = selection.segments.find((candidate) => match.captionIndex >= candidate.startCaptionIndex && match.captionIndex <= candidate.endCaptionIndex);
+    const evidence = segment
+      ? captions.slice(segment.startCaptionIndex, segment.endCaptionIndex + 1).map((caption) => caption.text).join(" ")
+      : captions[match.captionIndex]?.text ?? "";
+    return motionChartIsSupported(match, evidence) ? [] : [{
+      code: "unsupported-chart-data" as const,
+      path: `matches.${matchIndex}.chart`,
+      message: "图表类别、数据点和单位必须能由该语义段的字幕数字逐项验证"
+    }];
+  });
+  if (issues.length) throw new MotionPlanValidationError(issues);
+}
+
 export function normalizeMotionChart(match: AiMotionMatch, caption: string): AiMotionMatch {
   const primaryKind = chartEffectKind(match.primaryEffectId);
   const secondaryKind = chartEffectKind(match.secondaryEffectId);
@@ -845,23 +1077,25 @@ export function normalizeMotionChart(match: AiMotionMatch, caption: string): AiM
     return { ...match, chart: kind === "counter" ? { categories: [chart.categories[0] ?? match.primaryText], series: [facts[0].value], unit: facts[0].unit || unit } : { ...chart, unit } };
   }
 
-  if (primaryKind && facts.length) {
-    return {
-      ...match,
-      primaryEffectId: "stat-proof",
-      chart: { categories: [match.primaryText || "数据"], series: [facts.at(-1)!.value], unit: facts.at(-1)!.unit },
-      secondaryEffectId: secondaryKind ? null : match.secondaryEffectId,
-      secondaryText: secondaryKind ? null : match.secondaryText
-    };
-  }
-  if (primaryKind) return { ...match, primaryEffectId: "punch-pill", chart: null };
-  return { ...match, secondaryEffectId: null, secondaryText: null, chart: null };
+  return {
+    ...match,
+    primaryEffectId: primaryKind ? null : match.primaryEffectId,
+    primaryText: primaryKind ? "" : match.primaryText,
+    primaryParams: primaryKind ? [] : match.primaryParams,
+    primaryTimingCaptionIndices: primaryKind ? [] : match.primaryTimingCaptionIndices,
+    secondaryEffectId: secondaryKind ? null : match.secondaryEffectId,
+    secondaryText: secondaryKind ? null : match.secondaryText,
+    secondaryParams: secondaryKind ? [] : match.secondaryParams,
+    secondaryTimingCaptionIndices: secondaryKind ? [] : match.secondaryTimingCaptionIndices,
+    chart: null
+  };
 }
 
-const MAX_SCENE_CAPTIONS = 8;
-const MAX_SCENE_EFFECT_LAYERS = 4;
-const MAX_SCENE_DURATION_SECONDS = 15;
+const MAX_SCENE_CAPTIONS = 16;
+const MAX_SCENE_EFFECT_LAYERS = referenceMotionMatchingPolicy.maxConcurrentContentLayers;
+const MAX_SCENE_DURATION_SECONDS = 30;
 const MAX_SCENE_GAP_SECONDS = 1.5;
+const MAX_AI_CAPTIONS_PER_REQUEST = 80;
 const CUMULATIVE_SCENE_EFFECT_IDS = new Set([
   "pin-board",
   "step-timeline",
@@ -1037,7 +1271,7 @@ function normalizeGroupedMotionContinuity(matches: readonly AiMotionMatch[]) {
       const nonTextCompositionId = primaryDefinition && (primaryDefinition.recipe.sceneBackground || primaryDefinition.renderer === "three" || primaryDefinition.renderer === "canvas" || compositionSlots(primaryDefinition.id).length > 0)
         ? primaryDefinition.id
         : null;
-      const primaryKey = nonTextCompositionId ? `composition:${nonTextCompositionId}` : comparableMotionText(primaryText);
+      const primaryKey = nonTextCompositionId ? `composition:${nonTextCompositionId}` : `${primaryEffectId ?? ""}:${comparableMotionText(primaryText)}`;
       if (!primaryEffectId || remainingLayers <= 0 || (primaryKey && seenTexts.has(primaryKey))) {
         primaryEffectId = null;
         primaryText = "";
@@ -1045,7 +1279,7 @@ function normalizeGroupedMotionContinuity(matches: readonly AiMotionMatch[]) {
         remainingLayers -= 1;
         if (primaryKey) seenTexts.add(primaryKey);
       }
-      const secondaryKey = comparableMotionText(secondaryText);
+      const secondaryKey = `${secondaryEffectId ?? ""}:${comparableMotionText(secondaryText)}`;
       if (!secondaryEffectId || remainingLayers <= 0 || (secondaryKey && seenTexts.has(secondaryKey))) {
         secondaryEffectId = null;
         secondaryText = null;
@@ -1105,8 +1339,6 @@ export function normalizeMotionMatches(
     occupiedUntil = range.end;
   }
 
-  let previousPrimaryEffectId: string | null = null;
-  let previousMotionGroupId: string | null = null;
   const normalized = ordered.map((candidate) => {
     const caption = captions[candidate.captionIndex];
     if (!caption) return candidate;
@@ -1122,21 +1354,16 @@ export function normalizeMotionMatches(
     const subtitleKeywords = subtitleKeywordsForText(caption.text, candidate.subtitleKeywords ?? []);
     let primaryEffectId = match.primaryEffectId;
     let secondaryEffectId = match.secondaryEffectId;
+    const primaryUsesStructuredCopy = Boolean(primaryEffectId && (primaryEffectId === "quote-lockup" || structuredCopyFormats[primaryEffectId]));
+    const secondaryUsesStructuredCopy = Boolean(secondaryEffectId && (secondaryEffectId === "quote-lockup" || structuredCopyFormats[secondaryEffectId]));
+    const primaryEvidenceText = primaryUsesStructuredCopy && comparableMotionText(match.primaryText) === comparableMotionText(caption.text) ? caption.text : evidenceText;
+    const secondaryEvidenceText = secondaryUsesStructuredCopy && comparableMotionText(match.secondaryText) === comparableMotionText(caption.text) ? caption.text : evidenceText;
     let primaryText = primaryEffectId && !compositionById(primaryEffectId).recipe.sceneBackground
-      ? compactMotionText(match.primaryText, evidenceText, primaryEffectId === "quote-lockup" || Boolean(structuredCopyFormats[primaryEffectId]))
+      ? compactMotionText(match.primaryText, primaryEvidenceText, primaryEffectId === "quote-lockup" || Boolean(structuredCopyFormats[primaryEffectId]))
       : "";
     let secondaryText = secondaryEffectId && !compositionById(secondaryEffectId).recipe.sceneBackground
-      ? compactMotionText(match.secondaryText, evidenceText, secondaryEffectId === "quote-lockup" || Boolean(structuredCopyFormats[secondaryEffectId]))
+      ? compactMotionText(match.secondaryText, secondaryEvidenceText, secondaryEffectId === "quote-lockup" || Boolean(structuredCopyFormats[secondaryEffectId]))
       : null;
-
-    if (primaryEffectId && primaryEffectId === previousPrimaryEffectId
-      && (!motionGroupId || motionGroupId !== previousMotionGroupId)
-      && !(compositionById(primaryEffectId).renderer === "three" || compositionById(primaryEffectId).renderer === "canvas")
-      && compositionById(primaryEffectId).category !== "数据") {
-      primaryEffectId = primaryEffectId === "punch-pill" ? null : "punch-pill";
-      primaryText = primaryEffectId ? compactMotionText(primaryText, evidenceText) : "";
-      match = { ...match, chart: null };
-    }
 
     if (secondaryEffectId && (compositionById(secondaryEffectId).recipe.sceneBackground
       || secondaryEffectId === primaryEffectId
@@ -1144,9 +1371,6 @@ export function normalizeMotionMatches(
       secondaryEffectId = null;
       secondaryText = null;
     }
-
-    previousPrimaryEffectId = primaryEffectId;
-    previousMotionGroupId = motionGroupId;
     return {
       ...match,
       subtitleKeywords,
@@ -1154,8 +1378,12 @@ export function normalizeMotionMatches(
       persistUntilCaptionIndex,
       primaryEffectId,
       primaryText: primaryEffectId ? primaryText : "",
+      primaryParams: primaryEffectId ? match.primaryParams ?? [] : [],
+      primaryTimingCaptionIndices: primaryEffectId ? match.primaryTimingCaptionIndices ?? [] : [],
       secondaryEffectId,
       secondaryText,
+      secondaryParams: secondaryEffectId ? match.secondaryParams ?? [] : [],
+      secondaryTimingCaptionIndices: secondaryEffectId ? match.secondaryTimingCaptionIndices ?? [] : [],
       chart: primaryEffectId || secondaryEffectId ? match.chart : null
     };
   });
@@ -1263,58 +1491,152 @@ export async function matchTimelineMotion(
   onProgress?: AiProgressHandler
 ): Promise<MatchedTimelineMotion> {
   validateProviderConfig(config);
+  if (!input.captions.length) throw new Error("没有可用于动效匹配的字幕");
+  if (input.captions.length > MAX_AI_CAPTIONS_PER_REQUEST) {
+    const chunks = motionCaptionChunks(input.captions);
+    const results: AiMotionMatch[] = [];
+    const selections: AiMotionSelection["segments"] = [];
+    const usages: AiTokenUsage[] = [];
+    for (let batchIndex = 0; batchIndex < chunks.length; batchIndex += 1) {
+      const chunk = chunks[batchIndex];
+      const matched = await matchTimelineMotion(
+        config,
+        { ...input, captions: input.captions.slice(chunk.start, chunk.end) },
+        browserApiKey,
+        signal,
+        onProgress ? (progress) => onProgress({ ...progress, message: `第 ${batchIndex + 1}/${chunks.length} 段：${progress.message}` }) : undefined
+      );
+      results.push(...matched.matches.map((match) => ({
+        ...match,
+        captionIndex: match.captionIndex + chunk.start,
+        persistUntilCaptionIndex: match.persistUntilCaptionIndex === null || match.persistUntilCaptionIndex === undefined
+          ? match.persistUntilCaptionIndex
+          : match.persistUntilCaptionIndex + chunk.start,
+        primaryTimingCaptionIndices: match.primaryTimingCaptionIndices?.map((index) => index + chunk.start),
+        secondaryTimingCaptionIndices: match.secondaryTimingCaptionIndices?.map((index) => index + chunk.start),
+        motionGroupId: match.motionGroupId ? `batch-${batchIndex}-${match.motionGroupId}`.slice(0, 40) : match.motionGroupId
+      })));
+      selections.push(...matched.selection.segments.map((segment) => ({
+        ...segment,
+        segmentId: `batch-${batchIndex}-${segment.segmentId}`.slice(0, 40),
+        startCaptionIndex: segment.startCaptionIndex + chunk.start,
+        endCaptionIndex: segment.endCaptionIndex + chunk.start
+      })));
+      usages.push(matched.usage);
+    }
+    return {
+      matches: results.sort((left, right) => left.captionIndex - right.captionIndex),
+      selection: { segments: selections },
+      usage: usages.reduce((total, usage) => ({
+        inputTokens: total.inputTokens + usage.inputTokens,
+        outputTokens: total.outputTokens + usage.outputTokens,
+        totalTokens: total.totalTokens + usage.totalTokens,
+        estimatedCostUsd: total.estimatedCostUsd + usage.estimatedCostUsd
+      }), { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostUsd: 0 })
+    };
+  }
   const imageIds = input.materials.filter((material) => material.kind === "image").map((material) => material.id);
   const mediaIds = input.materials.filter((material) => material.kind !== "image").map((material) => material.id);
   const allCandidates = selectMotionCandidates(input);
   const allCandidateIds = allCandidates.map((effect) => effect.id);
   const selectionCaptions = input.captions.map((caption, captionIndex) => ({
     captionIndex,
+    startSeconds: caption.startSeconds,
+    endSeconds: caption.endSeconds,
     text: caption.text,
     stage: timelineStage(caption.startSeconds, caption.endSeconds, input.timelineDurationSeconds)
   }));
   const selectionUser = `主题或来源：${input.topic}\n表达风格：${input.style}\n内容语义参考：${input.article ?? "无"}\n字幕内容：${JSON.stringify(selectionCaptions)}\n请先选择适合这段视频的动效集合。`;
-  const selectionPayload = structuredRequestPayload(
+  const selectionSchema = createAiMotionSelectionSchema(allCandidateIds, input.captions.length - 1);
+  const selected = await requestValidatedStructured({
     config,
-    motionSelectionSystemPrompt(allCandidates, input),
-    selectionUser,
-    createEffectSelectionJsonSchema(allCandidateIds),
-    "select_timeline_effects"
-  );
-  const selectionResponse = await withRetry(() => callProvider(config, selectionPayload, browserApiKey, signal, onProgress), signal);
-  if (selectionResponse.status < 200 || selectionResponse.status >= 300) throw new Error(providerError(selectionResponse.body, selectionResponse.status));
-  onProgress?.({ phase: "validating", message: "正在确认动效选型", receivedCharacters: 0 });
-  const selectionUsage = extractTokenUsage(config.protocol, selectionResponse.body, config);
-  recordUsage(selectionUsage);
-  const selectedIds = [...new Set(createAiEffectSelectionSchema(allCandidateIds).parse(extractPlan(config.protocol, selectionResponse.body)).effectIds)];
-  const sourceText = `${input.topic} ${input.article ?? ""} ${input.captions.map((caption) => caption.text).join(" ")}`;
+    system: motionSelectionSystemPrompt(allCandidates, input),
+    user: selectionUser,
+    jsonSchema: createMotionSelectionJsonSchema(allCandidateIds, input.captions.length - 1),
+    name: "select_timeline_effects",
+    parse: (value) => {
+      const parsed = selectionSchema.parse(value);
+      assertMotionSelectionPlan(parsed, input.captions);
+      assertMotionSelectionChartEvidence(parsed, input.captions);
+      return parsed;
+    },
+    validatingMessage: "正在确认动效选型",
+    failureLabel: "动效选型",
+    browserApiKey,
+    signal,
+    onProgress
+  });
+  const selectionUsage = selected.usage;
+  const rawSelection = selected.data;
+  const selection = normalizeMotionSelection(rawSelection, allCandidates, input);
+  const selectedIds = [...new Set(selection.segments.flatMap((segment) => [segment.primaryEffectId, segment.secondaryEffectId].filter((id): id is string => Boolean(id))))];
   const candidates = selectedIds
     .map((id) => allCandidates.find((effect) => effect.id === id))
-    .filter((effect): effect is CompositionDefinition => Boolean(effect && canUseMotionEffect(effect, input.materials, sourceText)));
-  if (!candidates.length) throw new Error("AI 选出的动效缺少当前项目所需素材，请补充图片或视频后重试");
+    .filter((effect): effect is CompositionDefinition => Boolean(effect));
+  if (!candidates.length) return { matches: [], selection, usage: selectionUsage };
   const schema = createMotionMatchesJsonSchema(candidates.map((effect) => effect.id), mediaIds, imageIds);
   const timedCaptions = input.captions.map((caption, captionIndex) => ({
     captionIndex,
     ...caption,
     stage: timelineStage(caption.startSeconds, caption.endSeconds, input.timelineDurationSeconds)
   }));
-  const user = `主题或来源：${input.topic}\n表达风格：${input.style}\n内容语义参考：${input.article ?? "无"}\n视频总时长：${input.timelineDurationSeconds} 秒\n最终时间字幕（必须逐条匹配）：${JSON.stringify(timedCaptions)}\n请按内容关键词与时间轴阶段返回动效规划。`;
-  const payload = structuredRequestPayload(config, motionSystemPrompt(candidates, input.materials), user, schema, "match_timeline_motion");
-  const response = await withRetry(() => callProvider(config, payload, browserApiKey, signal, onProgress), signal);
-  if (response.status < 200 || response.status >= 300) throw new Error(providerError(response.body, response.status));
-  onProgress?.({ phase: "validating", message: "正在校验动效、分组和字幕数据", receivedCharacters: 0 });
-  const timelineUsage = extractTokenUsage(config.protocol, response.body, config);
-  recordUsage(timelineUsage);
-  const parsed = createAiMotionMatchesSchema(candidates.map((effect) => effect.id), mediaIds, imageIds).parse(extractPlan(config.protocol, response.body)).matches;
-  const seen = new Set<number>();
-  const matches = parsed.filter((match) => {
-    if (match.captionIndex >= input.captions.length || seen.has(match.captionIndex)) return false;
-    seen.add(match.captionIndex);
-    return true;
+  const user = `主题或来源：${input.topic}\n表达风格：${input.style}\n内容语义参考：${input.article ?? "无"}\n视频总时长：${input.timelineDurationSeconds} 秒\n最终时间字幕：${JSON.stringify(timedCaptions)}\n请严格按照第一阶段的语义段和选型，完成素材、文案、卡内节奏锚点与时间线规划。`;
+  const matchesSchema = createAiMotionMatchesSchema(candidates.map((effect) => effect.id), mediaIds, imageIds);
+  const planned = await requestValidatedStructured({
+    config,
+    system: motionSystemPrompt(candidates, input.materials, selection, input.motionPreferences),
+    user,
+    jsonSchema: schema,
+    name: "match_timeline_motion",
+    parse: (value) => {
+      const parsed = matchesSchema.parse(value).matches;
+      assertMotionMatchPlan(parsed, selection, input.captions);
+      assertMotionMatchChartEvidence(parsed, selection, input.captions);
+      return parsed;
+    },
+    validatingMessage: "正在校验动效、分组和字幕数据",
+    failureLabel: "动效时间线",
+    browserApiKey,
+    signal,
+    onProgress
   });
+  const timelineUsage = planned.usage;
+  const parsed = planned.data;
+  const matches = groundMotionMatchesToSelection(parsed, selection, input.captions);
   return {
     matches: normalizeMotionMatches(matches, input.captions, input.timelineDurationSeconds, input.materials),
+    selection,
     usage: combinedTokenUsage(selectionUsage, timelineUsage)
   };
+}
+
+export function motionCaptionChunks(captions: readonly AiTimedScript["captions"][number][]) {
+  const chunks: Array<{ start: number; end: number }> = [];
+  let start = 0;
+  while (start < captions.length) {
+    const hardEnd = Math.min(captions.length, start + MAX_AI_CAPTIONS_PER_REQUEST);
+    if (hardEnd === captions.length) {
+      chunks.push({ start, end: hardEnd });
+      break;
+    }
+    const searchStart = Math.min(hardEnd - 1, start + 56);
+    let end = hardEnd;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (let index = searchStart; index < hardEnd; index += 1) {
+      const previous = captions[index - 1];
+      const next = captions[index];
+      const gap = previous && next ? Math.max(0, next.startSeconds - previous.endSeconds) : 0;
+      const punctuation = previous && /[。！？!?]$/u.test(previous.text.trim()) ? 1 : 0;
+      const score = gap * 10 + punctuation + index / hardEnd;
+      if (score > bestScore) {
+        bestScore = score;
+        end = index;
+      }
+    }
+    chunks.push({ start, end });
+    start = end;
+  }
+  return chunks;
 }
 
 export async function generateVideoPlan(

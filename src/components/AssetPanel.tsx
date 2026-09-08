@@ -1,6 +1,6 @@
 import * as Tabs from "@radix-ui/react-tabs";
 import { useMemo, useState } from "react";
-import { AudioLines, AudioWaveform, BadgePercent, Captions, ChartNoAxesColumnIncreasing, ChartPie, ChartSpline, Check, ChevronDown, Download, FileText, FileVideo2, ImageIcon, Layers3, Link2, Music2, PackageOpen, Play, Plus, Search, SlidersHorizontal, Sparkles, TriangleAlert, WandSparkles, X } from "lucide-react";
+import { AudioLines, AudioWaveform, BadgePercent, Captions, ChartNoAxesColumnIncreasing, ChartPie, ChartSpline, Check, ChevronDown, Download, FileText, FileVideo2, History, ImageIcon, Layers3, Link2, Music2, PackageOpen, Play, Plus, Search, SlidersHorizontal, Sparkles, TriangleAlert, WandSparkles, X } from "lucide-react";
 import { SubtitleStyleDialog } from "@/components/SubtitleStyleDialog";
 import type { EffectCategory, CompositionDefinition } from "@/domain/effects";
 import { MOTION_ACCENT_COLOR_PRESETS, motionThemeAccentColor, motionThemeUsesAccentColor, motionThemeWithAccentColor } from "@/domain/motionTheme";
@@ -15,6 +15,7 @@ interface Props {
   onImport: () => void;
   onGenerate: () => void;
   onMatchEffects: () => void;
+  onReviewMotionMatching?: () => void;
   onMatchSounds?: () => void;
   matching?: boolean;
   onTranscribe: (assetId: string) => void;
@@ -29,7 +30,7 @@ interface Props {
   onAddBuiltinSound?: (soundId: BuiltinSoundEffectId) => void;
 }
 
-export function AssetPanel({ onImport, onGenerate, onMatchEffects, onMatchSounds, matching, onTranscribe, onExtractAudio, onExportAudio, onRelink, onCreateAudio, onManageEffects, previewingEffectId, onPreviewEffect, onPreviewBuiltinSound, onAddBuiltinSound }: Props) {
+export function AssetPanel({ onImport, onGenerate, onMatchEffects, onReviewMotionMatching, onMatchSounds, matching, onTranscribe, onExtractAudio, onExportAudio, onRelink, onCreateAudio, onManageEffects, previewingEffectId, onPreviewEffect, onPreviewBuiltinSound, onAddBuiltinSound }: Props) {
   const [subtitleStyleOpen, setSubtitleStyleOpen] = useState(false);
   const [scriptsOpen, setScriptsOpen] = useState(false);
   const [effectQuery, setEffectQuery] = useState("");
@@ -100,7 +101,8 @@ export function AssetPanel({ onImport, onGenerate, onMatchEffects, onMatchSounds
             ))}
           </div> : <p className="empty-copy align-left">没有匹配的动效</p>}
           </div>
-          <div className="asset-panel-actions" aria-label="动效操作">
+          <div className="asset-panel-actions motion-actions" aria-label="动效操作">
+            <button className="asset-panel-icon-action" type="button" aria-label="查看动效匹配记录" title="查看动效匹配记录" onClick={onReviewMotionMatching}><History size={15} /></button>
             <button type="button" title="按字幕匹配场景、动效与运镜" disabled={!subtitles.length || matching} onClick={onMatchEffects}><WandSparkles size={15} />匹配</button>
           </div>
         </Tabs.Content>

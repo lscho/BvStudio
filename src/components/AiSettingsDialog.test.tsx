@@ -17,8 +17,7 @@ vi.mock("@/services/license", async (importOriginal) => {
       activatedAt: null,
       licenseKey: null
     }),
-    redeemCardKey: vi.fn(),
-    clearCachedVipStatus: vi.fn()
+    redeemCardKey: vi.fn()
   };
 });
 

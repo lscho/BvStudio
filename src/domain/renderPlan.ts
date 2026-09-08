@@ -10,6 +10,7 @@ import { focusCardSourceRect } from "@/domain/focusCard";
 import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
 import { videoFrameMask, videoFrameSize } from "@/domain/videoFrame";
 import { overlayStudioMediaSlots } from "@/domain/overlayStudioMedia";
+import { isReferenceStageComposition, referenceStageOuterTransform } from "@/domain/overlayStudioReference";
 
 function activeAt<T extends { startUs: number; durationUs: number }>(clips: T[], timeUs: number): T | undefined {
   return clips.find((clip) => timeUs >= clip.startUs && timeUs < clip.startUs + clip.durationUs);
@@ -320,7 +321,9 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
         const issues = compositionBindingIssues(clip, project.assets);
         if (issues.length) throw new Error(`${clip.label}：${issues[0]}`);
       }
-      const reactOverlay = { kind: "text" as const, compositionId: clip.compositionId, renderer: "react" as const, startUs: clip.startUs, durationUs: clip.durationUs, sourceOffsetUs: clip.sourceOffsetUs, animationDurationUs: clip.animationDurationUs, autoTiming: Boolean(clip.sourceSubtitleId), text: clip.text, color: appearance.color, accentColor: appearance.accentColor, fontSize: fontSize * outputScale, x: clip.transform.x, y: clip.transform.y, opacity: clip.transform.opacity, scale: clip.transform.scale, rotation: clip.transform.rotation, speed: clip.speed, zIndex: compositionLayer(clip), transformKeyframes: clip.transformKeyframes, recipe, params: clip.params, compositionImages: referenceImages, compositionBindings: referenceSlots.length ? clip.bindings : undefined, backdrop: scaleBackdrop(clip.backdrop), motionTheme: project.motionTheme, dimAtUs: clip.dimAtUs };
+      const referenceStage = isReferenceStageComposition(clip.compositionId);
+      const transform = referenceStage ? referenceStageOuterTransform(clip.transform) : clip.transform;
+      const reactOverlay = { kind: "text" as const, compositionId: clip.compositionId, renderer: "react" as const, startUs: clip.startUs, durationUs: clip.durationUs, sourceOffsetUs: clip.sourceOffsetUs, animationDurationUs: clip.animationDurationUs, autoTiming: Boolean(clip.sourceSubtitleId), text: clip.text, color: appearance.color, accentColor: appearance.accentColor, fontSize: fontSize * outputScale, x: transform.x, y: transform.y, opacity: transform.opacity, scale: transform.scale, rotation: transform.rotation, speed: clip.speed, zIndex: compositionLayer(clip), transformKeyframes: referenceStage ? undefined : clip.transformKeyframes, recipe, params: clip.params, compositionImages: referenceImages, compositionBindings: referenceSlots.length ? clip.bindings : undefined, backdrop: scaleBackdrop(clip.backdrop), motionTheme: project.motionTheme, dimAtUs: clip.dimAtUs };
       if (clip.compositionId !== "focus-card") return [reactOverlay];
       const issues = compositionBindingIssues(clip, project.assets);
       if (issues.length) throw new Error(`${clip.label}：${issues[0]}`);

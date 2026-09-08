@@ -224,6 +224,24 @@ describe("material compositions", () => {
     expect(result).toMatchObject({ effectCount: 1, skippedEffectCount: 0 });
     expect(clips()[0]).toMatchObject({ compositionId: "screen-demo", bindings: matches[0].compositionBindings, params: { title: "关键操作" } });
   });
+
+  it("keeps a transparent media placeholder when the selected effect has no compatible asset", () => {
+    const project = createEmptyProject();
+    const track = project.tracks.find((candidate) => candidate.kind === "subtitle")!;
+    track.clips.push({ id: "caption", trackId: track.id, kind: "subtitle", label: "字幕", text: "接下来演示软件操作", startUs: 0, durationUs: 5_000_000, locked: false, color: "#ffffff", backgroundColor: "#000000", fontSize: 48, positionY: 88 });
+    useEditorStore.setState({ project });
+    const matches = createAiMotionMatchesSchema(["screen-demo"], [], []).parse({ matches: [{
+      captionIndex: 0, subtitleKeywords: [], motionGroupId: null, persistUntilCaptionIndex: null,
+      primaryEffectId: "screen-demo", primaryText: "软件操作", primaryParams: [], primaryTimingCaptionIndices: [],
+      compositionBindings: [], materialPlaceholder: true, secondaryEffectId: null, secondaryText: null,
+      secondaryParams: [], secondaryTimingCaptionIndices: [], accentColor: "#5fa8ff", x: 50, y: 50, scale: 1,
+      secondaryX: 75, secondaryY: 60, cameraPreset: "none", soundEffectId: null, videoLayers: [], backdropPreset: "none", chart: null
+    }] }).matches;
+    expect(useEditorStore.getState().applyMotionMatches(["caption"], matches)).toMatchObject({ effectCount: 1, skippedEffectCount: 0 });
+    expect(clips()[0]).toMatchObject({ compositionId: "screen-demo", bindings: [], lintOff: ["composition-input"] });
+    expect(clips()[0].label).toContain("待补素材");
+    expect(buildRenderPlan(useEditorStore.getState().project, "/output.mp4").overlays[0]).toMatchObject({ compositionId: "screen-demo", compositionImages: [] });
+  });
   it("binds and reorders images with one undo step and no image clips", () => {
     useEditorStore.getState().addComposition("poster-wall-3d");
     const clip = clips()[0];

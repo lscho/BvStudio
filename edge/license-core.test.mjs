@@ -1,6 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  cardExpiryAt,
   canonicalLicenseString,
   decideRedemption,
   isRateLimited,
@@ -137,3 +138,29 @@ describe("redeem failure rate limiting", () => {
     expect(isRateLimited(null, NOW)).toBe(false);
   });
 });
+
+describe("cardExpiryAt and idempotent expiry", () => {
+  it("computes expiry from the original bind time for period plans", () => {
+    const card = unusedCard({ plan: "period", days: 365 });
+    expect(cardExpiryAt(card, NOW)).toBe(NOW + 365 * 24 * 60 * 60 * 1000);
+    expect(cardExpiryAt(unusedCard(), NOW)).toBeNull();
+    expect(cardExpiryAt(unusedCard({ plan: "period" }), NOW)).toBeNull();
+  });
+
+  it("preserves expiry on repeated redemption of the same device", () => {
+    const boundAt = NOW;
+    const card = unusedCard({ plan: "period", days: 365, status: "bound", boundDeviceId: DEVICE_ID, boundAt, expireAt: boundAt + 365 * 24 * 60 * 60 * 1000 });
+    const later = NOW + 24 * 60 * 60 * 1000;
+    const decision = decideRedemption(card, DEVICE_ID, later);
+    expect(decision.outcome).toBe("idempotent");
+    expect(decision.deviceRecord.expireAt).toBe(boundAt + 365 * 24 * 60 * 60 * 1000);
+  });
+
+  it("recomputes expiry for legacy bound cards missing the expireAt field", () => {
+    const card = unusedCard({ plan: "period", days: 30, status: "bound", boundDeviceId: DEVICE_ID, boundAt: NOW });
+    const decision = decideRedemption(card, DEVICE_ID, NOW + 1000);
+    expect(decision.outcome).toBe("idempotent");
+    expect(decision.deviceRecord.expireAt).toBe(NOW + 30 * 24 * 60 * 60 * 1000);
+  });
+});
+

@@ -20,10 +20,19 @@ describe("motion lint", () => {
     );
     expect(lintMotionProject(project).filter(issue => issue.severity === "error")).toEqual([]);
   });
-  it("reports more than four simultaneous scene layers", () => {
+  it("reports more than two simultaneous AI scene layers", () => {
     const project = createEmptyProject();
-    project.tracks.find((track) => track.kind === "composition")!.clips.push(...Array.from({ length: 5 }, (_, index) => effect(`effect-${index}`)));
+    project.tracks.find((track) => track.kind === "composition")!.clips.push(...Array.from({ length: 3 }, (_, index) => ({ ...effect(`effect-${index}`), sceneGroupId: "ai-motion:group:caption" })));
     expect(lintMotionProject(project)).toContainEqual(expect.objectContaining({ ruleId: "too-many-layers", severity: "error" }));
+  });
+
+  it("reports AI content layers that enter less than half a second apart", () => {
+    const project = createEmptyProject();
+    project.tracks.find((track) => track.kind === "composition")!.clips.push(
+      { ...effect("first"), sceneGroupId: "ai-motion:group:caption" },
+      { ...effect("second", 400_000), sceneGroupId: "ai-motion:group:caption" }
+    );
+    expect(lintMotionProject(project)).toContainEqual(expect.objectContaining({ ruleId: "entry-stagger", severity: "error" }));
   });
 
   it("respects per-clip lint exceptions", () => {
@@ -33,6 +42,20 @@ describe("motion lint", () => {
     clip.lintOff = ["unsafe-bounds"];
     project.tracks.find((track) => track.kind === "composition")!.clips.push(clip);
     expect(lintMotionProject(project).some((item) => item.ruleId === "unsafe-bounds")).toBe(false);
+  });
+
+  it("reports an outer-stage transform on a replicated reference effect", () => {
+    const project = createEmptyProject();
+    const clip = effect("reference-outside");
+    clip.compositionId = "info-board";
+    clip.transform = { ...clip.transform, x: 82, y: 30 };
+    project.tracks.find((track) => track.kind === "composition")!.clips.push(clip);
+
+    expect(lintMotionProject(project)).toContainEqual(expect.objectContaining({
+      ruleId: "reference-stage-transform",
+      severity: "warning",
+      clipId: "reference-outside"
+    }));
   });
 
   it("reports unknown unsnapshotted effects", () => {

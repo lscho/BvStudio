@@ -168,19 +168,6 @@ export function saveCachedVipStatus(status: VipStatus): void {
   }
 }
 
-/**
- * 清除本地保存的 VIP 授权状态（用于测试或注销授权）。
- */
-export function clearCachedVipStatus(): void {
-  try {
-    if (typeof localStorage !== "undefined") {
-      localStorage.removeItem(VIP_STATUS_STORAGE_KEY);
-    }
-  } catch {
-    // 忽略异常
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /* 授权服务网络验证（ESA 边缘函数后端）                                  */
 /* ------------------------------------------------------------------ */

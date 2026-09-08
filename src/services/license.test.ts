@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { isDesktopRuntime } from "@/services/runtime";
 import {
-  clearCachedVipStatus,
   DEFAULT_VIP_STATUS,
   getHardwareDeviceId,
   isVipActive,
@@ -49,11 +48,12 @@ function createMemoryStorage(): Storage {
 describe("license service", () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
+    vi.stubEnv("VITE_LICENSE_SERVER_URL", "");
+    vi.stubEnv("VITE_LICENSE_RESPONSE_KEY", "");
     vi.stubGlobal("localStorage", createMemoryStorage());
     vi.clearAllMocks();
     vi.mocked(isDesktopRuntime).mockReturnValue(false);
   });
-
   describe("maskLicenseKey", () => {
     it("masks keys properly", () => {
       expect(maskLicenseKey("12345")).toBe("********");
@@ -129,7 +129,7 @@ describe("license service", () => {
       saveCachedVipStatus(sample);
       expect(readCachedVipStatus()).toEqual({ ...sample, cachedAt: expect.any(Number) });
 
-      clearCachedVipStatus();
+      localStorage.removeItem("bvideo:vip-status");
       expect(readCachedVipStatus()).toEqual(DEFAULT_VIP_STATUS);
     });
 

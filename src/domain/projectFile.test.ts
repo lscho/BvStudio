@@ -185,6 +185,23 @@ describe("project files", () => {
     });
   });
 
+  it("recenters generated reference-stage effects from current projects", () => {
+    const raw = JSON.parse(serializeProject(createEmptyProject()));
+    const track = raw.tracks.find((candidate: { kind: string }) => candidate.kind === "composition");
+    track.clips.push({
+      id: "ai-info-board", trackId: track.id, kind: "composition", label: "AI 动效 · 累积信息板", startUs: 0, durationUs: 4_000_000,
+      locked: false, compositionId: "info-board", text: "表达问题", color: "#ffffff", accentColor: "#5fa8ff", fontSize: 48, speed: 1,
+      sourceSubtitleId: "caption", transform: { x: 84, y: 30, scale: 1, rotation: 0, opacity: 1 },
+      params: { position: "right", offsetX: 0, offsetY: 0 }
+    });
+
+    const effect = parseProject(JSON.stringify(raw)).tracks.flatMap((candidate) => candidate.clips).find((clip) => clip.id === "ai-info-board");
+    expect(effect).toMatchObject({
+      transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 },
+      params: { position: "right", offsetX: 0, offsetY: 0 }
+    });
+  });
+
   it("repositions overlapping generated component effects when migrating v21 projects", () => {
     const raw = JSON.parse(serializeProject(createEmptyProject()));
     raw.schemaVersion = 21;

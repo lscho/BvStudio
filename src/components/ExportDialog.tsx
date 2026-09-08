@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Download, X } from "lucide-react";
+import { Captions, Download, X } from "lucide-react";
 import { Select } from "@/components/Select";
 import { normalizeOutputFps, OUTPUT_FPS_OPTIONS } from "@/domain/outputSettings";
 import type { EditorProject } from "@/domain/project";
@@ -19,8 +19,10 @@ interface Props {
   canvas: EditorProject["canvas"];
   defaultEncoder: "auto" | VideoEncoder;
   busy: boolean;
+  subtitleCount: number;
   onOpenChange: (open: boolean) => void;
   onExport: (options: VideoExportOptions) => void;
+  onExportSrt: () => void;
 }
 
 const resolutionOptions = [
@@ -41,7 +43,7 @@ export function exportDimensions(canvas: EditorProject["canvas"], resolution: st
   return { width: even(canvas.width * scale), height: even(canvas.height * scale) };
 }
 
-export function ExportDialog({ open, canvas, defaultEncoder, busy, onOpenChange, onExport }: Props) {
+export function ExportDialog({ open, canvas, defaultEncoder, busy, subtitleCount, onOpenChange, onExport, onExportSrt }: Props) {
   const projectFps = normalizeOutputFps(canvas.fpsNumerator / canvas.fpsDenominator);
   const [format, setFormat] = useState<ExportVideoFormat>("mp4");
   const [resolution, setResolution] = useState("project");
@@ -86,8 +88,7 @@ export function ExportDialog({ open, canvas, defaultEncoder, busy, onOpenChange,
             <label><span>帧率</span><Select label="导出帧率" value={String(fps)} onChange={(value) => setFps(Number(value))} options={OUTPUT_FPS_OPTIONS.map((value) => ({ value: String(value), label: `${value} fps` }))} /></label>
             <label><span>编码器</span><Select label="导出编码器" value={encoder} onChange={(value) => setEncoder(value as "auto" | VideoEncoder)} options={encoderOptions} /></label>
           </div>
-          <div className="export-summary"><span>{dimensions.width} × {dimensions.height}</span><span>{fps} fps</span><span>{format.toUpperCase()}</span></div>
-          <div className="dialog-actions"><Dialog.Close className="button secondary" type="button">取消</Dialog.Close><button className="button primary" type="submit" disabled={busy}><Download size={15} />开始导出</button></div>
+          <div className="dialog-actions"><button className="button secondary" type="button" disabled={busy || subtitleCount === 0} title={subtitleCount === 0 ? "时间线上没有可导出的字幕" : undefined} onClick={onExportSrt}><Captions size={15} />导出 SRT 字幕</button><Dialog.Close className="button secondary" type="button">取消</Dialog.Close><button className="button primary" type="submit" disabled={busy}><Download size={15} />开始导出</button></div>
         </form>
       </Dialog.Content>
     </Dialog.Portal>

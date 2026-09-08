@@ -11,6 +11,8 @@ import { createGeneratedEffectLayers } from "@/domain/sceneEffects";
 import { sceneBackgroundComposition } from "@/domain/sceneBackground";
 import { presenterMotionSafeArea, resolveMotionLayout, type MotionLayoutLayer, type OccupiedMotionLayoutLayer } from "@/domain/motionLayout";
 import { motionColorRoleForEffect, motionThemeAccentColor } from "@/domain/motionTheme";
+import { compileAiMotionParams, type MotionParamOverride } from "@/domain/motionMatching";
+import { isReferenceStageComposition, referenceStageOuterTransform } from "@/domain/overlayStudioReference";
 import { DEFAULT_TRANSFORM, videoLayoutForPreset, visualTransformAt } from "@/domain/transforms";
 import {
   createEmptyProject,
@@ -92,6 +94,10 @@ function occupiedMotionLayoutLayer(effect: CompositionClip): OccupiedMotionLayou
 }
 
 function placeNewEffect(project: EditorProject, effect: CompositionClip) {
+  if (isReferenceStageComposition(effect.compositionId)) {
+    effect.transform = referenceStageOuterTransform(effect.transform);
+    return;
+  }
   const safeArea = presenterMotionSafeArea(project.presenterSafeArea, effect.startUs, effect.durationUs);
   const occupiedLayers = project.tracks
     .flatMap((track) => track.clips)
@@ -116,6 +122,9 @@ interface AiMotionEntry {
   y: number;
   scale: number;
   zIndex: number;
+  params: readonly MotionParamOverride[];
+  timingCaptionIndices: readonly number[];
+  materialPlaceholder: boolean;
 }
 
 interface AiMotionCaptionSpan {
@@ -135,14 +144,15 @@ function aiMotionEntries(match: AiMotionMatch, captionText: string, useCaptionFa
   const primaryText = primaryDefinition?.recipe.sceneBackground
     ? ""
     : match.primaryText.trim() || (useCaptionFallback ? captionText : "");
-  return [
+  const entries: Array<AiMotionEntry | null> = [
     primaryDefinition && (primaryText || primaryDefinition.recipe.sceneBackground || isBackgroundComposition(primaryDefinition.id) || compositionSlots(primaryDefinition.id).length > 0)
-      ? { slot: "primary", compositionId: primaryDefinition.id, text: primaryText, x: match.x, y: match.y, scale: match.scale, zIndex: 20 }
+      ? { slot: "primary", compositionId: primaryDefinition.id, text: primaryText, x: match.x, y: match.y, scale: match.scale, zIndex: 20, params: match.primaryParams ?? [], timingCaptionIndices: match.primaryTimingCaptionIndices ?? [], materialPlaceholder: match.materialPlaceholder ?? false }
       : null,
     match.secondaryEffectId && match.secondaryText?.trim()
-      ? { slot: "secondary", compositionId: match.secondaryEffectId, text: match.secondaryText.trim(), x: match.secondaryX, y: match.secondaryY, scale: Math.min(1.5, match.scale), zIndex: 30 }
+      ? { slot: "secondary", compositionId: match.secondaryEffectId, text: match.secondaryText.trim(), x: match.secondaryX, y: match.secondaryY, scale: Math.min(1.5, match.scale), zIndex: 30, params: match.secondaryParams ?? [], timingCaptionIndices: match.secondaryTimingCaptionIndices ?? [], materialPlaceholder: false }
       : null
-  ].filter((entry): entry is AiMotionEntry => Boolean(entry));
+  ];
+  return entries.filter((entry): entry is AiMotionEntry => Boolean(entry));
 }
 
 function materializedAiEffectRecipe(compositionId: string, match: AiMotionMatch) {
@@ -171,6 +181,7 @@ function resolveAiMotionPlacements(
 ) {
   const matchByCaption = new Map(matches.map((match) => [match.captionIndex, match]));
   const layers: MotionLayoutLayer[] = [];
+  const referencePlacements = new Map<string, { x: number; y: number; scale: number }>();
   for (let captionIndex = 0; captionIndex < captions.length; captionIndex += 1) {
     const match = matchByCaption.get(captionIndex);
     const caption = captions[captionIndex];
@@ -182,6 +193,10 @@ function resolveAiMotionPlacements(
     for (const entry of aiMotionEntries(match, caption.text, useCaptionFallback)) {
       const recipe = materializedAiEffectRecipe(entry.compositionId, match);
       if (recipe.sceneBackground || isBackgroundComposition(entry.compositionId) || mediaComposition(entry.compositionId)) continue;
+      if (isReferenceStageComposition(entry.compositionId)) {
+        referencePlacements.set(aiMotionLayoutId(captionIndex, entry.slot), { x: 50, y: 50, scale: 1 });
+        continue;
+      }
       layers.push({
         id: aiMotionLayoutId(captionIndex, entry.slot),
         compositionId: entry.compositionId,
@@ -197,7 +212,7 @@ function resolveAiMotionPlacements(
       });
     }
   }
-  const occupiedLayers = existingEffects.map(occupiedMotionLayoutLayer);
+  const occupiedLayers = existingEffects.filter((effect) => !isReferenceStageComposition(effect.compositionId)).map(occupiedMotionLayoutLayer);
   const safeAreas = captions.map((caption) => ({
     startUs: caption.startUs,
     durationUs: Math.max(100_000, caption.endUs - caption.startUs),
@@ -221,7 +236,9 @@ function resolveAiMotionPlacements(
     const presenterArea = presenterMotionSafeArea(project.presenterSafeArea, firstStartUs, lastEndUs - firstStartUs);
     if (presenterArea) safeAreas.push(presenterArea);
   }
-  return resolveMotionLayout({ canvas: project.canvas, layers, safeAreas, occupiedLayers });
+  const placements = resolveMotionLayout({ canvas: project.canvas, layers, safeAreas, occupiedLayers });
+  for (const [id, placement] of referencePlacements) placements.set(id, placement);
+  return placements;
 }
 
 interface EditorState {
@@ -1121,6 +1138,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         fontSize: subtitle.fontSize,
         positionY: subtitle.positionY
       }));
+      const timingCaptions = subtitles.map((subtitle) => ({
+        startSeconds: subtitle.startUs / 1_000_000,
+        endSeconds: (subtitle.startUs + subtitle.durationUs) / 1_000_000
+      }));
       const motionPlacements = resolveAiMotionPlacements(
         project,
         matches,
@@ -1177,14 +1198,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           if (effectTrack.locked || (definition.recipe.sceneBackground && sceneTrack.locked)) { summary.skippedEffectCount += 1; continue; }
           if (mediaComposition(definition.id)) {
             const bindings = normalizeBindings(match.compositionBindings);
-            if (compositionBindingIssues({ compositionId: definition.id, bindings }, project.assets).length) { summary.skippedEffectCount += 1; continue; }
+            const placeholder = entry.materialPlaceholder && bindings.length === 0;
+            if (compositionBindingIssues({ compositionId: definition.id, bindings }, project.assets).length && !placeholder) { summary.skippedEffectCount += 1; continue; }
             const durationUs = isSequencedMediaComposition(definition.id) ? Math.max(2_000_000, Math.min(10_000_000, matchDurationUs)) : matchDurationUs;
             effectTrack.clips.push({
-              id: crypto.randomUUID(), trackId: effectTrack.id, kind: "composition", label: `AI 动效 · ${definition.name}`,
+              id: crypto.randomUUID(), trackId: effectTrack.id, kind: "composition", label: `AI 动效 · ${definition.name}${placeholder ? " · 待补素材" : ""}`,
               startUs: subtitle.startUs, durationUs, animationDurationUs: durationUs, sourceOffsetUs: 0,
               locked: false, compositionId: definition.id, bindings, text: "", color: definition.defaultColor,
               accentColor: themeAccentColor, fontSize: 48, speed: 1, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 },
-              params: structuredClone(definition.defaultParams ?? {}), sourceSubtitleId: subtitle.id, zIndex: compositionLayer({ compositionId: definition.id, recipe: definition.recipe })
+              params: compileAiMotionParams({
+                effect: definition,
+                baseParams: structuredClone(definition.defaultParams ?? {}),
+                overrides: entry.params,
+                timingCaptionIndices: entry.timingCaptionIndices,
+                captions: timingCaptions,
+                startCaptionIndex: captionIndex,
+                endCaptionIndex: persistUntilCaptionIndex,
+                text: entry.text
+              }),
+              sourceSubtitleId: subtitle.id, zIndex: compositionLayer({ compositionId: definition.id, recipe: definition.recipe }),
+              lintOff: placeholder ? ["composition-input"] : undefined
             });
             summary.effectCount += 1;
             continue;
@@ -1210,9 +1243,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             const bindings = entry.slot === "primary" && compositionSlots(definition.id).length > 0
               ? normalizeBindings(match.compositionBindings)
               : [];
-            if (compositionBindingIssues({ compositionId: definition.id, bindings }, project.assets).length) { summary.skippedEffectCount += 1; continue; }
+            const placeholder = entry.materialPlaceholder && bindings.length === 0;
+            if (compositionBindingIssues({ compositionId: definition.id, bindings }, project.assets).length && !placeholder) { summary.skippedEffectCount += 1; continue; }
             effectTrack.clips.push({
-              id: crypto.randomUUID(), trackId: effectTrack.id, kind: "composition", label: `AI 动效 · ${definition.name}`,
+              id: crypto.randomUUID(), trackId: effectTrack.id, kind: "composition", label: `AI 动效 · ${definition.name}${placeholder ? " · 待补素材" : ""}`,
               startUs: subtitle.startUs, durationUs: matchDurationUs, locked: false, compositionId: definition.id, text: entry.text.trim(),
               color: definition.defaultColor, accentColor: themeAccentColor,
               fontSize: recommendedEffectFontSizeForId(definition.id, recipe, entry.text.trim()), speed: 1,
@@ -1222,7 +1256,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id,
               backdrop: effectBackdropForPreset(match.backdropPreset ?? "none", themeAccentColor),
               bindings,
-              params: effectParamsForText(definition.id, entry.text.trim())
+              lintOff: placeholder ? ["composition-input"] : undefined,
+              params: compileAiMotionParams({
+                effect: definition,
+                baseParams: effectParamsForText(definition.id, entry.text.trim()),
+                overrides: entry.params,
+                timingCaptionIndices: entry.timingCaptionIndices,
+                captions: timingCaptions,
+                startCaptionIndex: captionIndex,
+                endCaptionIndex: persistUntilCaptionIndex,
+                text: entry.text
+              })
             });
             summary.effectCount += 1;
           }

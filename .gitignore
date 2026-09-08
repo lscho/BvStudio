@@ -25,6 +25,7 @@ license-cards*
 *.swo
 *~
 .zcode
+.dev/
 
 # OS generated files
 .DS_Store

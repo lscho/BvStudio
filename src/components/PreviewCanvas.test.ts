@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { PreviewCanvas, moveEffectTransform, previewAudioGain, previewCanvasLength, previewNativeAudioVolume, resizeEffectTransform, videoTargetPoint } from "@/components/PreviewCanvas";
+import { PreviewCanvas, anchorContentResizeTransform, interactionBoundsFromScreenPoints, moveEffectTransform, previewAudioGain, previewCanvasLength, previewNativeAudioVolume, resizeEffectTransform, videoTargetPoint } from "@/components/PreviewCanvas";
 import { createEmptyProject } from "@/domain/project";
 import type { AiProviderConfig } from "@/services/ai/provider";
 import { useEditorStore } from "@/stores/editorStore";
@@ -87,6 +87,14 @@ describe("PreviewCanvas effect manipulation", () => {
 
     const { container } = render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
     expect(container.querySelector(".component-cam-pan video")).toHaveAttribute("src", "blob:screen#bvideo-video");
+  });
+
+  it("uses the rendered foreground card as the interaction bounds instead of the full canvas", () => {
+    useEditorStore.getState().addComposition("pain-points");
+    const { container } = render(createElement(PreviewCanvas, { aiProvider, onNeedSettings: vi.fn(), onImport: vi.fn(), onGenerate: vi.fn(), playing: false }));
+
+    expect(container.querySelector(".component-pain-points")).toHaveAttribute("data-interaction-bounds", "content");
+    expect(container.querySelector(".component-pain-points [data-overlay-content-root]")).toBeInTheDocument();
   });
 
   it("uses a neutral temporary material placeholder for a focus-card preview", () => {
@@ -210,9 +218,23 @@ describe("PreviewCanvas effect manipulation", () => {
 
   it("resizes from every edge and clamps the supported scale", () => {
     expect(resizeEffectTransform(transform, "e", 100, 0, 1000, 500).scale).toBeCloseTo(1.3);
+    expect(resizeEffectTransform(transform, "e", 100, 0, 400, 200, 1).scale).toBeCloseTo(1.25);
     expect(resizeEffectTransform(transform, "nw", -100, -50, 1000, 500).scale).toBeCloseTo(1.3);
     expect(resizeEffectTransform(transform, "se", 10_000, 10_000, 1000, 500).scale).toBe(3);
     expect(resizeEffectTransform(transform, "se", -10_000, -10_000, 1000, 500).scale).toBe(0.3);
+  });
+
+  it("maps a transformed screen quad back to content-local selection bounds", () => {
+    expect(interactionBoundsFromScreenPoints([
+      { x: 120, y: 70 }, { x: 320, y: 70 }, { x: 320, y: 170 }, { x: 120, y: 170 }
+    ], { x: 20, y: 20 }, { x: 22, y: 20 }, { x: 20, y: 22 })).toEqual({ left: 50, top: 25, width: 100, height: 50 });
+  });
+
+  it("keeps the opposite content edge fixed while resizing a full-canvas effect", () => {
+    const resized = resizeEffectTransform(transform, "e", 100, 0, 200, 100, 1);
+    expect(anchorContentResizeTransform(transform, resized, "e",
+      { left: 100, top: 100, width: 200, height: 100 },
+      { left: 0, top: 0, width: 1000, height: 500 })).toMatchObject({ x: 70, y: 60, scale: 1.5 });
   });
 
   it("maps draggable crop and focus targets to bounded canvas percentages", () => {

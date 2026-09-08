@@ -121,6 +121,10 @@ export function statusForDeviceRecord(record, now) {
   };
 }
 
+export function cardExpiryAt(card, boundAt) {
+  return card.plan === "lifetime" || !card.days ? null : boundAt + card.days * DAY_MS;
+}
+
 function buildDeviceRecord(card, deviceId, activatedAt, expireAt) {
   return {
     isVip: true,
@@ -143,14 +147,17 @@ export function decideRedemption(card, deviceId, now) {
   if (!card) return { outcome: "error", message: "卡密不存在或已失效" };
   if (card.status === "revoked") return { outcome: "error", message: "卡密已被吊销，请联系客服处理" };
   if (card.status === "bound") {
+    const boundAt = card.boundAt ?? now;
     if (card.boundDeviceId === deviceId) {
-      return { outcome: "idempotent", deviceRecord: buildDeviceRecord(card, deviceId, card.boundAt ?? now, card.expireAt ?? null) };
+      // 绑定时间到期时间优先取卡密记录；兼容历史记录缺失时按计划重算
+      const expireAt = card.expireAt ?? cardExpiryAt(card, boundAt);
+      return { outcome: "idempotent", deviceRecord: buildDeviceRecord(card, deviceId, boundAt, expireAt) };
     }
     return { outcome: "error", message: "卡密已被其他设备绑定，一张卡密仅可绑定一台设备" };
   }
 
-  const expireAt = card.plan === "lifetime" || !card.days ? null : now + card.days * DAY_MS;
-  const cardPatch = { ...card, status: "bound", boundDeviceId: deviceId, boundAt: now };
+  const expireAt = cardExpiryAt(card, now);
+  const cardPatch = { ...card, status: "bound", boundDeviceId: deviceId, boundAt: now, expireAt };
   return { outcome: "bind", cardPatch, deviceRecord: buildDeviceRecord(card, deviceId, now, expireAt) };
 }
 

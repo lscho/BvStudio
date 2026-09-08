@@ -9,11 +9,15 @@ import { getMediaToolStatus, type MediaToolStatus, type VideoEncoder } from "@/s
 import { isDesktopRuntime } from "@/services/runtime";
 import { hasSpeechApiKey, MIMO_TTS_MODELS, MIMO_TTS_VOICES, saveSpeechApiKey, validateCloudSpeechTtsConfig, verifyCloudSpeech } from "@/services/cloudSpeech";
 
+export type SettingsSection = "provider" | "media" | "speech" | "license";
+
 interface Props {
   open: boolean;
   settings: PersistedSettings;
   onOpenChange: (open: boolean) => void;
   onSave: (settings: PersistedSettings) => Promise<void>;
+  /** 打开时定位到的页签；不传默认"文案模型" */
+  initialSection?: SettingsSection;
 }
 
 const protocolLabels: Record<AiProtocol, string> = {
@@ -35,19 +39,22 @@ const asrLanguageOptions = [
   { value: "en", label: "英文" }
 ];
 
-export function AiSettingsDialog({ open, settings, onOpenChange, onSave }: Props) {
-  const [section, setSection] = useState<"provider" | "media" | "speech" | "license">("provider");
+export function AiSettingsDialog({ open, settings, onOpenChange, onSave, initialSection }: Props) {
+  const [section, setSection] = useState<SettingsSection>("provider");
   const [cardKey, setCardKey] = useState("");
   const [copied, setCopied] = useState(false);
   const [redeemNotice, setRedeemNotice] = useState("");
   const [redeemError, setRedeemError] = useState("");
+
+  useEffect(() => {
+    if (open) setSection(initialSection ?? "provider");
+  }, [open, initialSection]);
 
   const deviceId = useLicenseStore((state) => state.deviceId);
   const vipStatus = useLicenseStore((state) => state.status);
   const isRedeeming = useLicenseStore((state) => state.isRedeeming);
   const initializeLicense = useLicenseStore((state) => state.initialize);
   const redeemLicense = useLicenseStore((state) => state.redeem);
-  const resetLicense = useLicenseStore((state) => state.resetLicense);
   const [draft, setDraft] = useState(settings.aiProvider);
   const [speechDraft, setSpeechDraft] = useState(settings.cloudSpeech ?? DEFAULT_SETTINGS.cloudSpeech);
   const [mediaDraft, setMediaDraft] = useState(settings.media ?? DEFAULT_SETTINGS.media);
@@ -75,7 +82,6 @@ export function AiSettingsDialog({ open, settings, onOpenChange, onSave }: Props
     setSpeechStatus(null);
     setProviderModels([]);
     setProviderStatus(null);
-    setSection("provider");
     setCardKey("");
     setCopied(false);
     setRedeemNotice("");
@@ -249,7 +255,6 @@ export function AiSettingsDialog({ open, settings, onOpenChange, onSave }: Props
                         <p className="license-pro-info">
                           已激活 Pro 专业版
                           {vipStatus.expireAt ? ` · 有效期至 ${new Date(vipStatus.expireAt).toLocaleDateString()}` : " · 永久授权"}
-                          {vipStatus.licenseKey ? ` · 卡密 ${vipStatus.licenseKey}` : ""}
                         </p>
                       ) : (
                         <p className="license-free-info">
@@ -329,17 +334,6 @@ export function AiSettingsDialog({ open, settings, onOpenChange, onSave }: Props
                       </p>
                     )}
                   </div>
-                  {vipStatus.isVip && (
-                    <div className="license-reset-row">
-                      <button
-                        type="button"
-                        className="button secondary"
-                        onClick={() => void resetLicense()}
-                      >
-                        注销当前授权（测试）
-                      </button>
-                    </div>
-                  )}
                 </div>}
               </section>
             </div>

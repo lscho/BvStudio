@@ -8,8 +8,7 @@ vi.mock("@/services/license", async (importOriginal) => {
     ...actual,
     getHardwareDeviceId: vi.fn(),
     verifyVipStatus: vi.fn(),
-    redeemCardKey: vi.fn(),
-    clearCachedVipStatus: vi.fn()
+    redeemCardKey: vi.fn()
   };
 });
 
@@ -63,20 +62,5 @@ describe("licenseStore", () => {
     expect(useLicenseStore.getState().status.isVip).toBe(true);
     expect(useLicenseStore.getState().status.planName).toBe("终身 VIP 会员");
   });
-
-  it("handles resetLicense properly", async () => {
-    useLicenseStore.setState({
-      deviceId: "BV-DEVICE-123",
-      status: {
-        isVip: true,
-        planName: "终身 VIP 会员",
-        expireAt: null,
-        activatedAt: Date.now()
-      }
-    });
-
-    await useLicenseStore.getState().resetLicense();
-    expect(licenseService.clearCachedVipStatus).toHaveBeenCalled();
-    expect(useLicenseStore.getState().status.isVip).toBe(false);
-  });
 });
+

@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { aiTimedScriptSchema, createAiEffectSelectionSchema, createAiMotionMatchesSchema, createEffectSelectionJsonSchema, createMotionMatchesJsonSchema } from "@/services/ai/schema";
+import { aiTimedScriptSchema, createAiEffectSelectionSchema, createAiMotionMatchesSchema, createAiMotionSelectionSchema, createEffectSelectionJsonSchema, createMotionMatchesJsonSchema, createMotionSelectionJsonSchema } from "@/services/ai/schema";
 
 describe("two-stage AI schemas", () => {
+  it("grounds semantic segments and their effect choices to caption indexes", () => {
+    const selection = {
+      segments: [{ segmentId: "pain-and-fix", startCaptionIndex: 0, endCaptionIndex: 2, title: "痛点与方案", intent: "pain", evidenceKinds: ["process"], primaryEffectId: "pain-points", secondaryEffectId: null, materialNeed: "", selectionReason: "连续三条字幕在列举问题" }]
+    };
+    expect(createAiMotionSelectionSchema(["pain-points"], 2).parse(selection)).toEqual(selection);
+    expect(() => createAiMotionSelectionSchema(["pain-points"], 2).parse({ ...selection, segments: [{ ...selection.segments[0], endCaptionIndex: 3 }] })).toThrow();
+    expect(createMotionSelectionJsonSchema(["pain-points"], 2).properties.segments.items.required).toContain("selectionReason");
+  });
+
   it("selects a bounded effect palette from every allowed id", () => {
     const allowed = ["pain-points", "screen-demo", "flow-chart"];
     expect(createAiEffectSelectionSchema(allowed).parse({ effectIds: ["screen-demo", "pain-points"] }).effectIds).toEqual(["screen-demo", "pain-points"]);
@@ -37,6 +46,19 @@ describe("two-stage AI schemas", () => {
     expect(() => schema.parse({ matches: [{ ...match, compositionBindings: [{ slotId: "recording", assetIds: ["reference-image"] }] }] })).toThrow("图片槽不能绑定视频");
     expect(schema.parse({ matches: [{ ...match, primaryEffectId: "ghost-video", compositionBindings: [{ slotId: "reference", assetIds: ["reference-image"] }] }] }).matches[0].primaryEffectId).toBe("ghost-video");
   });
+
+  it("allows an empty binding only for an explicit material placeholder", () => {
+    const schema = createAiMotionMatchesSchema(["screen-demo"], [], []);
+    const match = {
+      captionIndex: 0, subtitleKeywords: [], motionGroupId: null, persistUntilCaptionIndex: null,
+      primaryEffectId: "screen-demo", primaryText: "操作演示", primaryParams: [], primaryTimingCaptionIndices: [],
+      compositionBindings: [], materialPlaceholder: true, secondaryEffectId: null, secondaryText: null,
+      secondaryParams: [], secondaryTimingCaptionIndices: [], accentColor: "#5fa8ff", x: 50, y: 50, scale: 1,
+      secondaryX: 75, secondaryY: 60, cameraPreset: "none", soundEffectId: null, videoLayers: [], backdropPreset: "none", chart: null
+    };
+    expect(schema.parse({ matches: [match] }).matches[0].materialPlaceholder).toBe(true);
+    expect(() => schema.parse({ matches: [{ ...match, materialPlaceholder: false }] })).toThrow("半透明占位");
+  });
   it("accepts an article with timed captions before motion matching", () => {
     const value = { title: "设计系统介绍", article: "文章正文", narration: "口播正文", captions: [{ startSeconds: 0, endSeconds: 3, text: "统一团队语言。" }] };
     expect(aiTimedScriptSchema.parse(value)).toEqual(value);
@@ -57,7 +79,8 @@ describe("two-stage AI schemas", () => {
       videoLayers: [{ assetId: "local-video", role: "screen", sourceInSeconds: 2, layoutPreset: "full", shapePreset: "rectangle", transitionPreset: "fade", cameraPreset: "push-in", volume: 0, focus: { enabled: true, x: 50, y: 50, zoom: 1.8, startOffsetSeconds: 0.2, durationSeconds: 1.5 } }],
       backdropPreset: "dark", soundEffectId: "clean-click", chart: null
     };
-    expect(schema.parse({ matches: [valid] }).matches[0]).toEqual(valid);
+    expect(schema.parse({ matches: [valid] }).matches[0]).toMatchObject(valid);
+    expect(schema.parse({ matches: [valid] }).matches[0]).toMatchObject({ primaryParams: [], primaryTimingCaptionIndices: [], secondaryParams: [], secondaryTimingCaptionIndices: [] });
     expect(() => schema.parse({ matches: [{ ...valid, primaryEffectId: "made-up-effect" }] })).toThrow("未知动效");
     expect(() => schema.parse({ matches: [{ ...valid, primaryMediaAssetId: "invented-video" }] })).toThrow("未知素材");
     expect(() => schema.parse({ matches: [{ ...valid, videoLayers: [{ ...valid.videoLayers[0], assetId: "invented-video" }] }] })).toThrow("未知素材");

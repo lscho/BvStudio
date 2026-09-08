@@ -15,6 +15,7 @@ import { upsertVisualKeyframe, visualTransformAt } from "@/domain/transforms";
 import { activeVideoPresentationCue, DEFAULT_EFFECT_BACKDROP, selectedVisualTransitionCuts, VIDEO_MOTION_PRESETS, VIDEO_TRANSITION_OPTIONS, videoMotionPresetUsesFocusPoint, videoPresentationAt, videoTransition, visualTransition, type VideoMotionPresetId, type VisualTransitionClip } from "@/domain/videoPresentation";
 import { subtitleStyle } from "@/domain/videoDecorations";
 import { effectControlsFor } from "@/compositions/registry";
+import { isReferenceStageComposition, referenceStageOuterTransform } from "@/domain/overlayStudioReference";
 
 const EASING_OPTIONS = EASING_NAMES.map((name) => ({ value: name, label: EASING_LABELS[name] }));
 
@@ -229,6 +230,15 @@ function EffectInspector({ clip, motionTheme, playheadUs, onSeek, onPatch }: { c
   const localUs = Math.max(0, Math.min(clip.durationUs, playheadUs - clip.startUs));
   const current = visualTransformAt(clip.transform, clip.transformKeyframes, localUs);
   const patchTransform = (patch: Partial<TransformProps>) => onPatch(keyframeTransformPatch(clip.transform, clip.transformKeyframes, localUs, patch));
+  const referenceStage = isReferenceStageComposition(clip.compositionId);
+  const referenceScale = typeof clip.params?.scale === "number" && Number.isFinite(clip.params.scale)
+    ? Math.max(0.3, Math.min(3, clip.params.scale))
+    : 1;
+  const patchReferenceScale = (scale: number) => onPatch({
+    transform: referenceStageOuterTransform(clip.transform),
+    transformKeyframes: [],
+    params: { ...clip.params, scale }
+  });
   const recipe = clip.recipe;
   const backdrop = { ...DEFAULT_EFFECT_BACKDROP, ...clip.backdrop };
   const appearance = resolveEffectAppearance(clip, motionTheme);
@@ -254,10 +264,10 @@ function EffectInspector({ clip, motionTheme, playheadUs, onSeek, onPatch }: { c
     <section className="camera-fields"><span>整体背景</span><label className="check-row"><input type="checkbox" checked={backdrop.enabled} onChange={(event) => onPatch({ backdrop: { ...backdrop, enabled: event.target.checked } })} /><span>启用动效背景</span></label>{backdrop.enabled && <><div className="two-column"><label><span>背景颜色{backdropFollowsTheme ? " · 跟随主题" : ""}</span><input type="color" value={backdropColor} onChange={(event) => onPatch({ backdrop: { ...backdrop, color: event.target.value } })} /></label><NumberField label="背景模糊" value={backdrop.blur} min={0} max={30} step={1} suffix="px" onChange={(blur) => onPatch({ backdrop: { ...backdrop, blur } })} /></div>{!backdropFollowsTheme && <button className="inline-reset-button" type="button" onClick={() => onPatch({ backdrop: { ...backdrop, color: DEFAULT_EFFECT_BACKDROP.color } })}>恢复跟随主题底色</button>}<RangeField label="背景透明度" value={backdrop.opacity} min={0} max={1} step={0.05} suffix="" onChange={(opacity) => onPatch({ backdrop: { ...backdrop, opacity } })} /><div className="two-column"><NumberField label="横向留白" value={backdrop.paddingX} min={0} max={100} step={1} suffix="px" onChange={(paddingX) => onPatch({ backdrop: { ...backdrop, paddingX } })} /><NumberField label="纵向留白" value={backdrop.paddingY} min={0} max={60} step={1} suffix="px" onChange={(paddingY) => onPatch({ backdrop: { ...backdrop, paddingY } })} /></div><RangeField label="背景圆角" value={backdrop.radius} min={0} max={40} step={1} suffix="px" onChange={(radius) => onPatch({ backdrop: { ...backdrop, radius } })} /></>}</section>
     <NumberField label="弱化时间" value={(clip.dimAtUs ?? clip.durationUs) / 1_000_000} min={0} max={clip.durationUs / 1_000_000} step={0.1} suffix="s" onChange={(value) => onPatch({ dimAtUs: Math.round(value * 1_000_000) })} />
     <label><span>忽略检查规则</span><input value={(clip.lintOff ?? []).join(", ")} placeholder="例如 unsafe-bounds" onChange={(event) => onPatch({ lintOff: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></label>
-    <RangeField label="大小" value={current.scale} min={0.3} max={3} step={0.05} suffix="×" onChange={(scale) => patchTransform({ scale })} />
-    <RangeField label="旋转" value={current.rotation} min={-180} max={180} step={1} suffix="°" onChange={(rotation) => patchTransform({ rotation })} />
+    <RangeField label="大小" value={referenceStage ? referenceScale : current.scale} min={0.3} max={3} step={0.05} suffix="×" onChange={(scale) => referenceStage ? patchReferenceScale(scale) : patchTransform({ scale })} />
+    {!referenceStage && <RangeField label="旋转" value={current.rotation} min={-180} max={180} step={1} suffix="°" onChange={(rotation) => patchTransform({ rotation })} />}
     <RangeField label="透明度" value={current.opacity} min={0} max={1} step={0.05} suffix="" onChange={(opacity) => patchTransform({ opacity })} />
-    <VisualKeyframeEditor clipStartUs={clip.startUs} localUs={localUs} transform={current} keyframes={clip.transformKeyframes ?? []} onSeek={onSeek} onChange={(transformKeyframes) => onPatch({ transformKeyframes })} />
+    {!referenceStage && <VisualKeyframeEditor clipStartUs={clip.startUs} localUs={localUs} transform={current} keyframes={clip.transformKeyframes ?? []} onSeek={onSeek} onChange={(transformKeyframes) => onPatch({ transformKeyframes })} />}
   </div>;
 }
 
