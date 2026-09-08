@@ -48,6 +48,7 @@ function createMemoryStorage(): Storage {
 
 describe("license service", () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
     vi.stubGlobal("localStorage", createMemoryStorage());
     vi.clearAllMocks();
     vi.mocked(isDesktopRuntime).mockReturnValue(false);
@@ -126,7 +127,7 @@ describe("license service", () => {
         licenseKey: "VIP-****-1234"
       };
       saveCachedVipStatus(sample);
-      expect(readCachedVipStatus()).toEqual(sample);
+      expect(readCachedVipStatus()).toEqual({ ...sample, cachedAt: expect.any(Number) });
 
       clearCachedVipStatus();
       expect(readCachedVipStatus()).toEqual(DEFAULT_VIP_STATUS);
@@ -172,6 +173,110 @@ describe("license service", () => {
       // Verifies it is saved to cache
       const cached = readCachedVipStatus();
       expect(cached.isVip).toBe(true);
+    });
+  });
+
+  describe("network license server", () => {
+    const SERVER_URL = "https://license.example.com";
+    const RESPONSE_KEY = "test-response-key";
+    const DEVICE_ID = "BV-A1B2C3D4-E5F60718-29384756-AABBCCDD";
+
+    function canonical(status: VipStatus, ts: number): string {
+      return [
+        "bvideo-license-v1",
+        String(ts),
+        String(status.isVip),
+        status.planName ?? "",
+        status.expireAt ?? "",
+        status.activatedAt ?? "",
+        status.licenseKey ?? ""
+      ].join("\n");
+    }
+
+    async function signEnvelope(payload: { status: VipStatus; ts: number; message?: string }, key = RESPONSE_KEY): Promise<string> {
+      const encoded = new TextEncoder().encode(canonical(payload.status, payload.ts));
+      const keyHandle = await crypto.subtle.importKey("raw", new TextEncoder().encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+      const signature = await crypto.subtle.sign("HMAC", keyHandle, encoded);
+      return Array.from(new Uint8Array(signature)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
+
+    function fakeResponse(payload: unknown, ok = true, status = 200): Response {
+      return { ok, status, json: async () => payload } as unknown as Response;
+    }
+
+    function vipStatus(overrides: Partial<VipStatus> = {}): VipStatus {
+      return { isVip: true, planName: "终身 VIP 会员", expireAt: null, activatedAt: Date.now(), licenseKey: "VIP-ABCD****QRST", ...overrides };
+    }
+
+    it("verifyVipStatus posts to the server, verifies the signature and caches the result", async () => {
+      vi.stubEnv("VITE_LICENSE_SERVER_URL", SERVER_URL);
+      vi.stubEnv("VITE_LICENSE_RESPONSE_KEY", RESPONSE_KEY);
+      const ts = Date.now();
+      const envelope = { status: vipStatus(), ts, sig: await signEnvelope({ status: vipStatus(), ts }) };
+      const fetchMock = vi.fn().mockResolvedValue(fakeResponse(envelope));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const status = await verifyVipStatus(DEVICE_ID);
+
+      expect(fetchMock).toHaveBeenCalledWith(`${SERVER_URL}/api/license/verify`, expect.objectContaining({ method: "POST" }));
+      expect(status.isVip).toBe(true);
+      expect(readCachedVipStatus().isVip).toBe(true);
+    });
+
+    it("falls back to a fresh cached status when the server is unreachable", async () => {
+      vi.stubEnv("VITE_LICENSE_SERVER_URL", SERVER_URL);
+      vi.stubEnv("VITE_LICENSE_RESPONSE_KEY", RESPONSE_KEY);
+      saveCachedVipStatus(vipStatus());
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network down")));
+
+      const status = await verifyVipStatus(DEVICE_ID);
+      expect(status.isVip).toBe(true);
+    });
+
+    it("rejects responses with tampered signatures", async () => {
+      vi.stubEnv("VITE_LICENSE_SERVER_URL", SERVER_URL);
+      vi.stubEnv("VITE_LICENSE_RESPONSE_KEY", RESPONSE_KEY);
+      saveCachedVipStatus(vipStatus());
+      const ts = Date.now();
+      const forged = { status: vipStatus(), ts, sig: "0".repeat(64) };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse(forged)));
+
+      const status = await verifyVipStatus(DEVICE_ID);
+      // 响应不可信：回退到缓存而非采纳伪造状态
+      expect(status.isVip).toBe(true);
+      expect(readCachedVipStatus().planName).toBe("终身 VIP 会员");
+    });
+
+    it("downgrades long-offline cached status outside the grace window", async () => {
+      vi.stubEnv("VITE_LICENSE_SERVER_URL", SERVER_URL);
+      vi.stubEnv("VITE_LICENSE_RESPONSE_KEY", RESPONSE_KEY);
+      const stale = { ...vipStatus(), cachedAt: Date.now() - 4 * 24 * 60 * 60 * 1000 };
+      localStorage.setItem("bvideo:vip-status", JSON.stringify(stale));
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network down")));
+
+      const status = await verifyVipStatus(DEVICE_ID);
+      expect(status.isVip).toBe(false);
+      expect(status.planName).toBe("待联网核验会员状态");
+    });
+
+    it("redeems through the server and surfaces server error messages", async () => {
+      vi.stubEnv("VITE_LICENSE_SERVER_URL", SERVER_URL);
+      vi.stubEnv("VITE_LICENSE_RESPONSE_KEY", RESPONSE_KEY);
+      const ts = Date.now();
+      const successEnvelope = { message: "卡密兑换成功", status: vipStatus(), ts, sig: await signEnvelope({ status: vipStatus(), ts }) };
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(fakeResponse({ message: "卡密不存在或已失效" }, false, 400))
+        .mockResolvedValueOnce(fakeResponse(successEnvelope));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const failed = await redeemCardKey(DEVICE_ID, "VIP-ABCD-EFGH-JKNP-QRST");
+      expect(failed.success).toBe(false);
+      expect(failed.message).toBe("卡密不存在或已失效");
+
+      const redeemed = await redeemCardKey(DEVICE_ID, "VIP-ABCD-EFGH-JKNP-QRST");
+      expect(redeemed.success).toBe(true);
+      expect(redeemed.status?.isVip).toBe(true);
+      expect(readCachedVipStatus().isVip).toBe(true);
     });
   });
 });

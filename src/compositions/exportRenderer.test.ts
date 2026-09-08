@@ -63,6 +63,10 @@ describe("React effect export timing", () => {
     expect(dynamicDurationUs({ ...overlay, compositionId: "dust-field", durationUs: 30_000_000 })).toBe(30_000_000);
   });
 
+  it("captures the complete subtitle-fitted animation window", () => {
+    expect(dynamicDurationUs({ ...overlay, compositionId: "pain-points", durationUs: 3_000_000, autoTiming: true })).toBe(3_000_000);
+  });
+
   it("captures full persistent layers and parameter-driven animation timing", () => {
     expect(dynamicDurationUs({ ...overlay, compositionId: "chapter-bar", durationUs: 30_000_000 })).toBe(30_000_000);
     expect(dynamicDurationUs({ ...overlay, compositionId: "caption-track", durationUs: 12_000_000 })).toBe(12_000_000);

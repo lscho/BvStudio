@@ -182,6 +182,29 @@ const mediaSpecs = {
   }
 } as const satisfies Readonly<Record<string, MediaEffectSpec>>;
 
+const aiRequiredSlotIds = {
+  "cam-pan": ["recording"],
+  "screen-demo": ["recording"],
+  "demo-tour": ["demo"],
+  "demo-rail": ["recordings"],
+  "ghost-video": ["reference"],
+  "doc-scroll": ["document"],
+  "phone-shot": ["phone"],
+  "proof-shot": ["proof"],
+  "proof-wall": ["proof"],
+  "photo-halo": ["photos"],
+  "cover-stack": ["covers"],
+  "cover-flow": ["covers"],
+  "clip-parade": ["media"],
+  "video-showcase": ["clips"],
+  "icon-pop": ["icon"],
+  "quote-cite": ["avatar"],
+  "chat-volley": ["avatars"],
+  "clip-flow": ["zone-icon"],
+  "cam-frame": ["presenter"],
+  "punch-zoom": ["presenter"]
+} as const satisfies Readonly<Partial<Record<keyof typeof mediaSpecs, readonly string[]>>>;
+
 export const overlayStudioMediaEffectIds = Object.keys(mediaSpecs);
 
 function mediaSpec(compositionId: string): MediaEffectSpec | undefined {
@@ -190,6 +213,13 @@ function mediaSpec(compositionId: string): MediaEffectSpec | undefined {
 
 export function overlayStudioMediaSlots(compositionId: string): readonly CompositionSlot[] {
   return mediaSpec(compositionId)?.slots ?? [];
+}
+
+/** AI may only select material-driven effects when the project can supply their essential slots. */
+export function overlayStudioAiMediaSlots(compositionId: string): readonly CompositionSlot[] {
+  const slots = overlayStudioMediaSlots(compositionId);
+  const required = new Set<string>(aiRequiredSlotIds[compositionId as keyof typeof aiRequiredSlotIds] ?? []);
+  return slots.map((mediaSlot) => required.has(mediaSlot.id) ? { ...mediaSlot, minItems: 1 } : mediaSlot);
 }
 
 export function overlayStudioMediaParamKeys(compositionId: string): readonly string[] {

@@ -791,6 +791,66 @@ export function effectParamsForText(compositionId: string, text: string): Compos
   const params = structuredClone(compositionById(compositionId).defaultParams ?? {});
   const normalized = text.replaceAll("｜", "|").trim();
   const parts = normalized.split("|").map((part) => part.trim()).filter(Boolean);
+  if (compositionId === "section-head") {
+    params.num = "";
+    params.en = "";
+    params.zh = parts[0] ?? "";
+    params.sub = parts.slice(1).join("，");
+    return params;
+  }
+  if (compositionId === "duo-title") {
+    params.en = "";
+    params.line1 = parts[0] ?? "";
+    params.line2 = parts[1] ?? "";
+    params.note = parts.slice(2).join("，");
+    return params;
+  }
+  if (compositionId === "pain-points") {
+    params.kicker = parts[0] ?? "";
+    params.pains = parts.length > 2 ? parts.slice(1, -1).join("|") : parts.slice(1).join("|");
+    params.result = parts.length > 2 ? parts.at(-1) ?? "" : "";
+    return params;
+  }
+  if (compositionId === "action-band") {
+    params.kicker = "";
+    params.title = parts[0] ?? "";
+    params.cards = parts.slice(1).join("|");
+    params.band = "";
+    params.bandCaption = "";
+    params.foot = "";
+    return params;
+  }
+  if (compositionId === "flow-chart") {
+    params.title = parts[0] ?? "";
+    params.nodes = parts.slice(1).join("|");
+    return params;
+  }
+  if (compositionId === "info-board") {
+    const title = parts[0] ?? "";
+    const points = parts.length > 2 ? parts.slice(1, -1) : parts.slice(1);
+    const conclusion = parts.length > 2 ? parts.at(-1) ?? "" : "";
+    params.rows = [
+      title ? `head|${title}||` : "",
+      ...points.map((point) => `check|${point}`),
+      conclusion ? `seal|${conclusion}|` : ""
+    ].filter(Boolean).join("\n");
+    return params;
+  }
+  if (compositionId === "compare-split") {
+    const numericValue = (value: string | undefined) => {
+      const match = /([+\-]?\d+(?:\.\d+)?)\s*(.*)/u.exec(value ?? "");
+      return { value: Number(match?.[1] ?? 0), suffix: match?.[2]?.trim() ?? "" };
+    };
+    const a = numericValue(parts[2]);
+    const b = numericValue(parts[4]);
+    params.title = parts[0] ?? "";
+    params.aLabel = parts[1] ?? "";
+    params.aValue = a.value;
+    params.bLabel = parts[3] ?? "";
+    params.bValue = b.value;
+    params.suffix = a.suffix && a.suffix === b.suffix ? a.suffix : a.suffix || b.suffix;
+    return params;
+  }
   const importedTextKey = importedOverlayStudioTextParamKeys[compositionId];
   if (importedTextKey) {
     params[importedTextKey] = normalized;
@@ -924,7 +984,14 @@ const effectTextParamKeys: Partial<Record<string, readonly string[]>> = {
   "caption-track": ["lines"],
   "entity-chips": ["chips", "note"],
   "stat-proof": ["kicker", "kickerZh", "value", "prefix", "suffix", "footEn", "footZh"],
-  "growth-curve": ["kicker", "kickerZh", "points", "caption"]
+  "growth-curve": ["kicker", "kickerZh", "points", "caption"],
+  "section-head": ["num", "en", "zh", "sub"],
+  "duo-title": ["en", "line1", "line2", "note"],
+  "pain-points": ["kicker", "pains", "result"],
+  "action-band": ["kicker", "title", "cards", "band", "bandCaption", "foot"],
+  "flow-chart": ["title", "nodes"],
+  "info-board": ["rows"],
+  "compare-split": ["title", "aLabel", "aValue", "bLabel", "bValue", "suffix"]
 };
 
 export function remapEffectTextParams(compositionId: string, text: string, current: CompositionParams): CompositionParams {

@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { aiTimedScriptSchema, createAiMotionMatchesSchema, createMotionMatchesJsonSchema } from "@/services/ai/schema";
+import { aiTimedScriptSchema, createAiEffectSelectionSchema, createAiMotionMatchesSchema, createEffectSelectionJsonSchema, createMotionMatchesJsonSchema } from "@/services/ai/schema";
 
 describe("two-stage AI schemas", () => {
+  it("selects a bounded effect palette from every allowed id", () => {
+    const allowed = ["pain-points", "screen-demo", "flow-chart"];
+    expect(createAiEffectSelectionSchema(allowed).parse({ effectIds: ["screen-demo", "pain-points"] }).effectIds).toEqual(["screen-demo", "pain-points"]);
+    expect(() => createAiEffectSelectionSchema(allowed).parse({ effectIds: ["made-up"] })).toThrow("未知动效");
+    expect(createEffectSelectionJsonSchema(allowed).properties.effectIds.items).toEqual({ type: "string", enum: allowed });
+  });
+
   it("accepts mixed showcase inputs and input-free backgrounds but rejects unknown media", () => {
     const schema = createAiMotionMatchesSchema(["motion-zoom", "background-stripes"], ["video"], ["image"]);
     const match = { captionIndex: 0, primaryEffectId: "motion-zoom", primaryText: "", secondaryEffectId: null, secondaryText: null,
@@ -20,6 +27,15 @@ describe("two-stage AI schemas", () => {
     expect(() => schema.parse({ matches: [{ ...match, compositionBindings: [] }] })).toThrow("素材槽");
     expect(() => schema.parse({ matches: [{ ...match, compositionBindings: [{ slotId: "posters", assetIds: ["a", "video"] }] }] })).toThrow("图片槽不能绑定视频");
     expect(() => schema.parse({ matches: [{ ...match, secondaryEffectId: "poster-wall-3d" }] })).toThrow("主动效");
+  });
+  it("validates required React composition slots by material kind", () => {
+    const schema = createAiMotionMatchesSchema(["screen-demo", "ghost-video"], ["screen-video"], ["reference-image"]);
+    const match = { captionIndex: 0, primaryEffectId: "screen-demo", primaryText: "关键操作", secondaryEffectId: null, secondaryText: null,
+      accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 50, secondaryY: 50, cameraPreset: "none", chart: null,
+      compositionBindings: [{ slotId: "recording", assetIds: ["screen-video"] }] };
+    expect(schema.parse({ matches: [match] }).matches[0].compositionBindings).toEqual(match.compositionBindings);
+    expect(() => schema.parse({ matches: [{ ...match, compositionBindings: [{ slotId: "recording", assetIds: ["reference-image"] }] }] })).toThrow("图片槽不能绑定视频");
+    expect(schema.parse({ matches: [{ ...match, primaryEffectId: "ghost-video", compositionBindings: [{ slotId: "reference", assetIds: ["reference-image"] }] }] }).matches[0].primaryEffectId).toBe("ghost-video");
   });
   it("accepts an article with timed captions before motion matching", () => {
     const value = { title: "设计系统介绍", article: "文章正文", narration: "口播正文", captions: [{ startSeconds: 0, endSeconds: 3, text: "统一团队语言。" }] };

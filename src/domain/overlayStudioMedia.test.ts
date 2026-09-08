@@ -6,6 +6,7 @@ import { createEmptyProject } from "@/domain/project";
 import {
   overlayStudioMediaControlMode,
   overlayStudioMediaEffectIds,
+  overlayStudioAiMediaSlots,
   overlayStudioMediaParamKeys,
   overlayStudioMediaSlots,
   resolveOverlayStudioMediaParams,
@@ -32,6 +33,16 @@ describe("Overlay Studio material bindings", () => {
   it("audits every replicated effect that reads external image or video material", () => {
     expect([...overlayStudioMediaEffectIds].sort()).toEqual(expectedMediaEffects);
     for (const compositionId of expectedMediaEffects) expect(overlayStudioMediaSlots(compositionId).length, compositionId).toBeGreaterThan(0);
+  });
+
+  it("requires essential project material for AI without changing manual placeholder slots", () => {
+    expect(overlayStudioMediaSlots("screen-demo").find((slot) => slot.id === "recording")?.minItems).toBe(0);
+    expect(overlayStudioAiMediaSlots("screen-demo")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "recording", kind: "video", minItems: 1 }),
+      expect.objectContaining({ id: "presenter", minItems: 0 })
+    ]));
+    expect(overlayStudioAiMediaSlots("ghost-video")[0]).toMatchObject({ id: "reference", kind: "visual", minItems: 1 });
+    expect(overlayStudioAiMediaSlots("info-board")[0]).toMatchObject({ id: "media", minItems: 0 });
   });
 
   it("owns every direct path parameter so the inspector can hide it", () => {

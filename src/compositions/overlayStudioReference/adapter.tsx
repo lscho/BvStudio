@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type RefObject } from "react";
 import type { CompositionRenderProps } from "@/compositions/registry";
+import { isBackgroundComposition } from "@/domain/compositions";
 import { EFFECTS } from "@/compositions/overlayStudioReference/effects/registry";
 import type { EffectProps } from "@/compositions/overlayStudioReference/effects/types";
 import { FxTimelineMsContext } from "@/compositions/overlayStudioReference/effects/useAnimation";
@@ -85,6 +86,7 @@ export function ReplicatedOverlayStudioCard(props: CompositionRenderProps) {
 
   const canvasHeight = props.canvasHeight ?? Math.round(props.canvasWidth * 9 / 16);
   const ratio: StageRatio = canvasHeight > props.canvasWidth ? "v" : "h";
+  const compositionLayer = isBackgroundComposition(props.compositionId) ? "background" : "foreground";
   const params: RuntimeParams = {
     ...runtimeDefaults(definition.defaults),
     ...props.params,
@@ -102,6 +104,9 @@ export function ReplicatedOverlayStudioCard(props: CompositionRenderProps) {
     height: `${canvasHeight}px`,
     transform: `scale(${scale})`,
     transformOrigin: "left top",
+    background: "transparent",
+    border: 0,
+    boxShadow: "none",
     color: props.color,
     "--stage-w": `${props.canvasWidth}px`,
     "--stage-h": `${canvasHeight}px`,
@@ -109,7 +114,7 @@ export function ReplicatedOverlayStudioCard(props: CompositionRenderProps) {
     "--hud-ink-doc": props.color
   } as CSSProperties;
 
-  return <div ref={frameRef} className="overlay-studio-reference" style={{ position: "relative", width: "100%", height: "100%" }}>
+  return <div ref={frameRef} className="overlay-studio-reference" data-composition-layer={compositionLayer} style={{ position: "relative", width: "100%", height: "100%", background: "transparent", border: 0, boxShadow: "none" }}>
     <StageRatioContext.Provider value={ratio}>
       <StageSizeContext.Provider value={{ w: props.canvasWidth, h: canvasHeight }}>
         <FxTimelineMsContext.Provider value={displayTimeUs / 1_000}>

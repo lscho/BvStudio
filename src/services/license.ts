@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { z } from "zod";
 import { isDesktopRuntime } from "@/services/runtime";
 
 export interface VipStatus {
@@ -7,6 +8,8 @@ export interface VipStatus {
   expireAt: number | null;
   activatedAt: number | null;
   licenseKey?: string | null;
+  /** 本地缓存写入时间，用于离线宽限期判定；非服务端契约字段 */
+  cachedAt?: number | null;
 }
 
 export interface RedeemResult {
@@ -140,7 +143,8 @@ export function readCachedVipStatus(): VipStatus {
             planName: parsed.planName || (parsed.isVip ? "VIP 会员" : "普通用户"),
             expireAt: typeof parsed.expireAt === "number" ? parsed.expireAt : null,
             activatedAt: typeof parsed.activatedAt === "number" ? parsed.activatedAt : null,
-            licenseKey: parsed.licenseKey || null
+            licenseKey: parsed.licenseKey || null,
+            cachedAt: typeof parsed.cachedAt === "number" ? parsed.cachedAt : null
           };
         }
       }
@@ -157,7 +161,7 @@ export function readCachedVipStatus(): VipStatus {
 export function saveCachedVipStatus(status: VipStatus): void {
   try {
     if (typeof localStorage !== "undefined") {
-      localStorage.setItem(VIP_STATUS_STORAGE_KEY, JSON.stringify(status));
+      localStorage.setItem(VIP_STATUS_STORAGE_KEY, JSON.stringify({ ...status, cachedAt: Date.now() }));
     }
   } catch {
     // 忽略异常
@@ -177,36 +181,133 @@ export function clearCachedVipStatus(): void {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* 授权服务网络验证（ESA 边缘函数后端）                                  */
+/* ------------------------------------------------------------------ */
+
 /**
- * 联网识别当前设备是否具备 VIP 权限。
- * 每次打开应用时调用。
- *
- * 【接口待接入说明】：
- * 未来在此发起真实网络请求（例如 POST ${LICENSE_SERVER_URL}/api/license/verify），
- * 请求体传入 { deviceId }，服务端校验并返回绑定的最新会员状态及有效期。
- * 当前接口留空：读取并校验本地授权缓存，以供离线与预留联调使用。
+ * 授权服务地址与验签密钥通过构建期环境变量注入：
+ * - VITE_LICENSE_SERVER_URL：ESA 边缘函数绑定的 API 域名（如 https://license.example.com）
+ * - VITE_LICENSE_RESPONSE_KEY：响应 HMAC 密钥，须与 edge/config.js 的 HMAC_SECRET 一致
+ * 两者均未配置时保持纯本地缓存模式（开发预览用），发布构建必须配置。
  */
-export async function verifyVipStatus(deviceId: string): Promise<VipStatus> {
-  if (!deviceId) return { ...DEFAULT_VIP_STATUS };
+function licenseServerConfig(): { baseUrl: string; responseKey: string } | null {
+  const baseUrl = String(import.meta.env.VITE_LICENSE_SERVER_URL ?? "").trim().replace(/\/+$/, "");
+  const responseKey = String(import.meta.env.VITE_LICENSE_RESPONSE_KEY ?? "").trim();
+  return baseUrl && responseKey ? { baseUrl, responseKey } : null;
+}
 
-  // TODO: 【服务端接口待接入】
-  // 示例契约实现：
-  // const response = await fetch("https://api.yourdomain.com/api/license/verify", {
-  //   method: "POST",
-  //   headers: { "Content-Type": "application/json" },
-  //   body: JSON.stringify({ deviceId })
-  // });
-  // if (!response.ok) {
-  //   throw new Error("联网校验会员状态失败");
-  // }
-  // const data = (await response.json()) as { status: VipStatus };
-  // saveCachedVipStatus(data.status);
-  // return data.status;
+/** 离线宽限期：联网核验失败时，宽限期内的缓存会员状态仍然生效。 */
+const OFFLINE_GRACE_MS = 3 * 24 * 60 * 60 * 1000;
 
-  // 接口留空阶段：读取本地缓存并核验有效性
+/** 与 edge/license-core.mjs 的 canonicalLicenseString 保持一致，调整需两侧同步。 */
+const LICENSE_SIGNATURE_CONTEXT = "bvideo-license-v1";
+const LICENSE_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
+
+const vipStatusSchema = z.object({
+  isVip: z.boolean(),
+  planName: z.string(),
+  expireAt: z.number().nullable(),
+  activatedAt: z.number().nullable(),
+  licenseKey: z.string().nullable().optional()
+});
+
+const licenseEnvelopeSchema = z.object({
+  status: vipStatusSchema,
+  ts: z.number(),
+  sig: z.string().regex(/^[0-9a-f]{64}$/)
+});
+
+const redeemEnvelopeSchema = licenseEnvelopeSchema.extend({ message: z.string() });
+
+function canonicalLicenseString(status: VipStatus, ts: number): string {
+  return [
+    LICENSE_SIGNATURE_CONTEXT,
+    String(ts),
+    String(status.isVip),
+    status.planName ?? "",
+    status.expireAt ?? "",
+    status.activatedAt ?? "",
+    status.licenseKey ?? ""
+  ].join("\n");
+}
+
+async function hmacSha256Hex(secret: string, text: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(signature))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** 验签失败视为响应不可信，由调用方降级处理。 */
+async function verifyStatusEnvelope(responseKey: string, envelope: LicenseEnvelope): Promise<boolean> {
+  if (Math.abs(Date.now() - envelope.ts) > LICENSE_SIGNATURE_MAX_AGE_MS) return false;
+  const expected = await hmacSha256Hex(responseKey, canonicalLicenseString(envelope.status, envelope.ts));
+  return envelope.sig === expected;
+}
+
+class LicenseApiError extends Error {
+  constructor(message: string, readonly statusCode: number) {
+    super(message);
+    this.name = "LicenseApiError";
+  }
+}
+
+type LicenseEnvelope = z.infer<typeof licenseEnvelopeSchema>;
+
+async function postLicenseApi<T extends z.ZodType<LicenseEnvelope>>(
+  config: { baseUrl: string; responseKey: string },
+  path: string,
+  body: Record<string, unknown>,
+  schema: T
+): Promise<z.infer<T>> {
+  let response: Response;
+  try {
+    response = await fetch(`${config.baseUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  } catch {
+    throw new LicenseApiError("网络异常，无法连接授权服务，请检查网络后重试", 0);
+  }
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new LicenseApiError(
+      typeof payload?.message === "string" && payload.message ? payload.message : "授权服务请求失败，请稍后重试",
+      response.status
+    );
+  }
+
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) {
+    throw new LicenseApiError("授权服务响应格式异常，请稍后重试", response.status);
+  }
+  if (!(await verifyStatusEnvelope(config.responseKey, parsed.data))) {
+    throw new LicenseApiError("授权服务响应校验失败，请稍后重试", response.status);
+  }
+  return parsed.data;
+}
+
+function toVipStatus(parsed: z.infer<typeof vipStatusSchema>): VipStatus {
+  return {
+    isVip: parsed.isVip,
+    planName: parsed.planName,
+    expireAt: parsed.expireAt,
+    activatedAt: parsed.activatedAt,
+    licenseKey: parsed.licenseKey ?? null
+  };
+}
+
+/**
+ * 离线降级：到期立即失效；配置了授权服务时额外施加宽限期，
+ * 长时间无法联网核验则保守降级（不写缓存，恢复联网后自动还原）。
+ */
+function offlineVipStatus(enforceGrace: boolean): VipStatus {
   const cached = readCachedVipStatus();
   if (cached.isVip && !isVipActive(cached)) {
-    // 已过期
     const expiredStatus: VipStatus = {
       ...cached,
       isVip: false,
@@ -215,17 +316,42 @@ export async function verifyVipStatus(deviceId: string): Promise<VipStatus> {
     saveCachedVipStatus(expiredStatus);
     return expiredStatus;
   }
-
+  if (enforceGrace && cached.isVip) {
+    const withinGrace = typeof cached.cachedAt === "number" && Date.now() - cached.cachedAt <= OFFLINE_GRACE_MS;
+    if (!withinGrace) {
+      return { ...cached, isVip: false, planName: "待联网核验会员状态" };
+    }
+  }
   return cached;
 }
 
 /**
+ * 联网识别当前设备是否具备 VIP 权限。
+ * 每次打开应用时调用。配置了授权服务时优先联网核验（成功结果写入本地缓存）；
+ * 联网失败或未配置授权服务时，回退到本地缓存并执行到期与宽限期判定。
+ */
+export async function verifyVipStatus(deviceId: string): Promise<VipStatus> {
+  if (!deviceId) return { ...DEFAULT_VIP_STATUS };
+
+  const config = licenseServerConfig();
+  if (config) {
+    try {
+      const envelope = await postLicenseApi(config, "/api/license/verify", { deviceId }, licenseEnvelopeSchema);
+      const status = toVipStatus(envelope.status);
+      saveCachedVipStatus(status);
+      return status;
+    } catch (error) {
+      console.warn("授权服务联网核验失败，回退至本地缓存状态:", error);
+    }
+  }
+
+  return offlineVipStatus(config !== null);
+}
+
+/**
  * 请求服务端将当前硬件唯一编码与卡密进行绑定并激活 VIP。
- *
- * 【接口待接入说明】：
- * 未来在此发起真实网络请求（例如 POST ${LICENSE_SERVER_URL}/api/license/redeem），
- * 请求体传入 { deviceId, cardKey }，服务端校验卡密合法性并绑定当前硬件。
- * 当前接口留空：提供前置格式校验与本地预置联调模拟，支持开发者与用户在无后端时预览会员状态切换。
+ * 配置了授权服务时发起真实网络兑换（请求体 { deviceId, cardKey }）；
+ * 未配置时使用本地模拟激活，仅供开发预览。一张卡密仅可绑定一台设备，重复兑换返回当前绑定状态。
  */
 export async function redeemCardKey(deviceId: string, cardKey: string): Promise<RedeemResult> {
   const trimmedKey = cardKey.trim();
@@ -248,22 +374,22 @@ export async function redeemCardKey(deviceId: string, cardKey: string): Promise<
     };
   }
 
-  // TODO: 【服务端接口待接入】
-  // 示例契约实现：
-  // const response = await fetch("https://api.yourdomain.com/api/license/redeem", {
-  //   method: "POST",
-  //   headers: { "Content-Type": "application/json" },
-  //   body: JSON.stringify({ deviceId, cardKey: trimmedKey })
-  // });
-  // if (!response.ok) {
-  //   const errData = await response.json().catch(() => ({ message: "兑换失败，请检查卡密有效性" }));
-  //   return { success: false, message: errData.message || "卡密兑换失败" };
-  // }
-  // const result = (await response.json()) as { message: string; status: VipStatus };
-  // saveCachedVipStatus(result.status);
-  // return { success: true, message: result.message || "兑换成功", status: result.status };
+  const config = licenseServerConfig();
+  if (config) {
+    try {
+      const envelope = await postLicenseApi(config, "/api/license/redeem", { deviceId, cardKey: trimmedKey }, redeemEnvelopeSchema);
+      const status = toVipStatus(envelope.status);
+      saveCachedVipStatus(status);
+      return { success: true, message: envelope.message || "卡密兑换成功", status };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof LicenseApiError ? error.message : "卡密兑换失败，请稍后重试"
+      };
+    }
+  }
 
-  // 接口留空阶段的本地联调与激活机制：
+  // 未配置授权服务时的本地联调与激活机制（仅开发预览使用，发布构建必须配置 VITE_LICENSE_SERVER_URL）：
   // 模拟成功激活（永久专业会员），保存本地缓存并返回状态
   const newStatus: VipStatus = {
     isVip: true,

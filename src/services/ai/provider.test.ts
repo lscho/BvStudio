@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captionNumericData, compactMotionText, extractTokenUsage, generateSubtitleChapters, generateTimedScript, generateVideoPlan, listProviderModels, matchTimelineMotion, normalizeMotionChart, normalizeMotionMatches, normalizeTimedScript, providerEndpoint, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
-import { OVERLAY_STUDIO_EFFECT_IDS } from "@/domain/effects";
+import { captionNumericData, compactMotionText, extractTokenUsage, generateSubtitleChapters, generateTimedScript, generateVideoPlan, listProviderModels, matchTimelineMotion, normalizeMotionChart, normalizeMotionMatches, normalizeTimedScript, providerEndpoint, selectMotionCandidates, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
+import { allCompositions } from "@/domain/effects";
 
 const pricing = { inputCostPerMillion: 2.5, outputCostPerMillion: 10 };
 const config: AiProviderConfig = {
@@ -167,19 +167,81 @@ describe("provider requests", () => {
       { captionIndex: 0, primaryEffectId: "stat-proof", primaryText: "市场份额增长达到42%。", secondaryEffectId: null, secondaryText: null, accentColor: "#47d7ac", x: 50, y: 30, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "push-in", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null },
       { captionIndex: 1, primaryEffectId: "quote-lockup", primaryText: "最后给出明确结论。", secondaryEffectId: null, secondaryText: null, accentColor: "#5fa8ff", x: 50, y: 35, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "pull-out", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null }
     ];
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ matches }) } }], usage: { prompt_tokens: 12, completion_tokens: 18, total_tokens: 30 } }), { status: 200 }));
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ effectIds: ["stat-proof", "quote-lockup"] }) } }], usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ matches }) } }], usage: { prompt_tokens: 12, completion_tokens: 18, total_tokens: 30 } }), { status: 200 }));
     const result = await matchTimelineMotion(config, {
       topic: "充电桩", style: "专业", timelineDurationSeconds: 10, materials: [],
       captions: [{ startSeconds: 0, endSeconds: 2, text: "市场份额增长达到42%。" }, { startSeconds: 8.5, endSeconds: 10, text: "最后给出明确结论。" }]
     }, "secret");
     expect(result.matches?.map((match) => match.primaryText)).toEqual(["份额增长达到42%", "明确结论"]);
+    const selectionPayload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    const timelinePayload = JSON.parse(String(fetchMock.mock.calls[2][1]?.body));
+    expect(selectionPayload.messages.at(-1)?.content).toContain('"stage":"opening"');
+    expect(selectionPayload.messages.at(-1)?.content).toContain('"stage":"ending"');
+    for (const effect of allCompositions().filter((candidate) => !["chapter-bar", "caption-track", "focus-card"].includes(candidate.id))) {
+      expect(selectionPayload.messages[0]?.content).toContain(`"id":"${effect.id}"`);
+    }
+    expect(selectionPayload.messages[0]?.content).toContain('"purposeGroup":"证据实证"');
+    expect(timelinePayload.messages[0]?.content).toContain('"id":"stat-proof"');
+    expect(timelinePayload.messages[0]?.content).toContain('"category":"数据"');
+    expect(timelinePayload.messages[0]?.content).toContain('"purposeGroup":"数据"');
+    expect(timelinePayload.messages[0]?.content).not.toContain("连续观点用 pin-board");
+    for (const id of ["chapter-bar", "caption-track", "focus-card"]) expect(selectionPayload.messages[0]?.content).not.toContain(`"id":"${id}"`);
+  });
+
+  it("offers every automatic motion effect to the selection stage", () => {
+    const candidates = selectMotionCandidates({
+      topic: "AI 口播视频制作的痛点与解决方案",
+      style: "专业",
+      article: "先说明重复剪辑、素材整理和交付慢三类痛点，再给出自动化处理流程。",
+      timelineDurationSeconds: 12,
+      materials: [],
+      captions: [
+        { startSeconds: 0, endSeconds: 4, text: "口播制作有重复剪辑和素材整理两大痛点。" },
+        { startSeconds: 4, endSeconds: 8, text: "这些问题会拖慢交付。" },
+        { startSeconds: 8, endSeconds: 12, text: "解决方案是按三个步骤自动完成。" }
+      ]
+    });
+    const expected = allCompositions().filter((candidate) => !["chapter-bar", "caption-track", "focus-card"].includes(candidate.id));
+    expect(candidates.map((candidate) => candidate.id)).toEqual(expected.map((candidate) => candidate.id));
+  });
+
+  it("keeps material-driven effects visible in selection before material assignment", () => {
+    const input = {
+      topic: "软件录屏演示",
+      style: "清晰",
+      timelineDurationSeconds: 8,
+      captions: [{ startSeconds: 0, endSeconds: 8, text: "展示软件操作流程并推近关键按钮。" }]
+    };
+    expect(selectMotionCandidates({ ...input, materials: [] }).map((candidate) => candidate.id)).toContain("screen-demo");
+    expect(selectMotionCandidates({
+      ...input,
+      materials: [{ id: "screen", name: "产品录屏.mp4", kind: "video", durationSeconds: 8, roleHint: "screen" }]
+    }).map((candidate) => candidate.id)).toContain("screen-demo");
+  });
+
+  it("sends required Overlay Studio slots and keeps returned React bindings", async () => {
+    const matches = [{
+      captionIndex: 0, subtitleKeywords: ["录屏演示"], motionGroupId: null, persistUntilCaptionIndex: null,
+      primaryEffectId: "screen-demo", primaryText: "关键操作", compositionBindings: [{ slotId: "recording", assetIds: ["screen"] }],
+      secondaryEffectId: null, secondaryText: null, accentColor: "#47d7ac", x: 50, y: 50, scale: 1,
+      secondaryX: 75, secondaryY: 60, cameraPreset: "none", soundEffectId: null, videoLayers: [], backdropPreset: "none", chart: null
+    }];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ effectIds: ["screen-demo"] }) } }], usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ matches }) } }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await matchTimelineMotion(config, {
+      topic: "软件录屏演示", style: "专业", timelineDurationSeconds: 6,
+      materials: [{ id: "screen", name: "screen.mp4", kind: "video", durationSeconds: 6, roleHint: "screen" }],
+      captions: [{ startSeconds: 0, endSeconds: 6, text: "用录屏演示关键操作。" }]
+    }, "secret");
+    expect(result.matches[0]).toMatchObject({ primaryEffectId: "screen-demo", compositionBindings: matches[0].compositionBindings });
+    expect(result.usage.totalTokens).toBe(30);
     const payload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
-    expect(payload.messages.at(-1)?.content).toContain('"stage":"opening"');
-    expect(payload.messages.at(-1)?.content).toContain('"stage":"ending"');
-    expect(payload.messages[0]?.content).not.toContain('"id":"knowledge-concept-map"');
-    expect(payload.messages[0]?.content).not.toContain('"id":"test-title-slide"');
-    for (const id of OVERLAY_STUDIO_EFFECT_IDS.filter((candidate) => !["chapter-bar", "caption-track", "focus-card"].includes(candidate))) expect(payload.messages[0]?.content).toContain(`"id":"${id}"`);
-    for (const id of ["chapter-bar", "caption-track", "focus-card"]) expect(payload.messages[0]?.content).not.toContain(`"id":"${id}"`);
+    expect(payload.messages[0]?.content).toContain('"id":"screen-demo"');
+    expect(payload.messages[0]?.content).toContain('"id":"recording","label":"演示录屏","kind":"video","minItems":1');
   });
 
   it("keeps useful divergent motion copy while shortening full-caption repetition", () => {
@@ -221,6 +283,17 @@ describe("provider requests", () => {
     expect(match.primaryText).toBe("竞争进入综合能力赛");
   });
 
+  it("keeps an ungrouped middle title effect instead of downgrading it", () => {
+    const [match] = normalizeMotionMatches([{
+      captionIndex: 0, primaryEffectId: "duo-title", primaryText: "效率提升｜交付更快｜核心方案",
+      secondaryEffectId: null, secondaryText: null, accentColor: "#5fa8ff", x: 50, y: 35, scale: 1,
+      secondaryX: 75, secondaryY: 60, cameraPreset: "none", videoLayers: [], backdropPreset: "none",
+      primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null,
+      secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null
+    }], [{ startSeconds: 5, endSeconds: 8, text: "核心方案让效率提升，交付更快。" }], 12);
+    expect(match.primaryEffectId).toBe("duo-title");
+  });
+
   it("merges fragmented generated captions before fitting them to the target duration", () => {
     const script = normalizeTimedScript({
       title: "市场分析",
@@ -236,7 +309,7 @@ describe("provider requests", () => {
     ]);
   });
 
-  it("downgrades middle titles and removes consecutive or duplicate motion layers", () => {
+  it("removes consecutive or duplicate motion layers", () => {
     const base = {
       captionIndex: 0, primaryEffectId: "type-shift", primaryText: "开场主题", secondaryEffectId: "type-shift", secondaryText: "开场主题",
       accentColor: "#5fa8ff", x: 50, y: 28, scale: 1, secondaryX: 75, secondaryY: 60,
@@ -292,7 +365,7 @@ describe("provider requests", () => {
     expect(matches.map((match) => match.primaryEffectId)).toEqual(["scene-dark-grid", null]);
   });
 
-  it.each(["pin-board", "step-timeline", "checklist"] as const)(
+  it.each(["pin-board", "step-timeline", "checklist", "pain-points", "action-band", "flow-chart"] as const)(
     "collapses cumulative %s states into the first scene layer with the fullest text",
     (compositionId) => {
       const captions = [
@@ -618,6 +691,7 @@ describe("provider requests", () => {
     const match = { captionIndex: 0, primaryEffectId: "type-shift", primaryText: "口播", secondaryEffectId: null, secondaryText: null, accentColor: "#ffb84d", x: 50, y: 28, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "push-in", primaryMediaAssetId: "local-video", primaryMediaSourceInSeconds: 2, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(script) } }], usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ effectIds: ["type-shift"] }) } }], usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 } }), { status: 200, headers: { "content-type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ matches: [match] }) } }], usage: { prompt_tokens: 15, completion_tokens: 25, total_tokens: 40 } }), { status: 200, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -626,14 +700,14 @@ describe("provider requests", () => {
       durationSeconds: 3,
       style: "简洁",
       materials: [{ id: "local-video", name: "office.mp4", durationSeconds: 12, width: 1920, height: 1080, roleHint: "a-roll", transcriptExcerpt: "这是主讲人的口播内容" }]
-    }, "secret")).resolves.toMatchObject({ plan: { title: "开篇", captions: [{ text: "口播" }], matches: [expect.objectContaining({ primaryEffectId: "type-shift", primaryMediaAssetId: "local-video" })] }, usage: { totalTokens: 70 } });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const motionPayload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    }, "secret")).resolves.toMatchObject({ plan: { title: "开篇", captions: [{ text: "口播" }], matches: [expect.objectContaining({ primaryEffectId: "type-shift", primaryMediaAssetId: "local-video" })] }, usage: { totalTokens: 80 } });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const motionPayload = JSON.parse(String(fetchMock.mock.calls[2][1]?.body));
     expect(motionPayload.messages[0].content).toContain('"roleHint":"a-roll"');
     expect(motionPayload.messages[0].content).toContain('"transcriptExcerpt":"这是主讲人的口播内容"');
     expect(motionPayload.messages[0].content).toContain("不要按每条字幕机械切换动效");
     const scriptPayload = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    const matchPayload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    const matchPayload = JSON.parse(String(fetchMock.mock.calls[2][1]?.body));
     expect(JSON.stringify(matchPayload)).toContain("office.mp4");
     expect(matchPayload.messages.at(-1)?.content).toContain('"captionIndex":0');
     expect(JSON.stringify(matchPayload)).not.toContain("/Users/");
@@ -644,7 +718,7 @@ describe("provider requests", () => {
     const script = { title: "开篇", article: "文章", narration: "口播", captions: [{ startSeconds: 0, endSeconds: 3, text: "口播" }] };
     const match = { captionIndex: 0, primaryEffectId: null, primaryText: "", secondaryEffectId: null, secondaryText: null, accentColor: "#5fa8ff", x: 50, y: 30, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "none", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", chart: null };
     const response = (data: unknown) => new Response(JSON.stringify({ output: [{ content: [{ type: "output_text", text: JSON.stringify(data) }] }], usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 } }), { status: 200, headers: { "content-type": "application/json" } });
-    const fetchMock = vi.fn().mockResolvedValueOnce(response(script)).mockResolvedValueOnce(response({ matches: [match] }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(script)).mockResolvedValueOnce(response({ effectIds: ["type-shift"] })).mockResolvedValueOnce(response({ matches: [match] }));
     vi.stubGlobal("fetch", fetchMock);
 
     await generateVideoPlan({ ...config, protocol: "openai-responses" }, {
@@ -654,9 +728,10 @@ describe("provider requests", () => {
       materials: []
     }, "secret");
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).not.toHaveProperty("max_output_tokens");
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).not.toHaveProperty("max_output_tokens");
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).not.toHaveProperty("max_output_tokens");
   });
 
   it("probes with a small real request", async () => {

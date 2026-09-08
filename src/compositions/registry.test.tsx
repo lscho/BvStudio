@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { allCompositions, OVERLAY_STUDIO_EFFECT_IDS } from "@/domain/effects";
-import { activeReactEffectDefinitions, CompositionContent, effectControlsFor, reactEffectDefinition, reactEffectMotionDurationUs } from "@/compositions/registry";
+import { activeReactEffectDefinitions, CompositionContent, effectCardChromeStyle, effectControlsFor, reactEffectDefinition, reactEffectMotionDurationUs } from "@/compositions/registry";
 import type { CompositionClip } from "@/domain/project";
 
 describe("React effect registry", () => {
@@ -62,6 +62,32 @@ describe("React effect registry", () => {
       expect(first.length, id).toBeGreaterThan(20);
       expect(renderToStaticMarkup(<CompositionContent {...props} />), id).toBe(first);
     }
+  });
+
+  it("keeps replicated foreground stages transparent while identifying backgrounds", () => {
+    const render = (compositionId: string) => {
+      const definition = reactEffectDefinition(compositionId).definition;
+      return renderToStaticMarkup(<CompositionContent
+        compositionId={compositionId} text={definition.defaultText} color={definition.defaultColor} accentColor={definition.defaultAccentColor}
+        fontSize={48} recipe={definition.recipe} params={definition.defaultParams} timeUs={0}
+        durationUs={definition.defaultDurationUs} canvasWidth={1920} canvasHeight={1080}
+      />);
+    };
+
+    expect(render("pain-points")).toContain('data-composition-layer="foreground"');
+    expect(render("pain-points")).toContain("background:transparent");
+    expect(render("frost-screen")).toContain('data-composition-layer="background"');
+
+    const definition = reactEffectDefinition("pain-points").definition;
+    expect(effectCardChromeStyle({
+      color: definition.defaultColor,
+      accentColor: definition.defaultAccentColor,
+      backdrop: { enabled: true, color: "#111316", opacity: 0.8, blur: 12, paddingX: 20, paddingY: 12, radius: 6 }
+    }, definition.recipe, (value) => `${value}px`, undefined, true, true)).toMatchObject({
+      background: "transparent",
+      borderWidth: 0,
+      boxShadow: "none"
+    });
   });
 
   it("renders timeline-aware persistent effects deterministically", () => {

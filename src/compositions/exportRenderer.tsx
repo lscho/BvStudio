@@ -9,6 +9,7 @@ import { prepareReferenceVideoFrames } from "@/compositions/overlayStudioReferen
 import type { RenderPlan, RenderTextOverlay } from "@/services/media";
 import { streamCompositionFrames, type CompositionExportOptions } from "@/compositions/frameExport";
 import { resolveOverlayStudioMediaParams } from "@/domain/overlayStudioMedia";
+import { supportsOverlayStudioAutoTiming } from "@/domain/overlayStudioMotion";
 import { localMediaUrl } from "@/services/media";
 
 const neutralRecipe = {
@@ -63,6 +64,7 @@ export function inlineReactOverlaySvgStyles(host: HTMLElement) {
 }
 
 export function dynamicDurationUs(overlay: RenderTextOverlay) {
+  if (overlay.autoTiming && overlay.compositionId && supportsOverlayStudioAutoTiming(overlay.compositionId)) return overlay.durationUs;
   if (overlay.compositionId === "chapter-bar" || overlay.compositionId === "caption-track" || overlay.compositionId === "terminal-3d" || (overlay.compositionId && isBackgroundComposition(overlay.compositionId))) return overlay.durationUs;
   const recipe = clockControlledRecipe(overlay.recipe);
   const entranceUs = (recipe.animation?.durationSeconds ?? 0) * 1_000_000 / Math.max(0.1, overlay.speed);
@@ -113,12 +115,12 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
           left: `${transform.x}%`,
           top: `${transform.y}%`,
           fontSize: `${overlay.fontSize}px`,
-          ...effectCardChromeStyle({ color: overlay.color, accentColor: overlay.accentColor, backdrop: overlay.backdrop, fontSize: overlay.fontSize }, recipe, length, overlay.motionTheme, usesComponentChrome(overlay.compositionId ?? "")),
+          ...effectCardChromeStyle({ color: overlay.color, accentColor: overlay.accentColor, backdrop: overlay.backdrop, fontSize: overlay.fontSize }, recipe, length, overlay.motionTheme, usesComponentChrome(overlay.compositionId ?? ""), usesFullCanvasComposition(overlay.compositionId ?? "")),
           opacity: transform.opacity * (overlay.dimAtUs !== undefined && localUs >= overlay.dimAtUs ? 0.35 : 1),
           transform: `translate(-50%, -50%) translate(${animation.translateX}%, ${animation.translateY}%) scale(${transform.scale * animation.scale}) rotate(${transform.rotation + animation.rotation}deg)`
         }}
       >
-        <CompositionContent compositionId={overlay.compositionId ?? "quote-lockup"} text={overlay.text} color={overlay.color} accentColor={overlay.accentColor} fontSize={overlay.fontSize} recipe={recipe} params={resolvedParams} timeUs={animationLocalUs * overlay.speed} durationUs={overlay.animationDurationUs ?? overlay.durationUs} canvasWidth={plan.width} canvasHeight={plan.height} />
+        <CompositionContent compositionId={overlay.compositionId ?? "quote-lockup"} text={overlay.text} color={overlay.color} accentColor={overlay.accentColor} fontSize={overlay.fontSize} recipe={recipe} params={resolvedParams} timeUs={animationLocalUs * overlay.speed} durationUs={overlay.animationDurationUs ?? overlay.durationUs} autoTiming={overlay.autoTiming} canvasWidth={plan.width} canvasHeight={plan.height} />
       </div>
     ));
     await nextPaint();

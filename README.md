@@ -88,6 +88,8 @@ npm run tauri -- build --config "$RUNNER_TEMP/tauri-base-release/tauri.release.c
 | --- | --- | --- |
 | `VITE_ENABLE_UPDATER` | `.env`（示例见 `.env.example` / `.env.production.example`） | `"true"` 才允许客户端发起更新检查；浏览器预览与默认构建保持关闭 |
 | `TAURI_UPDATER_ENDPOINT` | GitHub 仓库变量（可选） | 含 `{{target}}` 占位符的公共 HTTPS 端点模板；未配置时发布构建不启用客户端更新检查 |
+| `VITE_LICENSE_SERVER_URL` | 发布构建环境变量（可选） | ESA 边缘函数授权服务域名；未配置时会员状态仅使用本地缓存（开发预览模式） |
+| `VITE_LICENSE_RESPONSE_KEY` | 发布构建环境变量（可选） | 授权响应 HMAC 验签密钥，与 `edge/config.js` 的 `HMAC_SECRET` 一致 |
 
 ## GitHub 变量 / Secrets
 
@@ -125,3 +127,7 @@ npm run tauri -- build --config "$RUNNER_TEMP/tauri-base-release/tauri.release.c
 ## 更新服务协议
 
 客户端与外部更新服务的精确契约见 [`docs/updater-api.md`](docs/updater-api.md)：`GET /api/desktop-updates/latest?platform={{target}}`，`204` 是无更新的正常结果。本仓库不实现该服务。
+
+## 会员授权
+
+客户端"设置 → 会员与授权"通过卡密兑换升级 Pro：一张卡密绑定一台设备（按硬件码），兑换、核验、吊销与离线宽限期规则见 [`docs/license-api.md`](docs/license-api.md)。服务端由阿里云 ESA 边缘函数 + EdgeKV 实现，源码在 `edge/`，卡密通过 `scripts/generate-license-cards.mjs` 批量生成。

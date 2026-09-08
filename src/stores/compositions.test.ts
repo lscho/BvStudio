@@ -208,6 +208,22 @@ describe("material compositions", () => {
     useEditorStore.getState().undo();
     expect(clips()).toEqual([]);
   });
+  it("materializes AI bindings for a React recording effect", () => {
+    const project = createEmptyProject();
+    const recording: MediaAsset = { id: "screen", name: "screen.mp4", kind: "video", durationUs: 8_000_000, sourcePath: "/screen.mp4" };
+    project.assets = [recording];
+    const track = project.tracks.find((candidate) => candidate.kind === "subtitle")!;
+    track.clips.push({ id: "caption", trackId: track.id, kind: "subtitle", label: "字幕", text: "演示关键操作", startUs: 0, durationUs: 5_000_000, locked: false, color: "#ffffff", backgroundColor: "#000000", fontSize: 48, positionY: 88 });
+    useEditorStore.setState({ project });
+    const matches = createAiMotionMatchesSchema(["screen-demo"], [recording.id]).parse({ matches: [{
+      captionIndex: 0, primaryEffectId: "screen-demo", primaryText: "关键操作", secondaryEffectId: null, secondaryText: null,
+      accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 50, secondaryY: 50, cameraPreset: "none", chart: null,
+      compositionBindings: [{ slotId: "recording", assetIds: [recording.id] }]
+    }] }).matches;
+    const result = useEditorStore.getState().applyMotionMatches(["caption"], matches);
+    expect(result).toMatchObject({ effectCount: 1, skippedEffectCount: 0 });
+    expect(clips()[0]).toMatchObject({ compositionId: "screen-demo", bindings: matches[0].compositionBindings, params: { title: "关键操作" } });
+  });
   it("binds and reorders images with one undo step and no image clips", () => {
     useEditorStore.getState().addComposition("poster-wall-3d");
     const clip = clips()[0];

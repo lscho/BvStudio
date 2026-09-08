@@ -102,6 +102,7 @@ export interface RenderTextOverlay extends RenderOverlayBase {
   compositionBindings?: { slotId: string; assetIds: string[] }[];
   sourceOffsetUs?: number;
   animationDurationUs?: number;
+  autoTiming?: boolean;
   sequenceId?: string;
   text: string;
   color: string;

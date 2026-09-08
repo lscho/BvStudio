@@ -64,6 +64,13 @@ describe("retrieveEffects", () => {
     expect(effectParamsForText("term-card", "复利")).toMatchObject({ en: "", term: "复利", definition: "" });
     expect(effectParamsForText("pin-board", "单一结论")).toMatchObject({ title: "单一结论", subtitle: "", items: "" });
     expect(effectParamsForText("versus-card", "单一方案")).toMatchObject({ aTitle: "单一方案", bTitle: "", aSub: "", bSub: "" });
+    expect(effectParamsForText("section-head", "核心问题｜为什么现在必须解决")).toMatchObject({ num: "", en: "", zh: "核心问题", sub: "为什么现在必须解决" });
+    expect(effectParamsForText("duo-title", "效率提升｜交付更快｜自动化方案")).toMatchObject({ en: "", line1: "效率提升", line2: "交付更快", note: "自动化方案" });
+    expect(effectParamsForText("pain-points", "制作痛点｜重复剪辑｜素材难找｜交付变慢")).toMatchObject({ kicker: "制作痛点", pains: "重复剪辑|素材难找", result: "交付变慢" });
+    expect(effectParamsForText("action-band", "自动化流程｜识别内容｜匹配素材｜生成时间线")).toMatchObject({ kicker: "", title: "自动化流程", cards: "识别内容|匹配素材|生成时间线", band: "", bandCaption: "", foot: "" });
+    expect(effectParamsForText("flow-chart", "制作流程｜导入录屏｜识别步骤｜完成交付")).toMatchObject({ title: "制作流程", nodes: "导入录屏|识别步骤|完成交付" });
+    expect(effectParamsForText("info-board", "核心结论｜效率提升｜成本降低｜值得采用").rows).toBe("head|核心结论||\ncheck|效率提升\ncheck|成本降低\nseal|值得采用|");
+    expect(effectParamsForText("compare-split", "效率对比｜自动方案｜86%｜手工方案｜32%")).toMatchObject({ title: "效率对比", aLabel: "自动方案", aValue: 86, bLabel: "手工方案", bValue: 32, suffix: "%" });
   });
 
   it("rebuilds only content fields when migrating generated effect params", () => {

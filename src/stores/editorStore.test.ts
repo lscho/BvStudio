@@ -783,6 +783,28 @@ describe("editorStore", () => {
     });
   });
 
+  it("places matched full-canvas background effects below video and foreground effects", () => {
+    useEditorStore.getState().addVideo({ id: "asr-video", name: "speech.mp4", kind: "video", durationUs: 3_000_000, hasAudio: true });
+    useEditorStore.getState().addSubtitles("asr-video", [{ startSeconds: 0, endSeconds: 3, text: "进入新的内容章节。" }]);
+    const subtitle = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [{
+      ...motionMatch,
+      primaryEffectId: "frost-screen",
+      primaryText: "",
+      x: 72,
+      y: 28,
+      scale: 1.6
+    }]);
+
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({
+      kind: "composition",
+      compositionId: "frost-screen",
+      zIndex: 0,
+      transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }
+    });
+  });
+
   it("materializes a staged motion group across multiple subtitle ranges", () => {
     useEditorStore.getState().addVideo({ id: "market-video", name: "market.mp4", kind: "video", durationUs: 8_000_000, hasAudio: true });
     useEditorStore.getState().addSubtitles("market-video", [

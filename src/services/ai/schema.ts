@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { BUILTIN_EFFECTS } from "@/domain/effects";
-import { mediaComposition } from "@/domain/compositions";
+import { aiCompositionSlots } from "@/domain/compositions";
 import { CAMERA_PRESETS } from "@/domain/camera";
 import { VIDEO_LAYOUT_PRESETS } from "@/domain/transforms";
 import { BUILTIN_SOUND_EFFECT_IDS } from "@/domain/soundEffects";
@@ -93,6 +93,27 @@ const videoLayerMatchSchema = z.object({
   focus: videoFocusMatchSchema.nullable()
 });
 
+export function createAiEffectSelectionSchema(allowedEffectIds: readonly string[]) {
+  const compositionId = z.string().refine((value) => allowedEffectIds.includes(value), "未知动效");
+  return z.object({ effectIds: z.array(compositionId).min(1).max(32) });
+}
+
+export function createEffectSelectionJsonSchema(allowedEffectIds: readonly string[]) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["effectIds"],
+    properties: {
+      effectIds: {
+        type: "array",
+        minItems: 1,
+        maxItems: 32,
+        items: { type: "string", enum: [...allowedEffectIds] }
+      }
+    }
+  } as const;
+}
+
 export function createAiMotionMatchesSchema(allowedEffectIds: readonly string[], allowedMediaAssetIds: readonly string[] = [], allowedImageIds: readonly string[] = []) {
   const compositionId = z.string().refine((value) => allowedEffectIds.includes(value), "未知动效");
   const mediaId = z.string().refine((value) => allowedMediaAssetIds.includes(value), "未知素材");
@@ -124,16 +145,21 @@ export function createAiMotionMatchesSchema(allowedEffectIds: readonly string[],
       mediaLayoutPreset: z.enum(videoLayoutPresetEnum).optional().default("full"),
       chart: chartMatchSchema.nullable()
     }).superRefine((match, context) => {
-      const definition = match.primaryEffectId ? mediaComposition(match.primaryEffectId) : undefined;
       const bindings = match.compositionBindings ?? [];
-      const slots = definition?.slots ?? [];
+      const slots = match.primaryEffectId ? aiCompositionSlots(match.primaryEffectId) : [];
       const valid = new Set(bindings.map((binding) => binding.slotId)).size === bindings.length
         && bindings.every((binding) => slots.some((slot) => slot.id === binding.slotId))
         && slots.every((slot) => {
           const ids = bindings.find((binding) => binding.slotId === slot.id)?.assetIds ?? [];
-          return ids.length >= slot.minItems && ids.length <= slot.maxItems && ids.every((id) => allowedImageIds.includes(id) || (slot.kind === "visual" && allowedMediaAssetIds.includes(id)));
+          return ids.length >= slot.minItems && ids.length <= slot.maxItems && ids.every((id) => (
+            slot.kind === "image"
+              ? allowedImageIds.includes(id)
+              : slot.kind === "video"
+                ? allowedMediaAssetIds.includes(id)
+                : allowedImageIds.includes(id) || allowedMediaAssetIds.includes(id)
+          ));
         });
-      if (!valid || (match.secondaryEffectId && mediaComposition(match.secondaryEffectId))) context.addIssue({ code: "custom", message: "素材动效必须作为主动效并完整绑定规定素材槽；图片槽不能绑定视频", path: ["compositionBindings"] });
+      if (!valid || (match.secondaryEffectId && aiCompositionSlots(match.secondaryEffectId).length > 0)) context.addIssue({ code: "custom", message: "素材动效必须作为主动效并完整绑定规定素材槽；图片槽不能绑定视频", path: ["compositionBindings"] });
     })).min(1).max(80)
   });
 }

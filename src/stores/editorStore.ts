@@ -136,7 +136,7 @@ function aiMotionEntries(match: AiMotionMatch, captionText: string, useCaptionFa
     ? ""
     : match.primaryText.trim() || (useCaptionFallback ? captionText : "");
   return [
-    primaryDefinition && (primaryText || primaryDefinition.recipe.sceneBackground || Boolean(mediaComposition(primaryDefinition.id)))
+    primaryDefinition && (primaryText || primaryDefinition.recipe.sceneBackground || isBackgroundComposition(primaryDefinition.id) || compositionSlots(primaryDefinition.id).length > 0)
       ? { slot: "primary", compositionId: primaryDefinition.id, text: primaryText, x: match.x, y: match.y, scale: match.scale, zIndex: 20 }
       : null,
     match.secondaryEffectId && match.secondaryText?.trim()
@@ -181,7 +181,7 @@ function resolveAiMotionPlacements(
     const endUs = captions[persistUntilCaptionIndex]?.endUs ?? caption.endUs;
     for (const entry of aiMotionEntries(match, caption.text, useCaptionFallback)) {
       const recipe = materializedAiEffectRecipe(entry.compositionId, match);
-      if (recipe.sceneBackground || mediaComposition(entry.compositionId)) continue;
+      if (recipe.sceneBackground || isBackgroundComposition(entry.compositionId) || mediaComposition(entry.compositionId)) continue;
       layers.push({
         id: aiMotionLayoutId(captionIndex, entry.slot),
         compositionId: entry.compositionId,
@@ -1017,9 +1017,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           for (const entry of effectEntries.slice(0, 2)) {
             if (!match) break;
             const definition = compositionById(entry.compositionId);
+            const bindings = entry.slot === "primary" && compositionSlots(definition.id).length > 0
+              ? normalizeBindings(match.compositionBindings)
+              : [];
+            if (compositionBindingIssues({ compositionId: definition.id, bindings }, project.assets).length) continue;
             const recipe = materializedAiEffectRecipe(entry.compositionId, match);
-            const placement = recipe.sceneBackground ? null : motionPlacements.get(aiMotionLayoutId(captionIndex, entry.slot));
-            if (!recipe.sceneBackground && !placement) continue;
+            const backgroundComposition = isBackgroundComposition(definition.id);
+            const placement = recipe.sceneBackground || backgroundComposition ? null : motionPlacements.get(aiMotionLayoutId(captionIndex, entry.slot));
+            if (!recipe.sceneBackground && !backgroundComposition && !placement) continue;
             const sceneGroupId = match?.motionGroupId ? `ai-motion:${id}:${match.motionGroupId}` : `ai-caption:${id}:${captionIndex}`;
             const soundCues: NonNullable<CompositionClip["soundCues"]> = [];
             if (recipe.sceneBackground) {
@@ -1030,17 +1035,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
                 sourceBlockId: id, sourceSubtitleId: subtitleId
               }));
             } else {
-              if (!placement) continue;
               effectTrack.clips.push({
                 id: crypto.randomUUID(), trackId: effectTrack.id, kind: "composition", label: `AI 动效 · ${definition.name}`,
                 startUs: cueStartUs, durationUs: cueDurationUs, locked: false, compositionId: definition.id, text: entry.text,
                 color: definition.defaultColor, accentColor: themeAccentColor,
                 fontSize: recommendedEffectFontSizeForId(definition.id, recipe, entry.text), speed: 1,
-                transform: { x: placement.x, y: placement.y, scale: placement.scale, rotation: 0, opacity: 1 },
-                recipe, soundCues, zIndex: 200 + entry.zIndex, sceneGroupId, matchQuery: caption.text,
+                transform: backgroundComposition ? { ...DEFAULT_TRANSFORM } : { x: placement!.x, y: placement!.y, scale: placement!.scale, rotation: 0, opacity: 1 },
+                recipe, soundCues, zIndex: backgroundComposition ? compositionLayer({ compositionId: definition.id, recipe }) : 200 + entry.zIndex, sceneGroupId, matchQuery: caption.text,
                 colorRole: motionColorRoleForEffect(definition.id),
                 sourceBlockId: id, sourceSubtitleId: subtitleId,
                 backdrop: effectBackdropForPreset(match?.backdropPreset ?? "none", themeAccentColor),
+                bindings,
                 params: effectParamsForText(definition.id, entry.text)
               });
             }
@@ -1185,8 +1190,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             continue;
           }
           const recipe = materializedAiEffectRecipe(entry.compositionId, match);
-          const placement = recipe.sceneBackground ? null : motionPlacements.get(aiMotionLayoutId(captionIndex, entry.slot));
-          if (!recipe.sceneBackground && !placement) {
+          const backgroundComposition = isBackgroundComposition(definition.id);
+          const placement = recipe.sceneBackground || backgroundComposition ? null : motionPlacements.get(aiMotionLayoutId(captionIndex, entry.slot));
+          if (!recipe.sceneBackground && !backgroundComposition && !placement) {
             summary.skippedEffectCount += 1;
             continue;
           }
@@ -1201,17 +1207,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             }));
             summary.sceneCount += 1;
           } else {
-            if (!placement) continue;
+            const bindings = entry.slot === "primary" && compositionSlots(definition.id).length > 0
+              ? normalizeBindings(match.compositionBindings)
+              : [];
+            if (compositionBindingIssues({ compositionId: definition.id, bindings }, project.assets).length) { summary.skippedEffectCount += 1; continue; }
             effectTrack.clips.push({
               id: crypto.randomUUID(), trackId: effectTrack.id, kind: "composition", label: `AI 动效 · ${definition.name}`,
               startUs: subtitle.startUs, durationUs: matchDurationUs, locked: false, compositionId: definition.id, text: entry.text.trim(),
               color: definition.defaultColor, accentColor: themeAccentColor,
               fontSize: recommendedEffectFontSizeForId(definition.id, recipe, entry.text.trim()), speed: 1,
-              transform: { x: placement.x, y: placement.y, scale: placement.scale, rotation: 0, opacity: 1 }, recipe,
-              soundCues, zIndex: 200 + entry.zIndex, sceneGroupId, matchQuery: subtitle.text,
+              transform: backgroundComposition ? { ...DEFAULT_TRANSFORM } : { x: placement!.x, y: placement!.y, scale: placement!.scale, rotation: 0, opacity: 1 }, recipe,
+              soundCues, zIndex: backgroundComposition ? compositionLayer({ compositionId: definition.id, recipe }) : 200 + entry.zIndex, sceneGroupId, matchQuery: subtitle.text,
               colorRole: motionColorRoleForEffect(definition.id),
               sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id,
               backdrop: effectBackdropForPreset(match.backdropPreset ?? "none", themeAccentColor),
+              bindings,
               params: effectParamsForText(definition.id, entry.text.trim())
             });
             summary.effectCount += 1;

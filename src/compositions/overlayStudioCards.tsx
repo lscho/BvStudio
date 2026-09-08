@@ -67,16 +67,17 @@ export function StepTimelineCard(props: CompositionRenderProps) {
   const title = paramString(props, "title", "《本期*章节*大纲》");
   const steps = pipeParts(paramString(props, "steps", props.text)).slice(0, 6);
   const revealed = Math.max(0, Math.min(steps.length, Math.round(paramNumber(props, "revealed", steps.length))));
+  const stepUs = Math.max(1, paramNumber(props, "stepMs", 240) * 1_000);
   const fromX = paramString(props, "position", "right") === "right" ? 48 : -48;
 
   return <div className="os-hud st" data-theme={paramString(props, "theme", "dark")} style={effectVars(props.accentColor)}>
     <div className="st-title" style={enterStyle(props.timeUs)}><span className="st-bar" style={{ transform: `scaleY(${progressAt(props.timeUs, 0, 560_000)})` }} /><span>{highlightedText(title, "st-key")}</span></div>
     <div className="st-list">
       {steps.map((step, index) => {
-        const progress = progressAt(props.timeUs, index * 240_000, 560_000);
+        const progress = progressAt(props.timeUs, index * stepUs, 560_000);
         const color = stepColors[index % stepColors.length];
         return <div className="st-step" key={`${index}-${step}`} style={{ opacity: progress, transform: `translateX(${studioLength((1 - progress) * fromX)})`, "--st-c": color } as CSSProperties}>
-          <div className="st-node" style={{ transform: `scale(${progressAt(props.timeUs, index * 240_000, 460_000)})` }} />
+          <div className="st-node" style={{ transform: `scale(${progressAt(props.timeUs, index * stepUs, 460_000)})` }} />
           <div className={`st-chip ${index >= revealed ? "is-empty" : ""}`}>{index < revealed ? step : ""}</div>
         </div>;
       })}

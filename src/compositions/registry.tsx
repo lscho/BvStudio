@@ -4,6 +4,7 @@ import { measureChartBox } from "@/domain/chartEffects";
 import { allCompositions, compositionById, type CompositionDefinition, type CompositionParams, type EffectRecipe } from "@/domain/effects";
 import type { EffectBackdrop, CompositionClip, MotionTheme } from "@/domain/project";
 import { motionFontFamily, resolveEffectBackdropColor } from "@/domain/motionTheme";
+import { fitOverlayStudioTimingParams } from "@/domain/overlayStudioMotion";
 import { isReplicatedOverlayStudioEffect, replicatedOverlayStudioEffects, ReplicatedOverlayStudioCard } from "@/compositions/overlayStudioReference/adapter";
 import { overlayStudioMediaControlLabel, overlayStudioMediaControlMode } from "@/domain/overlayStudioMedia";
 import { ArgumentBoardCard, CausalChainCard, ConceptMapCard, MythFactCard, QuoteLinesCard } from "@/compositions/knowledgeCards";
@@ -48,6 +49,7 @@ export interface CompositionRenderProps {
   canvasWidth: number;
   canvasHeight?: number;
   params?: CompositionParams;
+  autoTiming?: boolean;
 }
 
 export interface ReactEffectDefinition {
@@ -298,7 +300,10 @@ export function activeReactEffectDefinitions(): ReactEffectDefinition[] {
 
 export function CompositionContent(props: CompositionRenderProps) {
   const Component = reactEffectDefinition(props.compositionId).component;
-  return <Component {...props} />;
+  const params = props.autoTiming
+    ? fitOverlayStudioTimingParams(props.compositionId, props.params, props.durationUs)
+    : props.params;
+  return <Component {...props} params={params} />;
 }
 
 export function effectControlsFor(clip: CompositionClip): readonly CompositionControl[] {
@@ -319,15 +324,16 @@ export function usesFullCanvasComposition(compositionId: string) {
   return isReplicatedOverlayStudioEffect(compositionId);
 }
 
-export function effectCardChromeStyle(clip: Pick<CompositionClip, "color" | "accentColor" | "backdrop"> & Partial<Pick<CompositionClip, "fontSize">>, recipe: EffectRecipe, length: (pixels: number, minimum?: number) => string, theme?: MotionTheme, componentOwnedChrome = false): CSSProperties {
+export function effectCardChromeStyle(clip: Pick<CompositionClip, "color" | "accentColor" | "backdrop"> & Partial<Pick<CompositionClip, "fontSize">>, recipe: EffectRecipe, length: (pixels: number, minimum?: number) => string, theme?: MotionTheme, componentOwnedChrome = false, transparentFullCanvas = false): CSSProperties {
   const backdrop: EffectBackdrop | undefined = clip.backdrop;
-  if (componentOwnedChrome && !backdrop?.enabled) {
+  if (transparentFullCanvas || (componentOwnedChrome && !backdrop?.enabled)) {
     return {
       color: clip.color,
       padding: 0,
       borderWidth: 0,
       borderRadius: 0,
       background: "transparent",
+      boxShadow: "none",
       fontFamily: theme ? motionFontFamily(theme) : undefined,
       "--os-unit": length((clip.fontSize ?? 48) / 48),
       "--effect-accent": clip.accentColor
