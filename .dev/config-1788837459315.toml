@@ -1,0 +1,6 @@
+
+port = 3322
+[debugger_cli_options]
+enable = true
+code_path = "/Users/lscho/www/bvideo/.dev/index-1788837459315.js"
+conf_path = "/Users/lscho/.ew2/er.conf"

@@ -1,0 +1,9 @@
+{
+  // esa-cli 部署配置：会员授权边缘函数（无构建，入口直连）
+  // 本地调试：esa-cli dev（可在根目录放 kv.json 模拟 EdgeKV 数据）
+  // 部署：esa-cli commit && esa-cli deploy（需先 esa-cli login）
+  "name": "license",
+  "entry": "./edge/index.js",
+  "installCommand": "",
+  "buildCommand": ""
+}
