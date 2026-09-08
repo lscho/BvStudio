@@ -1,1 +1,0 @@
-export default {"1788837459315":{"entry":"/Users/lscho/www/bvideo/edge/index.js","port":18080,"localUpstream":""}}
