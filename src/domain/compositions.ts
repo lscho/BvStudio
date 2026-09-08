@@ -5,6 +5,7 @@ import { upsertVisualKeyframe, visualTransformAt } from "@/domain/transforms";
 import { DEFAULT_BACKGROUND_LAYER, DEFAULT_EFFECT_LAYER, normalizeLayer } from "@/domain/layers";
 import { importedOverlayStudioBackgroundIds } from "@/domain/overlayStudioCatalog";
 import { overlayStudioAiMediaSlots, overlayStudioMediaSlots } from "@/domain/overlayStudioMedia";
+import { shotcraftShot } from "@/domain/shotcraft";
 
 export interface CompositionSlot {
   id: string;
@@ -100,12 +101,12 @@ export function mediaComposition(id: string) {
 
 export function compositionSlots(id: string): readonly CompositionSlot[] {
   if (id === "focus-card") return FOCUS_CARD_SLOTS;
-  return mediaComposition(id)?.slots ?? overlayStudioMediaSlots(id);
+  return shotcraftShot(id)?.slots ?? mediaComposition(id)?.slots ?? overlayStudioMediaSlots(id);
 }
 
 export function aiCompositionSlots(id: string): readonly CompositionSlot[] {
   if (id === "focus-card") return FOCUS_CARD_SLOTS;
-  return mediaComposition(id)?.slots ?? overlayStudioAiMediaSlots(id);
+  return shotcraftShot(id)?.slots ?? mediaComposition(id)?.slots ?? overlayStudioAiMediaSlots(id);
 }
 
 export function normalizeBindings(value: unknown): CompositionBinding[] {

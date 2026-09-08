@@ -987,3 +987,12 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
 }
+
+.shotcraft-controls { margin: 0; padding: 12px 0; border: 0; border-top: 1px solid var(--line); min-width: 0; }
+.shotcraft-controls:disabled { opacity: 0.6; }
+.shotcraft-region-preview { position: relative; display: block; width: 100%; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-2); cursor: crosshair; }
+.shotcraft-region-preview img { display: block; width: 100%; height: auto; }
+.shotcraft-region-preview > span { position: absolute; border: 1px dashed var(--accent); pointer-events: none; }
+.shotcraft-region-preview > span.active { border: 2px solid var(--accent); background: var(--accent-soft); }
+.shotcraft-region-preview b { position: absolute; top: 0; left: 0; padding: 1px 4px; font-size: 10px; color: var(--text); background: var(--surface); }
+.shotcraft-missing { position: absolute; inset: 0; display: grid; place-items: center; padding: 5%; color: #d9dee5; background: #24282e; font-size: 3cqw; text-align: center; }

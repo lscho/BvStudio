@@ -1,3 +1,5 @@
+import { isShotcraftComposition } from "@/domain/shotcraft";
+import { desktopCompositionFrames } from "@/services/compositionFrames";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { toPng } from "html-to-image";
@@ -64,6 +66,7 @@ export function inlineReactOverlaySvgStyles(host: HTMLElement) {
 }
 
 export function dynamicDurationUs(overlay: RenderTextOverlay) {
+  if (isShotcraftComposition(overlay.compositionId ?? "")) return overlay.durationUs;
   if (overlay.autoTiming && overlay.compositionId && supportsOverlayStudioAutoTiming(overlay.compositionId)) return overlay.durationUs;
   if (overlay.compositionId === "chapter-bar" || overlay.compositionId === "caption-track" || overlay.compositionId === "terminal-3d" || (overlay.compositionId && isBackgroundComposition(overlay.compositionId))) return overlay.durationUs;
   const recipe = clockControlledRecipe(overlay.recipe);
@@ -91,7 +94,8 @@ export function dynamicDurationUs(overlay: RenderTextOverlay) {
   return Math.min(overlay.durationUs, Math.max(0, remainingMotionUs, overlay.dimAtUs ?? 0, ...((overlay.transformKeyframes ?? []).map((frame) => frame.offsetUs))));
 }
 
-async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, signal?: AbortSignal): Promise<RenderTextOverlay> {
+async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, options: CompositionExportOptions): Promise<RenderTextOverlay> {
+  const { signal } = options;
   const recipe = clockControlledRecipe(overlay.recipe);
   const host = document.createElement("div");
   configureReactOverlayHost(host, plan.width, plan.height);
@@ -102,6 +106,7 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
     const source = overlay.compositionImages?.find((candidate) => candidate.id === assetId);
     return source ? { id: source.id, kind: source.kind === "video" ? "video" : "image", url: localMediaUrl(source.path) } : undefined;
   });
+  const shotcraftAssets = (overlay.compositionImages ?? []).map((source) => ({ id: source.id, objectUrl: localMediaUrl(source.path), width: source.width, height: source.height }));
   const renderAt = async (localUs: number) => {
     signal?.throwIfAborted();
     const animationLocalUs = localUs + (overlay.sourceOffsetUs ?? 0) / Math.max(0.25, overlay.speed);
@@ -120,7 +125,7 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
           transform: `translate(-50%, -50%) translate(${animation.translateX}%, ${animation.translateY}%) scale(${transform.scale * animation.scale}) rotate(${transform.rotation + animation.rotation}deg)`
         }}
       >
-        <CompositionContent compositionId={overlay.compositionId ?? "quote-lockup"} text={overlay.text} color={overlay.color} accentColor={overlay.accentColor} fontSize={overlay.fontSize} recipe={recipe} params={resolvedParams} timeUs={animationLocalUs * overlay.speed} durationUs={overlay.animationDurationUs ?? overlay.durationUs} autoTiming={overlay.autoTiming} canvasWidth={plan.width} canvasHeight={plan.height} />
+        <CompositionContent shotcraftData={overlay.shotcraftData} shotcraftAssets={shotcraftAssets} shotcraftTheme={overlay.motionTheme} compositionId={overlay.compositionId ?? "quote-lockup"} text={overlay.text} color={overlay.color} accentColor={overlay.accentColor} fontSize={overlay.fontSize} recipe={recipe} params={resolvedParams} timeUs={Math.round(animationLocalUs * overlay.speed)} durationUs={overlay.animationDurationUs ?? overlay.durationUs} autoTiming={overlay.autoTiming} canvasWidth={plan.width} canvasHeight={plan.height} />
       </div>
     ));
     await nextPaint();
@@ -143,17 +148,30 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
     await document.fonts.ready;
     const durationUs = dynamicDurationUs(overlay);
     if (durationUs <= 0) {
-      return { ...overlay, compositionImages: undefined, compositionBindings: undefined, imageDataBase64: await renderAt(overlay.durationUs), recipe: neutralRecipe, x: 50, y: 50, scale: 1, rotation: 0, opacity: 1, transformKeyframes: undefined };
+      return { ...overlay, shotcraftData: undefined, speed: 1, compositionImages: undefined, compositionBindings: undefined, imageDataBase64: await renderAt(overlay.durationUs), recipe: neutralRecipe, x: 50, y: 50, scale: 1, rotation: 0, opacity: 1, transformKeyframes: undefined };
     }
-    const fps = Math.max(1, Math.min(60, plan.fps));
-    const frameCount = Math.max(2, Math.ceil(durationUs / 1_000_000 * fps) + 1);
-    const frames: string[] = [];
+    const fps = Math.max(1, Math.min(120, plan.fps));
+    const frameCount = Math.max(1, Math.ceil(overlay.durationUs / 1_000_000 * fps));
+    const sink = options.sink ?? desktopCompositionFrames;
+    signal?.throwIfAborted();
+    const sequenceId = await sink.begin();
+    options.sequences.push(sequenceId);
+    let finalFrame: string | undefined;
     for (let index = 0; index < frameCount; index += 1) {
-      frames.push(await renderAt(Math.min(durationUs, Math.round(index / fps * 1_000_000))));
+      signal?.throwIfAborted();
+      const localUs = Math.round(index / fps * 1_000_000);
+      // The native sink validates a complete clip. Only one settled PNG stays in memory.
+      if (localUs >= durationUs && finalFrame === undefined) finalFrame = await renderAt(durationUs);
+      const data = finalFrame ?? await renderAt(localUs);
+      signal?.throwIfAborted();
+      await sink.append(sequenceId, index, data);
+      options.onProgress?.(index + 1, frameCount);
     }
     return {
       ...overlay,
-      sequenceFramesBase64: frames,
+      sequenceId,
+      shotcraftData: undefined,
+      speed: 1,
       sequenceFps: fps,
       imageDataBase64: undefined,
       compositionImages: undefined,
@@ -177,7 +195,7 @@ export async function rasterizeCompositions(plan: RenderPlan, options: Compositi
   for (const overlay of plan.overlays) {
     options.signal?.throwIfAborted();
     if ((overlay.kind === "text" || overlay.kind === "composition") && (overlay.renderer === "three" || overlay.renderer === "canvas")) overlays.push(await streamCompositionFrames(overlay, plan, options));
-    else if ((overlay.kind === "text" || overlay.kind === "composition") && overlay.renderer === "react") overlays.push(await renderReactOverlay(overlay, plan, options.signal));
+    else if ((overlay.kind === "text" || overlay.kind === "composition") && overlay.renderer === "react") overlays.push(await renderReactOverlay(overlay, plan, options));
     else overlays.push(overlay);
   }
   return { ...plan, overlays };

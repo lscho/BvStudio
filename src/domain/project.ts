@@ -2,6 +2,7 @@ import type { EffectEntrance, CompositionParams, EffectRecipe, EffectSoundCue, S
 import type { CameraMotion } from "@/domain/camera";
 import type { EasingName } from "@/domain/easing";
 import type { CompositionBinding } from "@/domain/compositions";
+import type { ShotcraftSettings } from "@/domain/shotcraft";
 import { DEFAULT_SUBTITLE_THEME, type SubtitleTheme } from "@/domain/subtitleTheme";
 
 export type TrackKind = "video" | "image" | "generated" | "scene" | "composition" | "subtitle" | "audio";
@@ -214,6 +215,7 @@ export interface AudioClip extends BaseClip {
 
 export interface CompositionClip extends BaseClip {
   kind: "composition";
+  shotcraft?: ShotcraftSettings;
   compositionId: string;
   bindings?: CompositionBinding[];
   sourceOffsetUs?: number;
@@ -371,7 +373,7 @@ export interface TimelineTrack {
 }
 
 export interface EditorProject {
-  schemaVersion: 30;
+  schemaVersion: 31;
   id: string;
   name: string;
   createdAt: string;
@@ -389,7 +391,7 @@ export interface EditorProject {
 export function createEmptyProject(): EditorProject {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 30,
+    schemaVersion: 31,
     id: crypto.randomUUID(),
     name: "未命名项目",
     createdAt: now,

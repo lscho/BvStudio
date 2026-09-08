@@ -1,3 +1,4 @@
+import type { ShotcraftRenderData } from "@/domain/shotcraft";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { isDesktopRuntime } from "@/services/runtime";
@@ -95,10 +96,11 @@ interface RenderOverlayBase {
 }
 
 export interface RenderTextOverlay extends RenderOverlayBase {
+  shotcraftData?: ShotcraftRenderData;
   kind: "text" | "composition";
   compositionId?: string;
   renderer?: "legacy" | "react" | "three" | "canvas";
-  compositionImages?: { id: string; path: string; kind?: "image" | "video" }[];
+  compositionImages?: { id: string; path: string; kind?: "image" | "video"; width?: number; height?: number }[];
   compositionBindings?: { slotId: string; assetIds: string[] }[];
   sourceOffsetUs?: number;
   animationDurationUs?: number;
@@ -759,7 +761,7 @@ export async function rasterizeRenderPlan(plan: RenderPlan): Promise<RenderPlan>
     if (overlay.kind === "scene") return { ...overlay, imageDataBase64: rasterizeSceneOverlay(overlay, plan.width, plan.height) };
     if (overlay.kind === "progress") return { ...overlay, imageDataBase64: rasterizeProgressOverlay(overlay, plan.width) };
     if (overlay.kind !== "text") return overlay;
-    if (overlay.imageDataBase64 || overlay.sequenceFramesBase64?.length) return overlay;
+    if (overlay.sequenceId || overlay.imageDataBase64 || overlay.sequenceFramesBase64?.length) return overlay;
     if (needsSequence(overlay)) {
       const sequence = rasterizeSequence(overlay, plan.width, plan.fps);
       if (sequence) return { ...overlay, sequenceFramesBase64: sequence };

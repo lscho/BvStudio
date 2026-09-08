@@ -1,3 +1,4 @@
+import { defaultShotcraftSettings, isShotcraftComposition, normalizeShotcraftSettings, shotcraftHoldPatch } from "@/domain/shotcraft";
 import { create } from "zustand";
 import { compositionLayer, mediaComposition, normalizeBindings, compositionBindingIssues, compositionSlots, compositionTimeUs, compositionRetimeBounds, sceneGroupRetimeRatio, slotAccepts, isBackgroundComposition, isSequencedMediaComposition, type CompositionBinding } from "@/domain/compositions";
 import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
@@ -760,15 +761,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             id, trackId: track.id, kind: "composition", label: definition.name, startUs: state.playheadUs,
             durationUs: definition.defaultDurationUs, locked: false, compositionId, text: definition.defaultText,
             bindings: [], sourceOffsetUs: 0, animationDurationUs: definition.defaultDurationUs,
+            shotcraft: isShotcraftComposition(compositionId) ? defaultShotcraftSettings(compositionId) : undefined,
             color: definition.defaultColor, accentColor: themeAccentColor,
             fontSize: recommendedEffectFontSizeForId(definition.id, definition.recipe, definition.defaultText), speed: 1,
             transform: defaultEffectTransform(compositionId), recipe: structuredClone(definition.recipe), zIndex: compositionLayer({ compositionId, recipe: definition.recipe }),
             soundCues: structuredClone(definition.soundCues ?? []),
             colorRole: motionColorRoleForEffect(compositionId),
-            backdrop: { ...DEFAULT_EFFECT_BACKDROP, enabled: !OVERLAY_STUDIO_EFFECT_IDS.includes(compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]) },
+            backdrop: { ...DEFAULT_EFFECT_BACKDROP, enabled: !isShotcraftComposition(compositionId) && !OVERLAY_STUDIO_EFFECT_IDS.includes(compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]) },
             params: structuredClone(definition.defaultParams ?? {})
           };
-          if (!mediaComposition(definition.id)) placeNewEffect(project, clip);
+          if (!mediaComposition(definition.id) && !isShotcraftComposition(definition.id)) placeNewEffect(project, clip);
           else clip.transform = { ...DEFAULT_TRANSFORM };
           track.clips.push(clip);
         }
@@ -1471,7 +1473,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return commit(state, (project) => {
       const clip = findClip(project, clipId);
       if (!clip || clip.kind !== "composition") return;
+      const settings = isShotcraftComposition(clip.compositionId) && patch.shotcraft
+        ? normalizeShotcraftSettings(patch.shotcraft, clip.compositionId) : undefined;
+      if (settings) Object.assign(clip, shotcraftHoldPatch(clip, settings));
       Object.assign(clip, patch);
+      if (settings) clip.shotcraft = settings;
       clip.zIndex = compositionLayer(clip);
       clip.speed = Math.max(0.25, Math.min(3, Number.isFinite(clip.speed) ? clip.speed : 1));
       clip.durationUs = Math.max(100_000, Math.round(Number.isFinite(clip.durationUs) ? clip.durationUs : existing.durationUs));
@@ -1754,6 +1760,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               clip.animationDurationUs ??= Math.round(clip.durationUs * clip.speed);
               trailing.animationDurationUs = clip.animationDurationUs;
               trailing.sourceOffsetUs = compositionTimeUs(clip, firstDuration);
+              if (isShotcraftComposition(clip.compositionId)) {
+                for (const linked of project.tracks.flatMap((entry) => entry.clips)) {
+                  if (linked.kind === "composition" && linked.shotcraft?.transition.fromClipId === clip.id) linked.shotcraft.transition.fromClipId = trailing.id;
+                }
+              }
             }
             if (isSourceClip(trailing)) trailing.sourceInUs = Math.round(trailing.sourceInUs + firstDuration * trailing.playbackRate);
             if (clip.kind === "video" && trailing.kind === "video") {
@@ -1804,13 +1815,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const minimumStart = Math.min(...clipboard.map((clip) => clip.startUs));
     const created: string[] = [];
     const groupIds = new Map<string, string>();
+    const copiedIds = new Map(clipboard.map((clip) => [clip.id, crypto.randomUUID()]));
     set((state) => ({
       ...commit(state, (project) => {
         for (const source of clipboard) {
           const track = project.tracks.find((candidate) => candidate.id === source.trackId && !candidate.locked);
           if (!track) continue;
           const clip = structuredClone(source);
-          clip.id = crypto.randomUUID();
+          clip.id = copiedIds.get(source.id)!;
+          if (clip.kind === "composition" && clip.shotcraft?.transition.fromClipId) {
+            clip.shotcraft.transition.fromClipId = copiedIds.get(clip.shotcraft.transition.fromClipId);
+          }
           clip.startUs = Math.round(state.playheadUs + source.startUs - minimumStart);
           clip.locked = false;
           if ((clip.kind === "composition" || clip.kind === "scene") && clip.sceneGroupId) {

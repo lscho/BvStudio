@@ -4,6 +4,7 @@ import type { CompositionClip, MediaAsset, MotionTheme } from "@/domain/project"
 import { motionColorRoleForEffect, motionThemeAccentColor } from "@/domain/motionTheme";
 import { DEFAULT_TRANSFORM } from "@/domain/transforms";
 import { DEFAULT_EFFECT_BACKDROP } from "@/domain/videoPresentation";
+import { defaultShotcraftSettings, isShotcraftComposition } from "@/domain/shotcraft";
 
 function previewBindings(compositionId: string, assets: readonly MediaAsset[]): CompositionBinding[] {
   const slots = compositionSlots(compositionId);
@@ -72,6 +73,7 @@ export function createEffectPreviewClip(compositionId: string, theme: MotionThem
     durationUs: definition.defaultDurationUs,
     locked: true,
     compositionId,
+    shotcraft: isShotcraftComposition(compositionId) ? defaultShotcraftSettings(compositionId) : undefined,
     bindings: previewBindings(compositionId, assets),
     sourceOffsetUs: 0,
     animationDurationUs: definition.defaultDurationUs,
@@ -86,6 +88,6 @@ export function createEffectPreviewClip(compositionId: string, theme: MotionThem
     soundCues: [],
     zIndex: compositionLayer({ compositionId, recipe: definition.recipe }),
     colorRole: motionColorRoleForEffect(compositionId),
-    backdrop: { ...DEFAULT_EFFECT_BACKDROP, enabled: !OVERLAY_STUDIO_EFFECT_IDS.includes(compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]) }
+    backdrop: { ...DEFAULT_EFFECT_BACKDROP, enabled: !isShotcraftComposition(compositionId) && !OVERLAY_STUDIO_EFFECT_IDS.includes(compositionId as (typeof OVERLAY_STUDIO_EFFECT_IDS)[number]) }
   };
 }

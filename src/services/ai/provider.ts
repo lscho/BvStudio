@@ -1,3 +1,4 @@
+import { SHOTCRAFT_SHOTS } from "@/domain/shotcraft";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { ZodError } from "zod";
 import { isDesktopRuntime } from "@/services/runtime";
@@ -191,7 +192,7 @@ function modelsEndpoint(config: AiProviderConfig) {
   return base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
 }
 
-const manualOnlyMotionEffectIds = new Set(["chapter-bar", "caption-track"]);
+const manualOnlyMotionEffectIds = new Set(["chapter-bar", "caption-track", ...SHOTCRAFT_SHOTS.map((shot) => shot.id)]);
 const structuredCopyFormats: Readonly<Record<string, string>> = {
   "pin-board": "标题｜要点一｜要点二｜要点三",
   checklist: "标题｜步骤一｜步骤二｜步骤三",

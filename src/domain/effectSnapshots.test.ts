@@ -55,7 +55,7 @@ describe("effect recipe snapshots", () => {
     setInstalledEffects([]);
     const restored = parseProject(saved);
     const effect = restored.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === "composition");
-    expect(restored.schemaVersion).toBe(30);
+    expect(restored.schemaVersion).toBe(31);
     expect(effect?.recipe).toEqual(externalEffect.recipe);
     expect(effect?.kind === "composition" ? effect.soundCues : undefined).toEqual([]);
     expect(buildRenderPlan(restored, "/output.mp4").overlays[0].recipe).toEqual(externalEffect.recipe);

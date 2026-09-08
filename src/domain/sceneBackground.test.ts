@@ -12,7 +12,7 @@ describe("scene track migration", () => {
     project.tracks.push({ id: "scene-main", kind: "scene", name: "场景", locked: true, muted: true, hidden: false, clips: [scene] });
     const before = buildRenderPlan(project, "/output.mp4").overlays;
     const migrated = parseProject(JSON.stringify({ ...project, schemaVersion: 26 }));
-    expect(migrated.schemaVersion).toBe(30);
+    expect(migrated.schemaVersion).toBe(31);
     expect(migrated.tracks.some(t => t.kind === "scene")).toBe(false);
     expect(migrated.tracks.find(t => t.id === scene.trackId)).toMatchObject({ kind: "composition", locked: true, muted: true, clips: [expect.objectContaining({ kind: "composition", id: scene.id, sceneGroupId: "g", transform: expect.objectContaining({ opacity: .6 }), recipe: expect.objectContaining({ sceneBackground: scene.background }) })] });
     expect(buildRenderPlan(migrated, "/output.mp4").overlays).toEqual(before);

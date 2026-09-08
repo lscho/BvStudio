@@ -1,3 +1,4 @@
+import { isShotcraftComposition } from "@/domain/shotcraft";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { captionNumericData, compactMotionText, extractTokenUsage, generateSubtitleChapters, generateTimedScript, generateVideoPlan, groundMotionMatchesToSelection, listProviderModels, matchTimelineMotion, motionCaptionChunks, normalizeMotionChart, normalizeMotionMatches, normalizeTimedScript, providerEndpoint, selectMotionCandidates, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
 import { allCompositions } from "@/domain/effects";
@@ -199,7 +200,7 @@ describe("provider requests", () => {
     expect(selectionPayload.messages.at(-1)?.content).toContain('"startSeconds":0');
     expect(selectionPayload.messages[0]?.content).toContain('"densityPerMinute":{"min":8,"max":12}');
     expect(selectionPayload.messages[0]?.content).toContain("0 到 5 秒必须建立 intent=hook");
-    for (const effect of allCompositions().filter((candidate) => !["chapter-bar", "caption-track"].includes(candidate.id))) {
+    for (const effect of allCompositions().filter((candidate) => !["chapter-bar", "caption-track"].includes(candidate.id) && !isShotcraftComposition(candidate.id))) {
       expect(selectionPayload.messages[0]?.content).toContain(`"id":"${effect.id}"`);
     }
     expect(selectionPayload.messages[0]?.content).toContain('"purposeGroup":"证据实证"');
@@ -225,7 +226,7 @@ describe("provider requests", () => {
         { startSeconds: 8, endSeconds: 12, text: "解决方案是按三个步骤自动完成。" }
       ]
     });
-    const expected = allCompositions().filter((candidate) => !["chapter-bar", "caption-track"].includes(candidate.id));
+    const expected = allCompositions().filter((candidate) => !["chapter-bar", "caption-track"].includes(candidate.id) && !isShotcraftComposition(candidate.id));
     expect(candidates.map((candidate) => candidate.id)).toEqual(expected.map((candidate) => candidate.id));
   });
 

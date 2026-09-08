@@ -1,3 +1,4 @@
+import { isShotcraftComposition, shotcraftRenderData } from "@/domain/shotcraft";
 import { contentEndUs, type AudioClip, type EditorProject, type EffectBackdrop, type CompositionClip, type GeneratedBlock, type ImageClip, type SceneClip, type VideoClip, type VideoTransition } from "@/domain/project";
 import { compositionAssetIds, compositionBindingIssues, compositionLayer, mediaComposition } from "@/domain/compositions";
 import type { ExportVideoFormat, RenderAudioClip, RenderFocusOverlay, RenderOverlay, RenderPlan, RenderSegment, VideoEncoder } from "@/services/media";
@@ -290,6 +291,27 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
       ];
     }
     if (clip.kind === "composition") {
+      if (isShotcraftComposition(clip.compositionId)) {
+        const data = shotcraftRenderData(project, clip);
+        const shots = [clip, ...(data.previous ? [data.previous] : [])];
+        for (const shot of shots) {
+          const issues = compositionBindingIssues(shot, project.assets);
+          if (issues.length) throw new Error(`${shot.label}：${issues[0]}`);
+        }
+        const images = [...new Set(shots.flatMap(compositionAssetIds))].map((id) => {
+          const asset = project.assets.find((candidate) => candidate.id === id);
+          if (!asset || asset.missing) throw new Error(`${clip.label}素材缺失，请重新定位或替换`);
+          if (!asset.sourcePath) throw new Error(`${clip.label}素材缺少本地源路径，无法导出`);
+          return { id, path: asset.sourcePath, kind: "image" as const, width: asset.width, height: asset.height };
+        });
+        return [{ kind: "composition", renderer: "react", compositionId: clip.compositionId, shotcraftData: data,
+          compositionImages: images, motionTheme: project.motionTheme,
+          startUs: clip.startUs, durationUs: clip.durationUs, sourceOffsetUs: clip.sourceOffsetUs ?? 0,
+          animationDurationUs: clip.animationDurationUs, params: clip.params,
+          text: clip.text, color: clip.color, accentColor: clip.accentColor, fontSize: clip.fontSize,
+          ...clip.transform, transformKeyframes: clip.transformKeyframes, speed: clip.speed, dimAtUs: clip.dimAtUs,
+          zIndex: compositionLayer(clip), recipe: frameRecipe }];
+      }
       const mediaDefinition = mediaComposition(clip.compositionId);
       if (mediaDefinition) {
         const issues = compositionBindingIssues(clip, project.assets);

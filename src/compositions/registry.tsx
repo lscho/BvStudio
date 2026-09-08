@@ -7,6 +7,8 @@ import { motionFontFamily, resolveEffectBackdropColor } from "@/domain/motionThe
 import { fitOverlayStudioTimingParams } from "@/domain/overlayStudioMotion";
 import { isReplicatedOverlayStudioEffect, replicatedOverlayStudioEffects, ReplicatedOverlayStudioCard } from "@/compositions/overlayStudioReference/adapter";
 import { overlayStudioMediaControlLabel, overlayStudioMediaControlMode } from "@/domain/overlayStudioMedia";
+import { isShotcraftComposition, SHOTCRAFT_SHOTS, type ShotcraftRenderData } from "@/domain/shotcraft";
+import { ShotcraftComposition, type ShotcraftAsset } from "@/compositions/shotcraft";
 import { ArgumentBoardCard, CausalChainCard, ConceptMapCard, MythFactCard, QuoteLinesCard } from "@/compositions/knowledgeCards";
 import { ChecklistCard, EntityChipsCard, PinBoardCard, StatProofCard, VersusCard } from "@/compositions/talkingHeadCards";
 import {
@@ -38,6 +40,9 @@ export type CompositionControl =
   | { kind: "param-color"; field: string; label: string };
 
 export interface CompositionRenderProps {
+  shotcraftData?: ShotcraftRenderData;
+  shotcraftAssets?: readonly ShotcraftAsset[];
+  shotcraftTheme?: MotionTheme;
   compositionId: string;
   text: string;
   color: string;
@@ -110,6 +115,18 @@ const replicatedComponentRegistrations = Object.fromEntries(replicatedOverlayStu
 
 const componentRegistrations: Readonly<Record<string, ComponentRegistration>> = {
   ...replicatedComponentRegistrations,
+  ...Object.fromEntries(SHOTCRAFT_SHOTS.map((shot) => [shot.id, {
+    component: ShotcraftComposition,
+    controls: [
+      ...(shot.id === "shotcraft-blur-slide" || shot.id === "shotcraft-before-after" || shot.id === "shotcraft-basic-3d" ? [{ kind: "text" as const, field: "text" as const, label: "内容（用｜分隔，空格拆词）", rows: 3 }] : []),
+      { kind: "color" as const, field: "color" as const, label: "文字颜色" },
+      { kind: "color" as const, field: "accentColor" as const, label: "强调色" },
+      { kind: "param-color" as const, field: "surface", label: "镜头底色" },
+      ...(shot.id === "shotcraft-spotlight-hero-card" ? [{ kind: "param-color" as const, field: "patchColor", label: "主角原位底色" }] : []),
+      ...(shot.id === "shotcraft-card-stack" ? [{ kind: "param-select" as const, field: "fit", label: "卡片适配", options: [{ value: "contain", label: "完整显示" }, { value: "cover", label: "裁切填满" }] }] : [])
+    ],
+    motionDurationUs: Math.round(shot.frames / 30 * 1_000_000)
+  }])),
   "knowledge-concept-map": { component: ConceptMapCard, controls: structuredTextControls, motionDurationUs: 1_050_000 },
   "knowledge-causal-chain": { component: CausalChainCard, controls: structuredTextControls, motionDurationUs: 1_200_000 },
   "knowledge-argument-board": { component: ArgumentBoardCard, controls: structuredTextControls, motionDurationUs: 1_150_000 },
@@ -321,7 +338,7 @@ export function usesComponentChrome(compositionId: string) {
 }
 
 export function usesFullCanvasComposition(compositionId: string) {
-  return isReplicatedOverlayStudioEffect(compositionId);
+  return isReplicatedOverlayStudioEffect(compositionId) || isShotcraftComposition(compositionId);
 }
 
 export function effectCardChromeStyle(clip: Pick<CompositionClip, "color" | "accentColor" | "backdrop"> & Partial<Pick<CompositionClip, "fontSize">>, recipe: EffectRecipe, length: (pixels: number, minimum?: number) => string, theme?: MotionTheme, componentOwnedChrome = false, transparentFullCanvas = false): CSSProperties {

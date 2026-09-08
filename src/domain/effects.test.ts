@@ -1,3 +1,4 @@
+import { SHOTCRAFT_SHOTS } from "@/domain/shotcraft";
 import { describe, expect, it } from "vitest";
 import { BUILTIN_EFFECTS, OVERLAY_STUDIO_EFFECT_IDS, clockControlledRecipe, effectAnimationState, compositionById, effectParamsForText, effectiveEffectFontSize, recommendedEffectFontSize, recommendedEffectFontSizeForId, remapEffectTextParams, retrieveEffects, type EffectRecipe } from "@/domain/effects";
 
@@ -36,10 +37,10 @@ describe("retrieveEffects", () => {
     expect(retrieveEffects("纠正常见误区并给出真相", 1)[0].id).toBe("versus-card");
   });
 
-  it("exposes only the migrated Overlay Studio effects as built-ins", () => {
-    expect(BUILTIN_EFFECTS).toHaveLength(112);
+  it("exposes the migrated effects and first-round Shotcraft shots as built-ins", () => {
+    expect(BUILTIN_EFFECTS).toHaveLength(118);
     expect(new Set(BUILTIN_EFFECTS.map((effect) => effect.id)).size).toBe(BUILTIN_EFFECTS.length);
-    expect(new Set(BUILTIN_EFFECTS.map((effect) => effect.id))).toEqual(new Set([...OVERLAY_STUDIO_EFFECT_IDS, "poster-wall-3d", "image-duet-3d", "motion-zoom", "slide-gallery", "card-stack", "split-reveal", "background-stripes", "background-grid", "background-dots", "background-contours"]));
+    expect(new Set(BUILTIN_EFFECTS.map((effect) => effect.id))).toEqual(new Set([...SHOTCRAFT_SHOTS.map((shot) => shot.id), ...OVERLAY_STUDIO_EFFECT_IDS, "poster-wall-3d", "image-duet-3d", "motion-zoom", "slide-gallery", "card-stack", "split-reveal", "background-stripes", "background-grid", "background-dots", "background-contours"]));
     expect(BUILTIN_EFFECTS.every((effect) => !effect.kind && !effect.recipe.sceneBackground)).toBe(true);
   });
 

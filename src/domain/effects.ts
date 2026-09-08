@@ -1,6 +1,7 @@
 import { EASING_NAMES, eased as evaluateEasing, type EasingName } from "@/domain/easing";
 import { FOCUS_CARD_SLOTS, MEDIA_COMPOSITIONS, type CompositionSlot } from "@/domain/compositions";
 import { importedOverlayStudioEffectIds, importedOverlayStudioEffects, importedOverlayStudioTextParamKeys } from "@/domain/overlayStudioCatalog";
+import { isShotcraftComposition, SHOTCRAFT_COMPOSITIONS } from "@/domain/shotcraft";
 
 export type EffectCategory = "标题" | "强调" | "卡片" | "标注" | "数据" | "布局" | "场景" | "背景" | "展示";
 export type EffectLayout = "highlight" | "number" | "panel" | "underline" | "frame";
@@ -630,6 +631,7 @@ const overlayStudioDefaultPosition: Partial<Record<string, { x: number; y: numbe
 };
 
 export function defaultEffectTransform(compositionId: string) {
+  if (isShotcraftComposition(compositionId)) return { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 };
   const position = overlayStudioDefaultPosition[compositionId] ?? (overlayStudioEffectIdSet.has(compositionId) ? { x: 50, y: 50 } : { x: 50, y: 30 });
   return { ...position, scale: 1, rotation: 0, opacity: 1 };
 }
@@ -758,7 +760,8 @@ const REPLICATED_OVERLAY_STUDIO_EFFECTS: readonly CompositionDefinition[] = impo
 export const BUILTIN_EFFECTS: readonly CompositionDefinition[] = [
   ...TALKING_HEAD_EFFECTS,
   ...REPLICATED_OVERLAY_STUDIO_EFFECTS,
-  ...MEDIA_COMPOSITIONS
+  ...MEDIA_COMPOSITIONS,
+  ...SHOTCRAFT_COMPOSITIONS
 ];
 export const OVERLAY_STUDIO_BASE_FONT_SIZE = 48;
 
