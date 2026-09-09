@@ -1,0 +1,212 @@
+[
+  {
+    "id": "shotcraft-bullet-time-freeze-orbit",
+    "reason": "BulletTimeFreezeOrbit.tsx:48-57 用固定伪随机种子计算五根柱子的目标高度与数字，205 渲染 b.value；现有 copy 只改标题等文字，不能传入真实数据。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-axis-rescale-shock-v2",
+    "reason": "AxisRescaleShockV2.tsx:20 固定 DATA=[22,30,26,38,35,47,44,58,55,66,72,340]，96-97 固定美元刻度，176/191/265 显示刻度与月份；替换标题不能替换收入曲线及突增事实。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-oscilloscope-stream-v2",
+    "reason": "OscilloscopeStreamV2.tsx:30-52 用合成 signal 生成数据与读数，54-55 固定数值/秒刻度，130 显示 readout；没有真实时间序列输入，不能作为用户实时监控数据。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-unit-dot-swarm-regroup-v2",
+    "reason": "UnitDotSwarmRegroupV2.tsx:28-29 固定分组数量与 Free 7,210 / Pro 4,102 / Enterprise 1,535 标签，52-80 直接拼成 12,847 的点阵；copy 不能替换这些业务数值与套餐。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-counter-confetti",
+    "reason": "CounterConfetti.tsx:33 固定 val=Math.round(p*1000)，80 显示该值；现有 copy 不能指定最终计数，自动用于任意里程碑都会显示 1,000。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-needle-sweep-selftest",
+    "reason": "NeedleSweepSelftest.tsx:29-33 固定 target 190/120/235 度，58 换算为 70%/44%/87%，106 显示读数；这些终值没有 copy 参数。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-tape-scroll-fixed-pointer",
+    "reason": "TapeScrollFixedPointer.tsx:14-32 的 valueAt 固定从60滚至420，109 显示 Math.round(v)；现有 copy 不能设置真实目标指标。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-hatch-depth",
+    "reason": "HatchDepth.tsx:10-15 固定五个 w 比例，101 将 w*420 渲染为柱端数字；copy 可以改标签/总计，却不能同步改柱宽和柱端数字，易生成相互矛盾的业务数据。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-counter-tick-sparks",
+    "reason": "CounterTickSparks.tsx:10 固定 TARGET=12847，65 渲染计数；SSR 实测将全部可编辑字段改成“已完成订单：320 单”后仍同时显示12,847。现有 copy 没有目标数字字段。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-particle-sand-fill",
+    "reason": "ParticleSandFill.tsx:21-26 的柱高 h 固定为238/336/182/294，copy只改其旁的label；将真实数字替换为另一组后柱高仍按旧数绘制，不能作为真实比较图表。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-circle-match-iris",
+    "reason": "CircleMatchIris.tsx:40 将圆环 sweep 固定增长至0.78，45/97 显示78%；createDemo不消费copy，自动选择时无法替换核心百分比。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-dashboard-glow-highlight-pill",
+    "reason": "DashboardGlowHighlightPill.tsx:8-38 合成价格/交易量与K线；243/252/270-271 另含固定资金、费率、TOKEN/ALT盈亏。copy不能覆盖这些账户与市场数值。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-hit-counter",
+    "reason": "HitCounter.tsx:16 固定 DMG_TEXT=['+1.2k','+2.4k','+4.8k']并在击中时呈现；现有copy无法替换三次增量，自动用于产品增长或收益陈述会残留演示数值。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-graze-face-tour",
+    "reason": "GrazeFaceTour.tsx:94-107/138/172/280 的树节点、项目名与 ClickUp 3.0 标签是原始字符串，实际映射到面板；部分其他文案虽有copy，这些演示品牌与项目不能同步替换。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-steep-tilt-glide",
+    "reason": "SteepTiltGlide.tsx:93/219 固定 Widget brainstorm、Design system、New Feature Launch、Roadmap Q3、User Testing、Bug Triage 等项目列表并渲染；当前copy无法替换这些核心界面条目。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-terminal3-d",
+    "reason": "Terminal3D.tsx:21-39 的 git/npm/tail 命令和输出（模块数、API响应、任务进度）是固定 DATA；144/154/184 显示该内容，copy不能替换成用户实际工作流。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-assemble-then-type-flyin",
+    "reason": "AssembleThenTypeFlyin.tsx:21-34 的 BLOCKS 写死 The headline for / your product here、Acme Studio、app.example.com、ACME LABS 和 @USERNAME；createDemo不消费copy，这些品牌和正文会直接输出。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-aurora-bloom-bg-flip",
+    "reason": "AuroraBloomBgFlip.tsx:14-15 的主标题 WA/WB 固定为 For many years / everything changed，102/124 渲染；createDemo不消费copy，无法使用用户自己的主文案。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-stream-response",
+    "reason": "StreamResponse.tsx:16-24 的结果清单固定声称已检查128文件、12模块、24路由、6角色且无阻碍；127 渲染ROWS。copy只改周围标题/摘要，不能替换这些验证结果。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-chip-grid-single-select-blackout",
+    "reason": "ChipGridSingleSelectBlackout.tsx:23 固定 CAP_TEXT='18% off · 42.00 → 34.44'，163起逐词呈现；copy没有覆盖该折扣与价格事实。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-chip-lift-to-user-pill",
+    "reason": "ChipLiftToUserPill.tsx:36-37 固定 Casey Doe 与 Starting with Casey，姓名和说明逐字/逐词显示；copy只能改网格缩写，替换真实人员后仍会出现原演示姓名。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-cursor-cast-ensemble",
+    "reason": "CursorCastEnsemble.tsx:30/102 固定键入 Our customers love it；copy可以改其他字段，无法替换这条客户评价陈述。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-hashtag-to-pill-materialize",
+    "reason": "HashtagToPillMaterialize.tsx:33/77 固定键入 #music，但最终胶囊标签69由copy0替换；真实标签替换后会展示从不相关 #music 变成目标标签的错误内容连续性。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-orbit-ring-title-open",
+    "reason": "OrbitRingTitleOpen.tsx:36/478 固定显示 VIDEO-SHOTCRAFT；主标题可由copy替换但该品牌不能，自动用于用户产品开场会残留上游品牌。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-outro-group-photo-launch",
+    "reason": "OutroGroupPhotoLaunch.tsx:12 固定将 AI Foundation Lab 拆成 LETTERS，279逐字显示；copy只覆盖副标题，无法替换收尾的主品牌。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-quad-split-parallel-scenes",
+    "reason": "QuadSplitParallelScenes.tsx:13-15 固定Tab One等标签及Placeholder headline text/and a second line of copy，224另写死评论；四个核心演示面板不由copy或真实截图替换。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-brand-ink-open",
+    "reason": "BrandInkOpen.tsx:13/115 固定键入 TEAM RESEARCH CONSOLE；copy仅改WORDMARK，无法将产品类别副标题与用户品牌一起替换。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-paper-title-card",
+    "reason": "PaperTitleCard.tsx:21-22 固定 SUB='of 31 fetched today' 和 SUB_DIGITS='5'，结尾数字说明仍显示5/31；copy不能替换这两项事实。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-pill-chip-slot-cycle-handled",
+    "reason": "PillChipSlotCycleHandled.tsx:8-13 固定 WORDS 为Sales/Workflow/Admin/Reports，106起轮播显示；createDemo不消费copy，无法将主功能词替换为用户实际功能。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-terminal-typewriter",
+    "reason": "TerminalTypewriter.tsx:9/53 固定输入 acme deploy --prod；copy无法替换这条含演示品牌的核心命令。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-typewriter-error-retype",
+    "reason": "TypewriterErrorRetype.tsx:9/12 固定 TEXT1='just a dashboard' 与 TEXT2='your command center'，打字/删除/重打都从这两条常量派生；copy无法改成用户要求的纠错文案。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-floating-glossy-label-pills",
+    "reason": "FloatingGlossyLabelPills.tsx:137-142 固定四个主标签 Feature A/B/C/D，198起渲染GROUPS；没有copy替换路径，自动生成会把占位功能名作为成片内容。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-integration-hub-map",
+    "reason": "IntegrationHubMap.tsx:146-210 固定绘制并连接 Figma、GitHub、Salesforce、Google Drive、Dropbox 品牌图标；copy可改旁边文字但不能替换/移除这些集成关系，不能自动声称用户产品支持它们。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-research-card-stack-scroll",
+    "reason": "ResearchCardStackScroll.tsx:21-35 固定论文标题（含延迟降低41%的主张），125固定合成作者和preprint编号；createDemo不消费copy，不能替换为真实研究资料。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-skeleton-reveal",
+    "reason": "SkeletonReveal.tsx:107-112 的MSGS固定为rebrand/logo/deck/pink协作对话，145起逐词显示；copy可以改姓名但不能改消息，输出会残留与用户内容无关的演示对话。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-doc-park-left-pill-deal",
+    "reason": "DocParkLeftPillDeal.tsx:105-108 的推荐理由cap固定声称符合偏好、工作日使用与复购商品，219传给逐词说明；copy只改商品名称，无法替换这些用户行为结论。",
+    "kind": "demo-content"
+  },
+  {
+    "id": "shotcraft-type-and-filter",
+    "reason": "TypeAndFilter.tsx:9-30 根据live-layout.projects.cards固定定位nano-lab、搜索框(408,130,1016,44)和点击点(586,391)，并始终键入nano-lab；任意真实截图/查询不会与遮罩、筛选和取景一致。",
+    "kind": "layout"
+  },
+  {
+    "id": "shotcraft-mask-wipe-real",
+    "reason": "MaskWipeReal.tsx:8/17 按live-layout.projects.cards[3]的固定rect从页面局部展开窗口，并在50-56叠加整页和第四卡高清片；当前regions不进入实现，任意真实截图不能保证起始卡片对应。",
+    "kind": "layout"
+  },
+  {
+    "id": "shotcraft-row-embed",
+    "reason": "RowEmbed.tsx:10-14/23 使用live-layout.detail.rows和固定相机路径，按这些矩形裁切用户图片、盖空槽、飞入再拼回；未按输入图片识别真实行，任意截图会切错区域。",
+    "kind": "layout"
+  },
+  {
+    "id": "shotcraft-document-typewriter-reveal",
+    "reason": "DocumentTypewriterReveal.tsx:10-24 依赖live-layout.wbr.blocks/rails给真实截图打遮罩和光标；29-35另有不能由copy替换的2026周次与日期。任意文档截图不会与打字区域对齐。",
+    "kind": "layout"
+  },
+  {
+    "id": "shotcraft-list-stack-press",
+    "reason": "ListStackPress.tsx:9/83-96 按live-layout.papers.cards盖住输入整页并放入paper1-5片段，固定相机取景；没有真实页面槽位识别，任意截图会覆盖错误位置。DIGITS虽可编辑，但只是算法字轮字符表，不能当作真实计数输入。",
+    "kind": "layout"
+  },
+  {
+    "id": "shotcraft-deck-deal-flyin",
+    "reason": "DeckDealFlyin.tsx:9-38 按live-layout.projects.cards与旧页面列坐标建立26张卡网格，并与projects-empty整页背景组合；当前regions不参与页面构件定位，自动匹配任意真实截图不能保证卡槽落位一致。",
+    "kind": "layout"
+  }
+]

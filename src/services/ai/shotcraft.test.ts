@@ -1,0 +1,62 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { generateShotcraftPlan } from "@/services/ai/shotcraft";
+import { requestValidatedStructured } from "@/services/ai/provider";
+import { z } from "zod";
+
+const config = { protocol: "openai-chat" as const, baseUrl: "https://example.test", model: "test", inputCostPerMillion: 0, outputCostPerMillion: 0 };
+const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2, estimatedCostUsd: 0 };
+afterEach(() => { sessionStorage.removeItem("bvideo:ai-api-key"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+it("先筛选全库再提交所选镜头细节，两阶段结果均校验", async () => {
+  sessionStorage.setItem("bvideo:ai-api-key", "fixture");
+  const response = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }], usage: {} }), { headers: { "content-type": "application/json" } });
+  const fetch = vi.fn().mockResolvedValueOnce(response({ shotIds: ["shotcraft-blur-slide"] })).mockResolvedValueOnce(response({ title: "实际内容", scenes: [{ shotId: "shotcraft-blur-slide", text: "内容", durationSeconds: 4, copy: [], bindings: [], regions: [], transition: "none", sounds: [], reason: "开场" }] }));
+  vi.stubGlobal("fetch", fetch);
+  const result = await generateShotcraftPlan(config, { brief: "介绍产品", durationSeconds: 4, assets: [], useVision: false, soundEnabled: false });
+  expect(result.data.scenes).toHaveLength(1);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  const first = JSON.parse(String(fetch.mock.calls[0][1].body));
+  const second = JSON.parse(String(fetch.mock.calls[1][1].body));
+  const catalog = JSON.parse(first.messages[1].content).catalog;
+  expect(catalog).toHaveLength(174);
+  expect(catalog).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: "shotcraft-counter-tick-sparks" })]));
+  expect(JSON.parse(second.messages[1].content).catalog).toHaveLength(1);
+});
+it.each(["openai-chat", "openai-responses", "anthropic"] as const)("%s 传递图片同时保留结构化输出", async (protocol) => {
+  const value = { ok: true };
+  const response = protocol === "anthropic" ? { content: [{ type: "tool_use", name: "probe", input: value }], usage: {} } : protocol === "openai-responses" ? { output: [{ content: [{ type: "output_text", text: JSON.stringify(value) }] }], usage: {} } : { choices: [{ message: { content: JSON.stringify(value) } }], usage };
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(response), { headers: { "content-type": "application/json" } }));
+  vi.stubGlobal("fetch", fetch);
+  const schema = z.object({ ok: z.boolean() });
+  const result = await requestValidatedStructured({ config: { ...config, protocol }, name: "probe", system: "test", user: "test", images: ["data:image/jpeg;base64,cGljdHVyZQ=="], jsonSchema: z.toJSONSchema(schema), parse: (value) => schema.parse(value), validatingMessage: "校验", failureLabel: "测试", browserApiKey: "fixture" });
+  expect(result.data).toEqual(value);
+  const payload = String(fetch.mock.calls[0][1].body);
+  expect(payload).toContain("cGljdHVyZQ==");
+  expect(payload).not.toContain("fixture");
+});
+it("自动修复请求包含具体文案约束，并接受模型修正的完整计划", async () => {
+  sessionStorage.setItem("bvideo:ai-api-key", "fixture");
+  const response = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }], usage: {} }), { headers: { "content-type": "application/json" } });
+  const valid = { title: "节奏", scenes: [{ shotId: "shotcraft-spectrum-morph-ui", text: "", durationSeconds: 4, copy: [{ key: "copy0", value: "音乐卡点" }], bindings: [], regions: [], transition: "none", sounds: [], reason: "展示节奏" }] };
+  const invalid = structuredClone(valid);
+  invalid.scenes[0].copy.push({ key: "copy1", value: "多余字段" });
+  invalid.scenes.push(structuredClone(invalid.scenes[0]));
+  const fetch = vi.fn().mockResolvedValueOnce(response({ shotIds: ["shotcraft-spectrum-morph-ui"] })).mockResolvedValueOnce(response(invalid)).mockResolvedValueOnce(response(valid));
+  vi.stubGlobal("fetch", fetch);
+  const result = await generateShotcraftPlan(config, { brief: "音乐卡点", durationSeconds: 4, assets: [], useVision: false, soundEnabled: false });
+  expect(result.data).toEqual(valid);
+  const repair = JSON.parse(String(fetch.mock.calls[2][1].body)).messages[1].content;
+  expect(repair).toContain("scenes.0.copy");
+  expect(repair).toContain("无效字段：copy1");
+  expect(repair).toContain("允许的文案字段：copy0");
+  expect(repair).toContain("第 2 镜重复使用 shotcraft-spectrum-morph-ui");
+});
+it("AI 编排拒绝重复镜头卡，自动修复后才接收", async () => {
+  sessionStorage.setItem("bvideo:ai-api-key", "fixture");
+  const response = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }], usage: {} }), { headers: { "content-type": "application/json" } });
+  const scene = { shotId: "shotcraft-blur-slide", text: "内容", durationSeconds: 2, copy: [], bindings: [], regions: [], transition: "none", sounds: [], reason: "开场" };
+  const fetch = vi.fn().mockResolvedValueOnce(response({ shotIds: [scene.shotId] })).mockResolvedValueOnce(response({ title: "重复", scenes: [scene, scene] })).mockResolvedValueOnce(response({ title: "修复", scenes: [{ ...scene, durationSeconds: 4 }] }));
+  vi.stubGlobal("fetch", fetch);
+  const result = await generateShotcraftPlan(config, { brief: "介绍产品", durationSeconds: 4, assets: [], useVision: false, soundEnabled: false });
+  expect(result.data.scenes).toHaveLength(1);
+  expect(JSON.parse(String(fetch.mock.calls[2][1].body)).messages[1].content).toContain("第 2 镜重复使用 shotcraft-blur-slide");
+});

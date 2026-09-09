@@ -1,0 +1,2304 @@
+{
+  "shotcraft-crash-impact-real": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "hit",
+      "frame": 46,
+      "category": "impact"
+    }
+  ],
+  "shotcraft-crash-zoom-real": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "zoom",
+      "frame": 40,
+      "category": "riser"
+    },
+    {
+      "key": "hit",
+      "frame": 46,
+      "category": "impact"
+    }
+  ],
+  "shotcraft-dolly-zoom-real": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-multiplane-real": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-graze-face-tour": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-overhead-tabletop-drop": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "drop",
+      "frame": 55,
+      "category": "transition"
+    },
+    {
+      "key": "land",
+      "frame": 85,
+      "category": "impact"
+    }
+  ],
+  "shotcraft-tilt-reveal": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-drone-dive-landing": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-exploded-view": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-steep-tilt-glide": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-bullet-time-freeze-orbit": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-dutch-roll-to-level": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-pull-back-isolation": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-slow-push-in": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "cut",
+      "frame": 120,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-terminal3-d": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-avatar-grid-radial-build-colorize": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-axis-rescale-shock-v2": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-oscilloscope-stream-v2": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-unit-dot-swarm-regroup-v2": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-counter-confetti": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-cycle-glass-node-morph": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-needle-sweep-selftest": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-tape-scroll-fixed-pointer": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-hatch-depth": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-odometer-digit-roll": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "lock",
+      "frame": 63,
+      "category": "data"
+    },
+    {
+      "key": "label",
+      "frame": 84,
+      "category": "text"
+    }
+  ],
+  "shotcraft-confetti-crossfire": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-counter-tick-sparks": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "reveal",
+      "frame": 78,
+      "category": "impact"
+    },
+    {
+      "key": "settled",
+      "frame": 96,
+      "category": "light"
+    }
+  ],
+  "shotcraft-particle-sand-fill": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-ring-diagram-annotation-reveal": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-brake-reticle-lock": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-changelog-scroll-brake": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "lift0",
+      "frame": 68,
+      "category": "transition"
+    },
+    {
+      "key": "lift1",
+      "frame": 82,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-timeline-travel": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-assemble-then-type-flyin": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-aurora-bloom-bg-flip": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-brand-frame-snap": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "frame",
+      "frame": 18,
+      "category": "ui"
+    },
+    {
+      "key": "flip",
+      "frame": 78,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-dashboard-glow-highlight-pill": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-line-unfold-panel": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-reticle-lock-on": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "lock",
+      "frame": 46,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-flyline-arc": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-glow-orb-ambient": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-orb-flyline-relay": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-attention-bounce": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-pop-burst-confirm": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-anime-impact": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "impact",
+      "frame": 30,
+      "category": "impact"
+    }
+  ],
+  "shotcraft-hit-counter": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-halation-bloom": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "impact",
+      "frame": 15,
+      "category": "impact"
+    }
+  ],
+  "shotcraft-sheen-sweep-retry": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-spotlight-sweep-reveal": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-line-boil": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-radial-ripple-phone-chips": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-riso-beat-pump": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-riso-misregistration-hit": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "hit",
+      "frame": 28,
+      "category": "impact"
+    }
+  ],
+  "shotcraft-scan-bracket-sweep": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-scanline-annotate-focus": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-scanline-assemble-flyin": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-impact-burst-kit": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "impact",
+      "frame": 20,
+      "category": "impact"
+    }
+  ],
+  "shotcraft-kanada-perspective-snap": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "land",
+      "frame": 18,
+      "category": "impact"
+    }
+  ],
+  "shotcraft-score-slam": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "impact",
+      "frame": 14,
+      "category": "impact"
+    }
+  ],
+  "shotcraft-corner-spotlight-reveal": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-glow-wake-sleep-panel": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-slide-spotlight-pan": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-stream-response": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-autolayout-gap-dial": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "expand",
+      "frame": 14,
+      "category": "ui"
+    },
+    {
+      "key": "spread",
+      "frame": 52,
+      "category": "ui"
+    },
+    {
+      "key": "return",
+      "frame": 66,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-diagram-cascade-build": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "root",
+      "frame": 52,
+      "category": "ui"
+    },
+    {
+      "key": "child",
+      "frame": 72,
+      "category": "ui"
+    },
+    {
+      "key": "breathe",
+      "frame": 144,
+      "category": "light"
+    }
+  ],
+  "shotcraft-panel-to-canvas-materialize": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "click",
+      "frame": 46,
+      "category": "ui"
+    },
+    {
+      "key": "fly",
+      "frame": 54,
+      "category": "transition"
+    },
+    {
+      "key": "land",
+      "frame": 100,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-chip-grid-single-select-blackout": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-chip-lift-to-user-pill": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-cursor-cast-ensemble": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-cursor-dialogue-duet": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "handoff",
+      "frame": 84,
+      "category": "ui"
+    },
+    {
+      "key": "exit",
+      "frame": 104,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-command-palette-summon": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-glass-pill-dictation-typing": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-hashtag-to-pill-materialize": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-cursor-performance-punch-in": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-keycap-smash-cut": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-picker-carousel-feature-cycle": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-segmented-thumb-hero": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "click",
+      "frame": 48,
+      "category": "ui"
+    },
+    {
+      "key": "switch",
+      "frame": 60,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-palette-theme-ripple": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-theme-sweep-toggle": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-type-and-filter": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-voice-waveform-live": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "submit",
+      "frame": 126,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-crane-rise-reveal": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "rise",
+      "frame": 20,
+      "category": "riser"
+    },
+    {
+      "key": "reveal",
+      "frame": 120,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-dataviz-landscape-open": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-fracture": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-icon-field-colorize": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "color",
+      "frame": 78,
+      "category": "light"
+    }
+  ],
+  "shotcraft-letterspace-materialize": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "draw",
+      "frame": 16,
+      "category": "text"
+    },
+    {
+      "key": "settled",
+      "frame": 76,
+      "category": "light"
+    }
+  ],
+  "shotcraft-magician-card-flourish": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "takeoff",
+      "frame": 9,
+      "category": "transition"
+    },
+    {
+      "key": "land",
+      "frame": 59,
+      "category": "impact"
+    },
+    {
+      "key": "sheen",
+      "frame": 67,
+      "category": "light"
+    },
+    {
+      "key": "settled",
+      "frame": 93,
+      "category": "light"
+    }
+  ],
+  "shotcraft-orbit-ring-title-open": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-stroke-segment-build": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-text-as-mask": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "zoom",
+      "frame": 100,
+      "category": "transition"
+    },
+    {
+      "key": "reveal",
+      "frame": 130,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-logo-sting-button": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-grain-dissolve": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-logo-shrink-wordmark-lockup": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-neon-triple-marquee": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-outro-group-photo-launch": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-ui-strip-away-outro": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "click",
+      "frame": 34,
+      "category": "ui"
+    },
+    {
+      "key": "logo",
+      "frame": 96,
+      "category": "text"
+    }
+  ],
+  "shotcraft-icon-flip-bloom-logo": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "flip",
+      "frame": 34,
+      "category": "transition"
+    },
+    {
+      "key": "bloom",
+      "frame": 46,
+      "category": "light"
+    },
+    {
+      "key": "logo",
+      "frame": 66,
+      "category": "text"
+    }
+  ],
+  "shotcraft-input-morphs-into-logo": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "click",
+      "frame": 22,
+      "category": "ui"
+    },
+    {
+      "key": "morph",
+      "frame": 34,
+      "category": "transition"
+    },
+    {
+      "key": "land",
+      "frame": 84,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-beat-cut-accelerando": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "cut1",
+      "frame": 49,
+      "category": "transition"
+    },
+    {
+      "key": "cut2",
+      "frame": 65,
+      "category": "transition"
+    },
+    {
+      "key": "cut3",
+      "frame": 77,
+      "category": "transition"
+    },
+    {
+      "key": "cut4",
+      "frame": 85,
+      "category": "transition"
+    },
+    {
+      "key": "cut5",
+      "frame": 91,
+      "category": "transition"
+    },
+    {
+      "key": "cut6",
+      "frame": 95,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-paparazzi-flash": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "flash1",
+      "frame": 30,
+      "category": "camera"
+    },
+    {
+      "key": "flash2",
+      "frame": 52,
+      "category": "camera"
+    },
+    {
+      "key": "flash3",
+      "frame": 70,
+      "category": "camera"
+    }
+  ],
+  "shotcraft-beat-step-list-theme-cycle": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "step1",
+      "frame": 30,
+      "category": "ui"
+    },
+    {
+      "key": "step2",
+      "frame": 48,
+      "category": "ui"
+    },
+    {
+      "key": "step3",
+      "frame": 66,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-domino-cascade": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-drop-blackout-slam": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-wright-triple-cut": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-comic-panel-split": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-flip-grid-reflow": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-grid-flash-mosaic": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-quad-split-parallel-scenes": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-jump-cut-punch-in": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-strobe-black-frames": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-sakuga-timing-shift": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-smear-multiples": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "fly",
+      "frame": 25,
+      "category": "transition"
+    },
+    {
+      "key": "land",
+      "frame": 37,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-spectrum-morph-ui": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "split",
+      "frame": 25,
+      "category": "transition"
+    },
+    {
+      "key": "merge",
+      "frame": 101,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-freeze-annotate-real": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-speed-ramp-real": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-card-footage-cadence": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-smash-cut": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "cut",
+      "frame": 42,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-trailer-bumper": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "cut_2",
+      "frame": 9,
+      "category": "transition"
+    },
+    {
+      "key": "cut_3",
+      "frame": 18,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-bottom-push-stack-wipe": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-bubble-swarm-takeover": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "peak",
+      "frame": 75,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-card-flip-reveal": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "flip1",
+      "frame": 36,
+      "category": "paper"
+    },
+    {
+      "key": "flip2",
+      "frame": 46,
+      "category": "paper"
+    },
+    {
+      "key": "flip3",
+      "frame": 56,
+      "category": "paper"
+    }
+  ],
+  "shotcraft-card-flock-tumble": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-circle-match-iris": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-color-block-step-wipe": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "badge",
+      "frame": 52,
+      "category": "ui"
+    },
+    {
+      "key": "reveal",
+      "frame": 78,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-cube-navigation": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-gradient-transition": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-line-carry-transition": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "fly",
+      "frame": 34,
+      "category": "transition"
+    },
+    {
+      "key": "frame",
+      "frame": 112,
+      "category": "ui"
+    },
+    {
+      "key": "content",
+      "frame": 124,
+      "category": "text"
+    }
+  ],
+  "shotcraft-mosaic-reframe": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-barn-door-split": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-cube-rotate": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-paper-plane-messenger": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "click",
+      "frame": 12,
+      "category": "ui"
+    },
+    {
+      "key": "fly",
+      "frame": 34,
+      "category": "paper"
+    },
+    {
+      "key": "takeover",
+      "frame": 112,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-ink-bleed-reveal": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "ink",
+      "frame": 20,
+      "category": "fluid"
+    },
+    {
+      "key": "reveal",
+      "frame": 100,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-black-card-transition": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-dark-tunnel-transition": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-focus-handoff-transition": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-mask-wipe-real": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-portal-wipe-v2": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-whip-brake-real": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-whip-pan-real": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-glitch-displace": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-invisible-cut": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "cut",
+      "frame": 47,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-light-leak-burn": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "peak",
+      "frame": 52,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-versus-slam": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "impact",
+      "frame": 30,
+      "category": "impact"
+    }
+  ],
+  "shotcraft-letterform-zoom": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "zoom",
+      "frame": 25,
+      "category": "transition"
+    },
+    {
+      "key": "reveal",
+      "frame": 85,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-shared-element-morph": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "morph_start",
+      "frame": 35,
+      "category": "transition"
+    },
+    {
+      "key": "morph",
+      "frame": 35,
+      "category": "transition"
+    },
+    {
+      "key": "land",
+      "frame": 60,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-white-flash-logo-simplify-cut": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-blinds-slice": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-clock-wipe": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-brace-expand": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-brand-ink-open": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-cel-flash-stomp": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    },
+    {
+      "key": "stomp1",
+      "frame": 0,
+      "category": "impact"
+    },
+    {
+      "key": "land",
+      "frame": 6,
+      "category": "impact"
+    },
+    {
+      "key": "stomp2",
+      "frame": 30,
+      "category": "impact"
+    },
+    {
+      "key": "stomp3",
+      "frame": 60,
+      "category": "impact"
+    }
+  ],
+  "shotcraft-countdown-arc-scatter": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-flying-words": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-glitch-cycle": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-gradient-word-sweep": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    },
+    {
+      "key": "sweep",
+      "frame": 12,
+      "category": "text"
+    },
+    {
+      "key": "flash",
+      "frame": 33,
+      "category": "light"
+    }
+  ],
+  "shotcraft-lead-word-zoom-assemble": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-marker-underline-title": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    },
+    {
+      "key": "title",
+      "frame": 22,
+      "category": "text"
+    },
+    {
+      "key": "draw",
+      "frame": 32,
+      "category": "text"
+    },
+    {
+      "key": "underline",
+      "frame": 42,
+      "category": "paper"
+    },
+    {
+      "key": "settled",
+      "frame": 42,
+      "category": "light"
+    }
+  ],
+  "shotcraft-outline-word-fill": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-paper-title-card": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-pill-chip-slot-cycle-handled": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-pill-slot-cycle": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    },
+    {
+      "key": "swap1",
+      "frame": 20,
+      "category": "ui"
+    },
+    {
+      "key": "swap2",
+      "frame": 41,
+      "category": "ui"
+    },
+    {
+      "key": "swap3",
+      "frame": 62,
+      "category": "ui"
+    },
+    {
+      "key": "swap4",
+      "frame": 83,
+      "category": "ui"
+    },
+    {
+      "key": "swap5",
+      "frame": 104,
+      "category": "ui"
+    },
+    {
+      "key": "swap6",
+      "frame": 125,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-scramble": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-split-flap-flip": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-text-column-converge": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    },
+    {
+      "key": "merge",
+      "frame": 136,
+      "category": "text"
+    },
+    {
+      "key": "label",
+      "frame": 154,
+      "category": "text"
+    }
+  ],
+  "shotcraft-title-demote-to-label": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    },
+    {
+      "key": "first",
+      "frame": 52,
+      "category": "text"
+    },
+    {
+      "key": "second",
+      "frame": 156,
+      "category": "text"
+    }
+  ],
+  "shotcraft-letterform-drift-assembly": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-split-text-stagger": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-text-on-path": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-tracking-expand-reveal": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    },
+    {
+      "key": "title",
+      "frame": 50,
+      "category": "text"
+    },
+    {
+      "key": "subtitle",
+      "frame": 58,
+      "category": "text"
+    }
+  ],
+  "shotcraft-letter-drop-physics": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    },
+    {
+      "key": "settled",
+      "frame": 116,
+      "category": "text"
+    }
+  ],
+  "shotcraft-scramble-decode": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    },
+    {
+      "key": "lock_step",
+      "frame": 6,
+      "category": "ui"
+    },
+    {
+      "key": "lock_start",
+      "frame": 20,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-font-weight-pump": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    },
+    {
+      "key": "pump1",
+      "frame": 30,
+      "category": "text"
+    },
+    {
+      "key": "pump2",
+      "frame": 50,
+      "category": "text"
+    },
+    {
+      "key": "pump3",
+      "frame": 70,
+      "category": "text"
+    },
+    {
+      "key": "pump4",
+      "frame": 90,
+      "category": "text"
+    },
+    {
+      "key": "pump5",
+      "frame": 110,
+      "category": "text"
+    }
+  ],
+  "shotcraft-karaoke-fill-sync": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    },
+    {
+      "key": "word1",
+      "frame": 20,
+      "category": "text"
+    },
+    {
+      "key": "word2",
+      "frame": 42,
+      "category": "text"
+    },
+    {
+      "key": "word3",
+      "frame": 85,
+      "category": "text"
+    },
+    {
+      "key": "word4",
+      "frame": 107,
+      "category": "text"
+    }
+  ],
+  "shotcraft-terminal-typewriter": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-typewriter-error-retype": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-typing-code-block": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-vertical-word-roll-blur-cycle": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-word-relay-filmstrip": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-word-relay-geometry": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-avatar-bracket-carousel": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-bezier-source-converge-merge": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-carousel3-d": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-cloner-depth-echo": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-deck-deal-flyin": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-doc-park-left-pill-deal": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-document-typewriter-reveal": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "text"
+    }
+  ],
+  "shotcraft-draw-svg-trace": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "trace",
+      "frame": 48,
+      "category": "light"
+    },
+    {
+      "key": "underline",
+      "frame": 86,
+      "category": "text"
+    }
+  ],
+  "shotcraft-axial-stretch": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-contact-shadow-lift": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "lift1",
+      "frame": 2,
+      "category": "ui"
+    },
+    {
+      "key": "land1",
+      "frame": 38,
+      "category": "ui"
+    },
+    {
+      "key": "lift2",
+      "frame": 42,
+      "category": "ui"
+    },
+    {
+      "key": "land2",
+      "frame": 78,
+      "category": "ui"
+    },
+    {
+      "key": "lift3",
+      "frame": 82,
+      "category": "ui"
+    },
+    {
+      "key": "land3",
+      "frame": 118,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-floating-glossy-label-pills": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-integration-hub-map": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-list-reveal": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-list-stack-press": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-morph-from-primitive": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "morph",
+      "frame": 30,
+      "category": "transition"
+    },
+    {
+      "key": "content",
+      "frame": 68,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-neon-frame-forerun": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-neon-frame-forerun-orbit": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "land",
+      "frame": 66.16,
+      "category": "impact"
+    }
+  ],
+  "shotcraft-page-waterfall-wall": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-masking-tape-slap": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-popup-book-rise": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-platform-hinge-rise": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-product-card-progressive-assemble": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-radial-wave": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-research-card-stack-scroll": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-row-embed": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-runway-ground-skim": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-skeleton-reveal": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "swap",
+      "frame": 32,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-svg-shape-morph": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-value-stagger-gradient": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-bento-light-up": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "activate",
+      "frame": 20,
+      "category": "ui"
+    },
+    {
+      "key": "content",
+      "frame": 94,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-grid-wave-flip": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "flip",
+      "frame": 20,
+      "category": "paper"
+    },
+    {
+      "key": "settled",
+      "frame": 66,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-wireframe-draw-on": [
+    {
+      "key": "start",
+      "frame": 0,
+      "category": "transition"
+    },
+    {
+      "key": "draw",
+      "frame": 20,
+      "category": "ui"
+    },
+    {
+      "key": "scan",
+      "frame": 88,
+      "category": "transition"
+    },
+    {
+      "key": "reveal",
+      "frame": 118,
+      "category": "light"
+    }
+  ],
+  "shotcraft-blur-slide": [
+    {
+      "key": "title",
+      "frame": 14,
+      "category": "text"
+    }
+  ],
+  "shotcraft-before-after": [
+    {
+      "key": "sweep",
+      "frame": 14,
+      "category": "transition"
+    },
+    {
+      "key": "settled",
+      "frame": 104,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-cursor-flyover": [
+    {
+      "key": "focus1",
+      "frame": 57,
+      "category": "camera"
+    },
+    {
+      "key": "focus2",
+      "frame": 93,
+      "category": "camera"
+    },
+    {
+      "key": "focus3",
+      "frame": 129,
+      "category": "camera"
+    },
+    {
+      "key": "focus4",
+      "frame": 163,
+      "category": "camera"
+    }
+  ],
+  "shotcraft-basic-3d": [
+    {
+      "key": "step1",
+      "frame": 40,
+      "category": "transition"
+    },
+    {
+      "key": "step2",
+      "frame": 86,
+      "category": "transition"
+    },
+    {
+      "key": "step3",
+      "frame": 136,
+      "category": "transition"
+    }
+  ],
+  "shotcraft-spotlight-hero-card": [
+    {
+      "key": "lock",
+      "frame": 32,
+      "category": "riser"
+    },
+    {
+      "key": "lift",
+      "frame": 48,
+      "category": "impact"
+    },
+    {
+      "key": "beam",
+      "frame": 60,
+      "category": "light"
+    },
+    {
+      "key": "return",
+      "frame": 130,
+      "category": "ui"
+    }
+  ],
+  "shotcraft-card-stack": [
+    {
+      "key": "deal",
+      "frame": 8,
+      "category": "paper"
+    },
+    {
+      "key": "fan",
+      "frame": 69,
+      "category": "paper"
+    }
+  ]
+}
