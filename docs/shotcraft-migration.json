@@ -3,6 +3,21 @@
   "cards": 157,
   "styles": 214,
   "nativeCards": 6,
+  "adaptationReview": {
+    "automaticImplementations": 168,
+    "manualAdaptationRequired": 48,
+    "projectSchemaVersion": 32,
+    "fixes": [
+      "中文首词分词、连续强调词和长句字号适配",
+      "真实品牌槽、字标测量居中及一秒结尾停留",
+      "品牌画框的两张真实状态图、可编辑标签和同帧切换",
+      "真实冻结圈注图片及 draw/freeze 动作锚点",
+      "TimelineTravel 保留 104 帧持久化时钟，映射到完整 144 帧运动并包含末段推近",
+      "慢推无图终态与纯字卡节奏终态不再显示示例页面",
+      "独立可见说明、字段语义和长度、空间步进四段文案及镜头冲击预算校验"
+    ],
+    "scope": "原始 sourceHash/cardHash 仍记录上游来源；当前适配差异以仓库实现和测试为准。自动可选不等同于通过任意素材的成片质量验收。"
+  },
   "implementations": [
     {
       "id": "shotcraft-crash-impact-real",
@@ -4496,6 +4511,11 @@
     }
   ],
   "contentAudit": [
+    {
+      "id": "shotcraft-cursor-performance-punch-in",
+      "kind": "layout",
+      "reason": "按固定 BTN/CLICK 坐标叠加自绘 Deploy 按钮并点击，未匹配真实截图控件；替换 copy 仍会制造并不存在的操作入口。"
+    },
     {
       "id": "shotcraft-reticle-lock-on",
       "kind": "layout",

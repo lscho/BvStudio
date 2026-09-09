@@ -67,11 +67,11 @@ const impactShots: Readonly<Record<string, number>> = {
   "shotcraft-crash-zoom-real": 1, "shotcraft-anime-impact": 1,
   "shotcraft-grid-flash-mosaic": 1, "shotcraft-smash-cut": 1,
   "shotcraft-glitch-displace": 1, "shotcraft-light-leak-burn": 1,
-  "shotcraft-paparazzi-flash": 3, "shotcraft-cel-flash-stomp": 3,
+  "shotcraft-paparazzi-flash": 1, "shotcraft-cel-flash-stomp": 1,
   "shotcraft-drop-blackout-slam": 1, "shotcraft-impact-burst-kit": 1,
   "shotcraft-white-flash-logo-simplify-cut": 1, "shotcraft-score-slam": 1,
   "shotcraft-versus-slam": 1, "shotcraft-kanada-perspective-snap": 1,
-  "shotcraft-domino-cascade": 2
+  "shotcraft-domino-cascade": 1
 };
 export function shotcraftImpactCount(scenes: readonly Pick<ShotcraftPlan["scenes"][number], "shotId" | "transition">[]) {
   return scenes.reduce((sum, scene, i) => sum + (impactShots[scene.shotId] ?? 0) + (i && ["flash-cut", "shotcraft-glitch-displace", "shotcraft-light-leak-burn"].includes(scene.transition) ? 1 : 0), 0);

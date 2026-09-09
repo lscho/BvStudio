@@ -30,9 +30,9 @@ it("全画面冲击预算同时计入镜头内动作和转场", () => {
   expect(shotcraftImpactCount([{ ...base, shotId: "shotcraft-lead-word-zoom-assemble" }, { ...base, transition: "flash-cut" }, { ...base, transition: "shotcraft-light-leak-burn" }, { ...base, transition: "flash-cut" }])).toBe(4);
 });
 
-it("一镜内连续三次闪白消耗三次冲击预算", () => {
-  expect(shotcraftImpactCount([{ ...sceneFixture(), shotId: "shotcraft-paparazzi-flash" }])).toBe(3);
-  expect(shotcraftImpactCount([{ ...sceneFixture(), shotId: "shotcraft-cel-flash-stomp" }, { ...sceneFixture(), shotId: "shotcraft-impact-burst-kit" }])).toBe(4);
+it("连续闪白按一次完整手法计数，多次使用与转场累计", () => {
+  expect(shotcraftImpactCount([{ ...sceneFixture(), shotId: "shotcraft-paparazzi-flash" }])).toBe(1);
+  expect(shotcraftImpactCount([{ ...sceneFixture(), shotId: "shotcraft-cel-flash-stomp" }, { ...sceneFixture(), shotId: "shotcraft-impact-burst-kit", transition: "flash-cut" }, { ...sceneFixture(), shotId: "shotcraft-drop-blackout-slam" }])).toBe(4);
 });
 
 it("固定按钮点击不参与真实截图自动选型", () => {
