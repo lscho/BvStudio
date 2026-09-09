@@ -2,16 +2,19 @@
 // BVideo adaptation: editable copy/assets and deterministic native frame context.
 import React from 'react';
 import { useCurrentFrame, interpolate, Easing } from "@/compositions/shotcraftLibrary/runtime";
-import { G, FakeDashboard } from '@/compositions/shotcraftLibrary/demos/_fixtures/Fixtures';
-import { contentText, type ShotcraftContent } from "@/compositions/shotcraftLibrary/runtime";
+import { FakeDashboard } from '@/compositions/shotcraftLibrary/demos/_fixtures/Fixtures';
+import { contentText, contentAppearance, useShotcraftContent, type ShotcraftContent } from "@/compositions/shotcraftLibrary/runtime";
 
 export function createDemo(content: ShotcraftContent) {
 const CUT = 120;
+const theme = contentAppearance(content);
+const title = contentText(content, "copy0", "10x");
 const SlowPushIn: React.FC = () => {
   const frame = useCurrentFrame();
+  const { images, incoming } = useShotcraftContent();
 
   // ---- 景 B：帧 120 起，满屏亮面板，完全静止 ----
-  if (frame >= CUT) {
+  if (frame >= CUT && (images[0] || incoming)) {
     return <FakeDashboard variant="A" />;
   }
 
@@ -34,10 +37,10 @@ const SlowPushIn: React.FC = () => {
       style={{
         width: 1920,
         height: 1080,
-        background: G.side,
+        background: theme.surface,
         position: 'relative',
         overflow: 'hidden',
-        fontFamily: 'Helvetica, Arial, sans-serif',
+        fontFamily: theme.fontFamily,
       }}
     >
       {/* 被推近的内容层：整体 scale */}
@@ -55,21 +58,23 @@ const SlowPushIn: React.FC = () => {
       >
         <div
           style={{
-            fontSize: 300,
+            fontSize: Math.min(300, 1450 / Math.max(1, Array.from(title).length)),
             fontWeight: 800,
-            color: '#ffffff',
-            letterSpacing: -6,
-            lineHeight: 1,
+            color: theme.color,
+            letterSpacing: 0,
+            lineHeight: 1.3,
+            maxWidth: 1500,
+            textAlign: 'center',
           }}
         >
-          {contentText(content, "copy0", "10x")}</div>
+          {title}</div>
         <div
           style={{
             marginTop: 36,
-            fontSize: 40,
+            fontSize: 56,
             fontWeight: 500,
-            color: '#b8b8b6',
-            letterSpacing: 6,
+            color: theme.accent,
+            letterSpacing: 0,
           }}
         >
           {contentText(content, "copy1", "FASTER THAN BASELINE")}</div>

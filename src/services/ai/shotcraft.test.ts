@@ -17,7 +17,9 @@ it("先筛选全库再提交所选镜头细节，两阶段结果均校验", asyn
   const first = JSON.parse(String(fetch.mock.calls[0][1].body));
   const second = JSON.parse(String(fetch.mock.calls[1][1].body));
   const catalog = JSON.parse(first.messages[1].content).catalog;
-  expect(catalog).toHaveLength(174);
+  expect(catalog).toHaveLength(168);
+  expect(catalog).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: "shotcraft-spectrum-morph-ui" })]));
+  expect(catalog.find((shot: { id: string }) => shot.id === "shotcraft-timeline-travel").guidance).toContain("不是视频编辑器时间线");
   expect(catalog).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: "shotcraft-counter-tick-sparks" })]));
   expect(JSON.parse(second.messages[1].content).catalog).toHaveLength(1);
 });
@@ -36,11 +38,11 @@ it.each(["openai-chat", "openai-responses", "anthropic"] as const)("%s 传递图
 it("自动修复请求包含具体文案约束，并接受模型修正的完整计划", async () => {
   sessionStorage.setItem("bvideo:ai-api-key", "fixture");
   const response = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }], usage: {} }), { headers: { "content-type": "application/json" } });
-  const valid = { title: "节奏", scenes: [{ shotId: "shotcraft-spectrum-morph-ui", text: "", durationSeconds: 4, copy: [{ key: "copy0", value: "音乐卡点" }], bindings: [], regions: [], transition: "none", sounds: [], reason: "展示节奏" }] };
+  const valid = { title: "节奏", scenes: [{ shotId: "shotcraft-pull-back-isolation", text: "", durationSeconds: 4, copy: [{ key: "copy0", value: "音乐卡点" }], bindings: [], regions: [], transition: "none", sounds: [], reason: "展示节奏" }] };
   const invalid = structuredClone(valid);
   invalid.scenes[0].copy.push({ key: "copy1", value: "多余字段" });
   invalid.scenes.push(structuredClone(invalid.scenes[0]));
-  const fetch = vi.fn().mockResolvedValueOnce(response({ shotIds: ["shotcraft-spectrum-morph-ui"] })).mockResolvedValueOnce(response(invalid)).mockResolvedValueOnce(response(valid));
+  const fetch = vi.fn().mockResolvedValueOnce(response({ shotIds: ["shotcraft-pull-back-isolation"] })).mockResolvedValueOnce(response(invalid)).mockResolvedValueOnce(response(valid));
   vi.stubGlobal("fetch", fetch);
   const result = await generateShotcraftPlan(config, { brief: "音乐卡点", durationSeconds: 4, assets: [], useVision: false, soundEnabled: false });
   expect(result.data).toEqual(valid);
@@ -48,7 +50,7 @@ it("自动修复请求包含具体文案约束，并接受模型修正的完整�
   expect(repair).toContain("scenes.0.copy");
   expect(repair).toContain("无效字段：copy1");
   expect(repair).toContain("允许的文案字段：copy0");
-  expect(repair).toContain("第 2 镜重复使用 shotcraft-spectrum-morph-ui");
+  expect(repair).toContain("第 2 镜重复使用 shotcraft-pull-back-isolation");
 });
 it("AI 编排拒绝重复镜头卡，自动修复后才接收", async () => {
   sessionStorage.setItem("bvideo:ai-api-key", "fixture");

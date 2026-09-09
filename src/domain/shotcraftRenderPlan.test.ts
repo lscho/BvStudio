@@ -3,8 +3,21 @@ import { createEmptyProject, type CompositionClip } from "@/domain/project";
 import { createEffectPreviewClip } from "@/domain/effectPreview";
 import { buildRenderPlan } from "@/domain/renderPlan";
 import { SHOTCRAFT_SHOTS, shotcraftHeroZoom, shotcraftImageRect } from "@/domain/shotcraft";
+import { parseProject, serializeProject } from "@/domain/projectFile";
 
 describe("Shotcraft rendering contract", () => {
+  it("真实品牌与可见说明通过既有工程结构往返并进入导出", () => {
+    const project = createEmptyProject();
+    project.assets = [{ id: "logo", name: "品牌标识", kind: "image", durationUs: 0, sourcePath: "/logo.png", objectUrl: "blob:logo", width: 256, height: 256 }];
+    const track = project.tracks.find((item) => item.kind === "composition")!;
+    const clip = { ...createEffectPreviewClip("shotcraft-logo-shrink-wordmark-lockup", project.motionTheme, project.assets), trackId: track.id, params: { copy0: "AI 给初稿，你来掌控", copy1: "BVideo Studio", surface: "#111316" }, text: "可编辑的结果", bindings: [{ slotId: "logo", assetIds: ["logo"] }] };
+    track.clips = [clip];
+    const serialized = serializeProject(project);
+    expect(serialized).not.toContain("blob:logo");
+    const parsed = parseProject(serialized);
+    expect(parsed.tracks.find((item) => item.id === track.id)!.clips[0]).toMatchObject({ params: clip.params, text: clip.text, bindings: clip.bindings });
+    expect(buildRenderPlan(project, "/out.mp4").overlays[0]).toMatchObject({ shotcraftData: { clip: { params: clip.params, text: clip.text } }, compositionImages: [{ id: "logo", path: "/logo.png" }] });
+  });
   it.each([[1920, 1080], [1080, 1920], [1080, 1080]])("carries all six source clocks and screenshot dimensions at %i x %i", (width, height) => {
     const project = createEmptyProject();
     project.canvas = { ...project.canvas, width, height };

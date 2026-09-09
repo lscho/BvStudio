@@ -2107,7 +2107,7 @@
     "durationUs": 548571,
     "sha256": "1cd63275367d5434ae0ee384c6390d12f00b141ba7810522ef0ab4375178178f",
     "sourceUrl": "https://assets.mixkit.co/active_storage/sfx/3124/3124-preview.mp3",
-    "autoEligible": true,
+    "autoEligible": false,
     "sourcePeakUs": 14966,
     "sourceStartUs": 0,
     "sourceEndUs": 149932

@@ -9,12 +9,13 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "@/compositions/shotcraftLibrary/runtime";
-import { contentText, type ShotcraftContent } from "@/compositions/shotcraftLibrary/runtime";
+import { contentAppearance, contentText, type ShotcraftContent } from "@/compositions/shotcraftLibrary/runtime";
+import { shotcraftWords } from "@/domain/shotcraftTypography";
 
 export function createDemo(content: ShotcraftContent) {
 const TEXT = contentText(content, "copy0", "Introducing Lumen Deck");
 const HIGHLIGHT_WORD = contentText(content, "copy1", "Lumen");
-const FONT_SIZE = 96;
+const FONT_SIZE = Math.min(96, 1500 / Math.max(1, Array.from(TEXT).length));
 const INITIAL_SCALE = 2.3;
 const INTRO_DURATION = 6;
 const HOLD_DURATION = 12;
@@ -26,23 +27,14 @@ const WORD_STAGGER = 4;
 const WORD_DURATION = 12;
 const WORD_PUSH = 0.5;
 const WORD_FADE = 2;
-const LETTER_SPACING = '-0.03em';
+const LETTER_SPACING = 0;
 const LIFT: [number, number] = [34, 50];
 const LIFT_DISTANCE = -56;
 const SUBLINE = contentText(content, "copy2", "One shot card, one motion recipe — copy, paste, render.");
 const CRASH_FRAMES = 12;
 const CRASH_SCALE = 0.2;
 const CRASH_BLUR = 9;
-const INK = '#1d1d1f';
-const INK_DIM = '#7a7a7a';
-const ACCENT = '#7A5AF8';
-const SANS = '-apple-system, "PingFang SC", BlinkMacSystemFont, sans-serif';
-const MESH_BG =
-  'radial-gradient(52% 44% at 18% 22%, rgba(122,90,248,0.20) 0%, rgba(122,90,248,0) 70%),' +
-  'radial-gradient(46% 42% at 84% 18%, rgba(255,138,178,0.20) 0%, rgba(255,138,178,0) 70%),' +
-  'radial-gradient(58% 50% at 78% 84%, rgba(96,190,255,0.20) 0%, rgba(96,190,255,0) 70%),' +
-  'radial-gradient(50% 46% at 24% 88%, rgba(255,196,112,0.20) 0%, rgba(255,196,112,0) 70%),' +
-  'linear-gradient(180deg, #f7f6f9 0%, #f2f1f5 100%)';
+const { color: INK, accent: ACCENT, surface: MESH_BG, fontFamily: SANS } = contentAppearance(content);
 const PUSH_EASE = Easing.bezier(0.25, 1, 0.5, 1);
 const ZOOM_EASE = Easing.bezier(0.5, 0, 0.05, 1);
 const WORD_EASE = Easing.bezier(0.22, 0.8, 0.36, 1);
@@ -73,7 +65,7 @@ const TextReveal: React.FC = () => {
     });
   }, []);
 
-  const words = TEXT.split(' ').filter(Boolean);
+  const words = shotcraftWords(TEXT, HIGHLIGHT_WORD);
   const ready = metrics !== null;
   const leadRatio = metrics?.leadRatio ?? 0.14;
   const lineWidth = metrics?.lineWidth ?? width * 0.5;
@@ -140,7 +132,7 @@ const TextReveal: React.FC = () => {
                 style={{
                   display: 'inline-block',
                   opacity,
-                  color: word === HIGHLIGHT_WORD ? ACCENT : undefined,
+                  color: word.text === HIGHLIGHT_WORD ? ACCENT : undefined,
                   translate: isLead
                     ? undefined
                     : `${interpolate(
@@ -151,10 +143,10 @@ const TextReveal: React.FC = () => {
                       )}px`,
                 }}
               >
-                {word}
+                {word.text}
               </span>
               {/* 词间空格必须放在 inline-block 之外——跟在词里会被行盒裁掉，词会黏在一起 */}
-              {i < words.length - 1 ? ' ' : null}
+              {word.space}
             </Fragment>
           );
         })}
@@ -195,13 +187,14 @@ const LeadWordZoomAssemble: React.FC = () => {
         <div
           style={{
             position: 'absolute',
-            left: 0,
-            right: 0,
+            left: 120,
+            right: 120,
             top: '50%',
             marginTop: 62,
             textAlign: 'center',
-            fontSize: 32,
-            color: INK_DIM,
+            fontSize: 56,
+            lineHeight: 1.35,
+            color: INK,
             opacity: lift,
             transform: `translateY(${(1 - lift) * 16}px)`,
           }}

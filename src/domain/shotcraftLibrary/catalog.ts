@@ -1112,7 +1112,10 @@ export const SHOTCRAFT_LIBRARY: readonly LibraryShot[] = [
     "use": "双模式/双章节产品片的全片包装层（蓝=模式A、绿=模式B 颜色编码）；真实录屏素材的品牌化包裹",
     "frames": 130,
     "holdFrame": 129,
-    "texts": [],
+    "texts": [
+      { "key": "copy0", "label": "切换前标签", "default": "" },
+      { "key": "copy1", "label": "切换后标签", "default": "" }
+    ],
     "imageKeys": [],
     "slots": [
       {
@@ -3069,7 +3072,7 @@ export const SHOTCRAFT_LIBRARY: readonly LibraryShot[] = [
       }
     ],
     "imageKeys": [],
-    "slots": []
+    "slots": [{ "id": "logo", "label": "品牌标识（可选）", "kind": "image", "minItems": 0, "maxItems": 1 }]
   },
   {
     "id": "shotcraft-neon-triple-marquee",
@@ -3659,7 +3662,7 @@ export const SHOTCRAFT_LIBRARY: readonly LibraryShot[] = [
   {
     "id": "shotcraft-freeze-annotate-real",
     "card": "speed-ramp-freeze",
-    "style": "FreezeAnnotateReal",
+    "style": "freeze-annotate",
     "name": "变速与定格 · FreezeAnnotateReal",
     "category": "rhythm",
     "description": "帧号非线性 remap 的两款节奏手法——变速（快→0.2x 凝视→快）与定格标注（流动→定格圈注→解冻）",

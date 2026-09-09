@@ -120,7 +120,7 @@ const componentRegistrations: Readonly<Record<string, ComponentRegistration>> = 
     component: ShotcraftComposition,
     controls: [
       ...(libraryShot(shot.id)?.texts ?? []).map((field) => ({ kind: "param-text" as const, field: field.key, label: `${field.label} · ${field.default.slice(0, 20)}`, rows: 2 })),
-      ...(shot.id === "shotcraft-blur-slide" || shot.id === "shotcraft-before-after" || shot.id === "shotcraft-basic-3d" ? [{ kind: "text" as const, field: "text" as const, label: "内容（用｜分隔，空格拆词）", rows: 3 }] : []),
+      { kind: "text" as const, field: "text" as const, label: ["shotcraft-blur-slide", "shotcraft-before-after", "shotcraft-basic-3d"].includes(shot.id) ? "内容（用｜分隔，空格拆词）" : shot.id === "shotcraft-cursor-flyover" ? "焦点说明（用｜分隔）" : "镜头说明", rows: 3 },
       { kind: "color" as const, field: "color" as const, label: "文字颜色" },
       { kind: "color" as const, field: "accentColor" as const, label: "强调色" },
       { kind: "param-color" as const, field: "surface", label: "镜头底色" },

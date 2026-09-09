@@ -167,7 +167,7 @@ function ShotScene({ clip, assets, timeUs, width, height, theme }: SceneProps) {
   const shot = shotcraftShot(clip.compositionId);
   const t = frame / Math.max(1, (shot?.frames ?? 1) - 1);
   const appearance = theme ? resolveEffectAppearance(clip, theme) : clip;
-  const surface = typeof clip.params?.surface === "string" && /^#[0-9a-f]{6}$/iu.test(clip.params.surface) ? clip.params.surface : "#111316";
+  const surface = theme && clip.colorRole && clip.colorRole !== "custom" ? theme.colors.surface : typeof clip.params?.surface === "string" && /^#[0-9a-f]{6}$/iu.test(clip.params.surface) ? clip.params.surface : "#111316";
   const patch = typeof clip.params?.patchColor === "string" && /^#[0-9a-f]{6}$/iu.test(clip.params.patchColor) ? clip.params.patchColor : "#ffffff";
   const fit = clip.params?.fit === "cover" ? "cover" : "contain";
   const slot = (id: string) => (clip.bindings?.find((binding) => binding.slotId === id)?.assetIds ?? []).map((assetId) => assets.find((asset) => asset.id === assetId));
@@ -178,9 +178,15 @@ function ShotScene({ clip, assets, timeUs, width, height, theme }: SceneProps) {
   else if (clip.compositionId === "shotcraft-cursor-flyover") content = <CursorTour page={slot("page")[0]} settings={settings} t={t} accent={appearance.accentColor} width={width} height={height} />;
   else if (clip.compositionId === "shotcraft-basic-3d") content = <SpatialSteps cards={cards} t={t} text={clip.text} color={appearance.color} accent={appearance.accentColor} surface={surface} />;
   else if (clip.compositionId === "shotcraft-card-stack") content = <CardFan cards={cards.length ? cards : [undefined, undefined]} t={t} fit={fit} />;
-  else if (libraryShot(clip.compositionId)) content = <LibraryScene clip={clip} assets={assets} frame={frame} width={width} height={height} />;
+  else if (libraryShot(clip.compositionId)) content = <LibraryScene clip={clip} assets={assets} frame={frame} width={width} height={height} appearance={{ color: appearance.color, accent: appearance.accentColor, surface, fontFamily: '"PingFang SC", "Microsoft YaHei", system-ui, sans-serif' }} />;
   else content = <HeroCard page={slot("page")[0]} hero={slot("hero")[0]} settings={settings} frame={frame} height={480 * height / width} accent={appearance.accentColor} patch={patch} />;
-  return <div className="shotcraft-scene" style={{ ...fill, containerType: "size", background: surface, color: appearance.color, overflow: "hidden", fontFamily: '"PingFang SC", "Microsoft YaHei", system-ui, sans-serif', letterSpacing: 0 }}>{content}</div>;
+  const caption = !["shotcraft-blur-slide", "shotcraft-before-after", "shotcraft-basic-3d"].includes(clip.compositionId) ? clip.text.trim() : "";
+  const lines = caption.split(/[|｜\n]/u).filter(Boolean);
+  const captionText = clip.compositionId === "shotcraft-cursor-flyover" ? lines[Math.min(lines.length - 1, Math.max(0, [0.32, 0.52, 0.72].filter((at) => t >= at).length))] : lines.join("\n");
+  return <div className="shotcraft-scene" style={{ ...fill, containerType: "size", background: surface, color: appearance.color, overflow: "hidden", fontFamily: '"PingFang SC", "Microsoft YaHei", system-ui, sans-serif', letterSpacing: 0 }}>
+    <div style={{ ...fill, transform: caption ? lines.length > 1 && clip.compositionId !== "shotcraft-cursor-flyover" ? "translateY(-9%) scale(0.78)" : "translateY(-6%) scale(0.86)" : undefined, overflow: "hidden" }}>{content}</div>
+    {caption && <div data-shotcraft-caption style={{ position: "absolute", left: "6%", right: "6%", bottom: "4%", minHeight: "9%", display: "grid", placeItems: "center", textAlign: "center", fontSize: px(14), fontWeight: 600, lineHeight: 1.35, whiteSpace: "pre-line", overflowWrap: "anywhere", opacity: seg(frame, 4, 12) }}>{captionText}</div>}
+  </div>;
 }
 
 export function ShotcraftComposition(props: CompositionRenderProps) {

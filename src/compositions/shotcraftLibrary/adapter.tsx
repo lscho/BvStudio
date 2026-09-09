@@ -13,8 +13,8 @@ export function preloadLibraryShot(id: string): Promise<void> {
   pending.set(id, request);
   return request;
 }
-export function LibraryScene({ clip, assets, frame, width, height, outgoing, incoming }: {
-  clip: CompositionClip; assets: readonly ShotcraftAsset[]; frame: number; width: number; height: number; outgoing?: ReactNode; incoming?: ReactNode;
+export function LibraryScene({ clip, assets, frame, width, height, outgoing, incoming, appearance }: {
+  clip: CompositionClip; assets: readonly ShotcraftAsset[]; frame: number; width: number; height: number; outgoing?: ReactNode; incoming?: ReactNode; appearance?: ShotcraftContent["appearance"];
 }) {
   const shot = libraryShot(clip.compositionId);
   const [loaded, setLoaded] = useState(0);
@@ -26,11 +26,13 @@ export function LibraryScene({ clip, assets, frame, width, height, outgoing, inc
     images: (clip.bindings?.find((binding) => binding.slotId === "images")?.assetIds ?? []).map((id) => assets.find((asset) => asset.id === id)?.objectUrl ?? ""),
     imageSizes: (clip.bindings?.find((binding) => binding.slotId === "images")?.assetIds ?? []).map((id) => { const asset = assets.find((item) => item.id === id); return { width: asset?.width ?? 1920, height: asset?.height ?? 1080 }; }),
     regions: clip.shotcraft?.regions,
+    appearance,
+    brandMark: assets.find((asset) => asset.id === clip.bindings?.find((binding) => binding.slotId === "logo")?.assetIds[0])?.objectUrl,
     outgoing, incoming, linked: Boolean(outgoing && incoming)
-  }), [shot, clip.params, clip.text, clip.bindings, clip.shotcraft?.regions, assets, outgoing, incoming]);
-  const textKey = JSON.stringify({ texts: content.texts, regions: content.regions, imageSizes: content.imageSizes });
+  }), [shot, clip.params, clip.text, clip.bindings, clip.shotcraft?.regions, assets, outgoing, incoming, appearance]);
+  const textKey = JSON.stringify({ texts: content.texts, regions: content.regions, imageSizes: content.imageSizes, appearance: content.appearance });
   const linked = content.linked;
-  const Component = useMemo(() => factories.get(clip.compositionId)?.({ ...JSON.parse(textKey) as Pick<ShotcraftContent, "texts" | "regions" | "imageSizes">, images: [], imageKeys: [], linked }), [clip.compositionId, textKey, loaded, linked]);
+  const Component = useMemo(() => factories.get(clip.compositionId)?.({ ...JSON.parse(textKey) as Pick<ShotcraftContent, "texts" | "regions" | "imageSizes" | "appearance">, images: [], imageKeys: [], linked }), [clip.compositionId, textKey, loaded, linked]);
   if (!shot) return null;
   if (!Component) return <div className="shotcraft-missing" role={error ? "alert" : "status"}>{error || "正在加载镜头"}</div>;
   const scale = Math.min(width / 1920, height / 1080);

@@ -11,6 +11,8 @@ export interface ShotcraftContent {
   linked?: boolean;
   regions?: readonly ShotcraftRegion[];
   imageSizes?: readonly { width: number; height: number }[];
+  appearance?: { color: string; accent: string; surface: string; fontFamily: string };
+  brandMark?: string;
 }
 export interface FrameContext extends ShotcraftContent {
   frame: number;
@@ -115,6 +117,9 @@ export function continueRender(handle: number) { renderHandles.delete(handle); }
 export function getRemotionEnvironment() { return { isRendering: true }; }
 export function shotcraftPendingRenders() { return renderHandles.size; }
 export function contentText(content: ShotcraftContent, key: string, fallback: string) { return content.texts[key] ?? fallback; }
+export function contentAppearance(content: ShotcraftContent) {
+  return content.appearance ?? { color: "#f3f4f6", accent: "#5fa8ff", surface: "#111316", fontFamily: '"PingFang SC", "Microsoft YaHei", system-ui, sans-serif' };
+}
 export function contentPageGeometry(content: ShotcraftContent) {
   const image = content.imageSizes?.[0];
   const pageH = image ? 1920 * image.height / Math.max(1, image.width) : 1080;

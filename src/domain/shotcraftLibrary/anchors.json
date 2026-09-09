@@ -281,7 +281,9 @@
       "key": "start",
       "frame": 0,
       "category": "transition"
-    }
+    },
+    { "key": "arrive", "frame": 74.3888888889, "category": "impact" },
+    { "key": "settled", "frame": 81.5416666667, "category": "ui" }
   ],
   "shotcraft-assemble-then-type-flyin": [
     {
@@ -871,7 +873,8 @@
       "key": "start",
       "frame": 0,
       "category": "transition"
-    }
+    },
+    { "key": "settled", "frame": 94.32, "category": "light" }
   ],
   "shotcraft-neon-triple-marquee": [
     {
@@ -1138,7 +1141,9 @@
       "key": "start",
       "frame": 0,
       "category": "transition"
-    }
+    },
+    { "key": "freeze", "frame": 45, "category": "camera" },
+    { "key": "draw", "frame": 56, "category": "text" }
   ],
   "shotcraft-speed-ramp-real": [
     {

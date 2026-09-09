@@ -6,6 +6,7 @@ import { defaultShotcraftSettings, normalizeShotcraftSettings, SHOTCRAFT_SHOTS, 
 import { libraryShot } from "@/domain/shotcraftLibrary/catalog";
 import audioCatalog from "@/domain/shotcraftLibrary/audioCatalog.json";
 import anchorCatalog from "@/domain/shotcraftLibrary/anchors.json";
+import { shotcraftImpactCount } from "@/domain/shotcraftLibrary/aiPolicy";
 import { musicAnalysisSchema, musicCutPoints, type MusicAnalysis } from "@/domain/musicBeats";
 
 interface ShotAnchor { key: string; frame: number; category: string }
@@ -31,6 +32,7 @@ export function validateShotcraftPlan(value: unknown, assets: readonly MediaAsse
   const plan = shotcraftPlanSchema.parse(value);
   if (plan.scenes.reduce((duration, scene) => duration + scene.durationSeconds, 0) > 600) throw new Error("镜头计划超过 10 分钟，请减少内容后重试");
   const issues: { code: "custom"; path: (string | number)[]; message: string }[] = [];
+  if (shotcraftImpactCount(plan.scenes) > 3) issues.push({ code: "custom", path: ["scenes"], message: "镜头内部冲击与闪白转场合计最多三处，请改用直接切换或平稳镜头" });
   for (const [index, scene] of plan.scenes.entries()) {
     const issue = (field: string, message: string) => issues.push({ code: "custom", path: ["scenes", index, field], message: `第 ${index + 1} 镜 ${scene.shotId}：${message}` });
     try { normalizeBindings(scene.bindings); }
@@ -91,7 +93,7 @@ export function compileShotcraftSequence(plan: ShotcraftPlan, assets: readonly M
     const settings = defaultShotcraftSettings(scene.shotId);
     settings.regions = scene.regions;
     settings.leadInUs = transitions[sceneIndex];
-    settings.holdUs = 500_000;
+    settings.holdUs = ["shotcraft-logo-shrink-wordmark-lockup", "shotcraft-timeline-travel"].includes(scene.shotId) ? 1_000_000 : 500_000;
     const motionDurationUs = durationUs - settings.leadInUs - settings.holdUs;
     if (motionDurationUs < 500_000) throw new Error("镜头时长不足以完成转场和阅读停留，请增加时长");
     const anchors = [...(SHOTCRAFT_ANCHORS[scene.shotId] ?? [])].sort((a, b) => a.frame - b.frame);

@@ -3,9 +3,10 @@
 import React from 'react';
 import { AbsoluteFill, useCurrentFrame, interpolate, Easing } from "@/compositions/shotcraftLibrary/runtime";
 import { FakeDashboard } from '@/compositions/shotcraftLibrary/demos/_fixtures/Fixtures';
-import { contentText, type ShotcraftContent } from "@/compositions/shotcraftLibrary/runtime";
+import { contentText, contentAppearance, useShotcraftContent, type ShotcraftContent } from "@/compositions/shotcraftLibrary/runtime";
 
 export function createDemo(content: ShotcraftContent) {
+const theme = contentAppearance(content);
 const CLAMP = { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' } as const;
 const TitleCard: React.FC<{ text: string; local: number; underline?: boolean }> = ({
   text,
@@ -18,7 +19,7 @@ const TitleCard: React.FC<{ text: string; local: number; underline?: boolean }> 
   });
   return (
     <AbsoluteFill
-      style={{ background: '#0d0d0d', alignItems: 'center', justifyContent: 'center' }}
+      style={{ background: theme.surface, alignItems: 'center', justifyContent: 'center' }}
     >
       <div
         style={{
@@ -31,18 +32,18 @@ const TitleCard: React.FC<{ text: string; local: number; underline?: boolean }> 
       >
         <div
           style={{
-            fontFamily: 'Helvetica, Arial, sans-serif',
+            fontFamily: theme.fontFamily,
             fontWeight: 800,
-            fontSize: 170,
-            color: '#ffffff',
-            letterSpacing: 2,
+            fontSize: Math.min(170, 1500 / Math.max(1, Array.from(text).length)),
+            color: theme.color,
+            letterSpacing: 0,
             lineHeight: 1,
           }}
         >
           {text}
         </div>
         {underline && (
-          <div style={{ width: 560, height: 14, background: '#ffffff', borderRadius: 7 }} />
+          <div style={{ width: 560, height: 14, background: theme.accent, borderRadius: 7 }} />
         )}
       </div>
     </AbsoluteFill>
@@ -61,6 +62,12 @@ const UiShot: React.FC<{
 );
 const CardFootageCadence: React.FC = () => {
   const frame = useCurrentFrame();
+  const { images, incoming } = useShotcraftContent();
+  // Without footage this is a three-part graphic statement, never a fixture UI.
+  if (!images.length && !incoming) {
+    const index = frame < 42 ? 0 : frame < 84 ? 1 : 2;
+    return <TitleCard text={contentText(content, `copy${index}`, "")} local={frame - index * 42} underline={index === 2} />;
+  }
 
   // ---- 分段：切点 14 / 22 / 34 / 42 / 52 / 62，总长 150 ----
 

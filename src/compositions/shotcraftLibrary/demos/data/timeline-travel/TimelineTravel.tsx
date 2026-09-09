@@ -77,7 +77,8 @@ const TickStop: React.FC<{ i: number; frame: number }> = ({ i, frame }) => {
   );
 };
 const TimelineTravel: React.FC = () => {
-  const frame = useCurrentFrame();
+  // Keep saved 104-frame clocks valid while reaching the authored zoom and 30-frame rest.
+  const frame = useCurrentFrame() * 144 / 103;
   const camX = camXAt(frame);
 
   // 急停后推近末刻度：scale 1 → 1.28，中心对准 Today 刻度

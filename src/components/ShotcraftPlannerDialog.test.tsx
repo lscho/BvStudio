@@ -5,14 +5,33 @@ import { createEmptyProject } from "@/domain/project";
 import { DEFAULT_SETTINGS } from "@/services/storage";
 import { useEditorStore } from "@/stores/editorStore";
 import { generateShotcraftPlan } from "@/services/ai/shotcraft";
+import { analyseMusicAsset } from "@/services/musicBeats";
+import { hasApiKey } from "@/services/ai/provider";
 
 vi.mock("@/services/ai/shotcraft", () => ({ generateShotcraftPlan: vi.fn() }));
 vi.mock("@/services/ai/provider", () => ({ hasApiKey: vi.fn(async () => true) }));
+vi.mock("@/services/musicBeats", () => ({ analyseMusicAsset: vi.fn() }));
 const settings = { ...DEFAULT_SETTINGS, aiProvider: { ...DEFAULT_SETTINGS.aiProvider, model: "test" } };
 const plan = { title: "产品标题", scenes: [{ shotId: "shotcraft-blur-slide", text: "用户内容", durationSeconds: 4, copy: [], bindings: [], regions: [], transition: "none", sounds: [], reason: "标题开场" }] };
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(hasApiKey).mockResolvedValue(true);
   useEditorStore.setState({ project: createEmptyProject(), past: [], future: [], selectedClipId: null, selectedClipIds: [], playheadUs: 0 });
+});
+it("未配置云端 AI 也能单独分析音乐，失败可重试且不改变工程", async () => {
+  vi.mocked(hasApiKey).mockResolvedValue(false);
+  useEditorStore.setState({ project: { ...createEmptyProject(), assets: [{ id: "local-music", kind: "audio", name: "测试音乐", durationUs: 60_000_000, objectUrl: "blob:music" }] } });
+  vi.mocked(analyseMusicAsset).mockRejectedValueOnce(new Error("音乐分析失败，请重试")).mockResolvedValueOnce({ version: 1, durationUs: 60_000_000, bpm: 100, phaseUs: 0, reliableGrid: true, candidates: [], beatsUs: [0, 600_000], hits: [], energy: [] });
+  render(<ShotcraftPlannerDialog open settings={DEFAULT_SETTINGS} onOpenChange={vi.fn()} onNeedSettings={vi.fn()} />);
+  fireEvent.pointerDown(screen.getByRole("combobox", { name: "编排背景音乐" }), { button: 0, pointerType: "mouse", ctrlKey: false });
+  fireEvent.click(await screen.findByRole("option", { name: "测试音乐" }));
+  fireEvent.click(screen.getByRole("button", { name: "分析拍点" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("音乐分析失败，请重试");
+  fireEvent.click(screen.getByRole("button", { name: "分析拍点" }));
+  expect(await screen.findByText(/100.00 BPM/u)).toBeVisible();
+  expect(generateShotcraftPlan).not.toHaveBeenCalled();
+  expect(hasApiKey).not.toHaveBeenCalled();
+  expect(useEditorStore.getState().past).toHaveLength(0);
 });
 it("显示实际编排后，用户加入才提交，并支持撤销", async () => {
   vi.mocked(generateShotcraftPlan).mockResolvedValue({ data: plan, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostUsd: 0 } });

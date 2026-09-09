@@ -1845,7 +1845,7 @@
       "id": "shotcraft-freeze-annotate-real",
       "stem": "FreezeAnnotateReal",
       "card": "speed-ramp-freeze",
-      "style": "FreezeAnnotateReal",
+    "style": "freeze-annotate",
       "name": "变速与定格 · FreezeAnnotateReal",
       "category": "rhythm",
       "description": "帧号非线性 remap 的两款节奏手法——变速（快→0.2x 凝视→快）与定格标注（流动→定格圈注→解冻）",
@@ -4496,6 +4496,31 @@
     }
   ],
   "contentAudit": [
+    {
+      "id": "shotcraft-reticle-lock-on",
+      "kind": "layout",
+      "reason": "准星按参考页面第二卡的固定矩形咬合，当前不能按输入截图定位目标；自动选用会框住错误内容。"
+    },
+    {
+      "id": "shotcraft-crane-rise-reveal",
+      "kind": "layout",
+      "reason": "升起相机和五行高亮按参考页面坐标编排，宽高比不同的真实截图会先露出空白并高亮无关区域。"
+    },
+    {
+      "id": "shotcraft-spectrum-morph-ui",
+      "reason": "SpectrumMorphUi 使用确定性的合成频谱，尚未接入真实音乐 FFT，不能用于证明本地音乐分析。",
+      "kind": "demo-content"
+    },
+    {
+      "id": "shotcraft-scanline-annotate-focus",
+      "reason": "ScanlineAnnotateFocus 的扫描框、品牌标识和分析状态仍绑定演示页面，清空文案不会改变这些目标。",
+      "kind": "layout"
+    },
+    {
+      "id": "shotcraft-title-demote-to-label",
+      "reason": "TitleDemoteToLabel 串播两个演示变体并落在骨架页面，尚不能将真实产品状态作为降格后的页面内容。",
+      "kind": "demo-content"
+    },
     {
       "id": "shotcraft-bullet-time-freeze-orbit",
       "reason": "BulletTimeFreezeOrbit.tsx:48-57 用固定伪随机种子计算五根柱子的目标高度与数字，205 渲染 b.value；现有 copy 只改标题等文字，不能传入真实数据。"

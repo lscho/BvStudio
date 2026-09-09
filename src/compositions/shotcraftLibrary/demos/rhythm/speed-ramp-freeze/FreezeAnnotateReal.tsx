@@ -1,18 +1,19 @@
 // Adapted from video-shotcraft, Copyright 2026 Wei Yihao, Apache-2.0.
 // BVideo adaptation: editable copy/assets and deterministic native frame context.
 import { useId } from 'react';
-import { AbsoluteFill, Img, interpolate, staticFile, useCurrentFrame } from "@/compositions/shotcraftLibrary/runtime";
-import layout from '@/compositions/shotcraftLibrary/demos/_textures/live-layout.json';
+import { AbsoluteFill, Img, interpolate, useCurrentFrame, useShotcraftContent, contentAppearance } from "@/compositions/shotcraftLibrary/runtime";
 import type { ShotcraftContent } from "@/compositions/shotcraftLibrary/runtime";
 
-export function createDemo(_content: ShotcraftContent) {
+export function createDemo(content: ShotcraftContent) {
 const CARD_W = 460;
 const GAP = 60;
-const RAIL = layout.projects.cards.slice(0, 9);
 const TARGET_I = 5;
-const AMBER = '#b45309';
+const theme = contentAppearance(content);
+const AMBER = theme.accent;
 const FreezeAnnotateReal: React.FC = () => {
   const frame = useCurrentFrame();
+  const { images } = useShotcraftContent();
+  const focus = interpolate(frame, [40, 52, 96, 108], [1, 1.65, 1.65, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   // 滤镜 ID 按实例生成，多实例同场不串引（useId 的 «:» 在 url() 里非法，需清洗）
   const roughId = `rough-${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const src = interpolate(frame, [0, 45, 100, 135], [0, 45, 45, 94], {
@@ -27,18 +28,18 @@ const FreezeAnnotateReal: React.FC = () => {
   const targetX = X0 + TARGET_I * (CARD_W + GAP) - dx + CARD_W / 2;
   const C = 1750; // 椭圆周长近似
   return (
-    <AbsoluteFill style={{ backgroundColor: '#f9f6f1', overflow: 'hidden' }}>
+    <AbsoluteFill style={{ backgroundColor: theme.surface, overflow: 'hidden' }}>
+      <AbsoluteFill style={{ transform: `scale(${focus})`, transformOrigin: "50% 52%" }}>
       <div style={{ position: 'absolute', top: 370, transform: `translateX(${-dx + X0}px)` }}>
         {Array.from({ length: 14 }).map((_, k) => {
-          const c = RAIL[k % RAIL.length];
           const isTarget = k === TARGET_I;
           return (
             <Img
               key={k}
-              src={staticFile(`textures/live/${isTarget ? 'card4-hires.png' : c.file}`)}
+              src={images[isTarget ? 0 : 1 + k % Math.max(1, images.length - 1)] ?? images[0] ?? ""}
               style={{
                 position: 'absolute', left: k * (CARD_W + GAP), top: 0,
-                width: CARD_W, borderRadius: 12,
+                width: CARD_W, height: 360, objectFit: "contain", borderRadius: 8,
                 boxShadow: '0 4px 16px rgba(31,28,23,0.10)',
               }}
             />
@@ -66,6 +67,7 @@ const FreezeAnnotateReal: React.FC = () => {
           filter={`url(#${roughId})`}
         />
       </svg>
+      </AbsoluteFill>
     </AbsoluteFill>
   );
 };

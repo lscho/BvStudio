@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Clapperboard, LoaderCircle, Square, X } from "lucide-react";
+import { AudioLines, Clapperboard, LoaderCircle, Square, X } from "lucide-react";
 import { Select } from "@/components/Select";
 import type { MediaAsset } from "@/domain/project";
 import type { MusicAnalysis } from "@/domain/musicBeats";
@@ -43,6 +43,21 @@ export function ShotcraftPlannerDialog({ open, settings, onOpenChange, onNeedSet
   const images = assets.filter((asset) => asset.kind === "image" && !asset.missing);
   const musicOptions = [{ value: "none", label: "不使用音乐" }, ...assets.filter((asset) => asset.kind === "audio" && !asset.missing).map((asset) => ({ value: asset.id, label: asset.name })), ...SHOTCRAFT_AUDIO.filter((asset) => asset.kind === "music" && !assets.some((item) => item.id === asset.id)).map((asset) => ({ value: asset.id, label: asset.name }))];
   const options = { startUs: playheadUs, musicAssetId: musicId === "none" ? undefined : musicId, musicSourceInUs: Math.round(musicOffset * 1_000_000), musicVolume, beatSync: beatSync && musicId !== "none", analysis, soundEnabled };
+  async function analyse() {
+    if (controller.current || musicId === "none") return;
+    const request = new AbortController(); controller.current = request;
+    setWorking(true); setError(""); setAnalysis(undefined); setPlan(undefined); setCompiled(undefined); setStatus("正在本地分析音乐拍点与能量");
+    try {
+      const music = assets.find((asset) => asset.id === musicId && !asset.missing) ?? await loadShotcraftAudio(musicId, request.signal);
+      const measured = await analyseMusicAsset(music, request.signal);
+      request.signal.throwIfAborted();
+      if (mounted.current && controller.current === request) setAnalysis(measured);
+    } catch (exception) {
+      if (mounted.current && controller.current === request) setError(request.signal.aborted ? "已停止分析" : exception instanceof Error ? exception.message : "音乐分析失败，请重试");
+    } finally {
+      if (mounted.current && controller.current === request) { setWorking(false); controller.current = null; }
+    }
+  }
   async function generate(event: React.FormEvent) {
     event.preventDefault();
     if (controller.current) return;
@@ -93,7 +108,8 @@ export function ShotcraftPlannerDialog({ open, settings, onOpenChange, onNeedSet
           <span>图片素材 · 最多 12 张</span>
           <div className="shotcraft-planner-assets">{images.length ? images.map((asset) => <label key={asset.id} title={asset.name}><input type="checkbox" checked={selectedImages.includes(asset.id)} disabled={!selectedImages.includes(asset.id) && selectedImages.length >= 12} onChange={(event) => setSelectedImages((ids) => event.target.checked ? [...ids, asset.id] : ids.filter((id) => id !== asset.id))} /><span>{asset.name}</span></label>) : <p>先导入图片可生成截图镜头，也可直接编排文字与图形。</p>}</div>
         </fieldset>
-        {analysis && musicId !== "none" && beatSync && <p role="status">{analysis.bpm.toFixed(2)} BPM · {analysis.reliableGrid ? "节拍网格通过验证" : "网格不稳定，按实际鼓点编排"}</p>}
+        {musicId !== "none" && <button type="button" className="button secondary" disabled={working} onClick={analyse}><AudioLines size={16} />分析拍点</button>}
+        {analysis && musicId !== "none" && <p role="status">{analysis.bpm.toFixed(2)} BPM · {analysis.reliableGrid ? "节拍网格通过验证" : "网格不稳定，按实际鼓点编排"} · {analysis.hits.length} 个瞬态</p>}
         {working && <p className="shotcraft-planner-status" role="status"><LoaderCircle className="spin" size={16} />{status}</p>}
         {error && <div className="error-callout" role="alert">{error}{error.includes("配置") && <button type="button" onClick={onNeedSettings}>打开模型配置</button>}</div>}
         {plan && compiled && <div className="shotcraft-plan-review"><strong>{plan.title} · {(compiled.durationUs / 1_000_000).toFixed(2)} 秒</strong><ol>{plan.scenes.map((scene, index) => <li key={index}><div><b>{shotcraftShot(scene.shotId)?.name}</b><span>{((compiled.tracks[0].clips[index]?.durationUs ?? 0) / 1_000_000).toFixed(2)} 秒</span></div><p>{scene.reason}</p></li>)}</ol>{compiled.warnings.length > 0 && <p role="status">{compiled.warnings.join("；")}</p>}</div>}

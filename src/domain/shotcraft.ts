@@ -67,7 +67,7 @@ export function normalizeShotcraftSettings(value: unknown, id: string): Shotcraf
 export const SHOTCRAFT_COMPOSITIONS: readonly CompositionDefinition[] = SHOTCRAFT_SHOTS.map((shot) => ({
   id: shot.id, name: shot.name, category: "展示", renderer: "react", slots: shot.slots,
   description: `Shotcraft · ${shot.description}`, tags: ["Shotcraft", "镜头", shot.name, shot.card, libraryShot(shot.id)?.category ?? "展示"],
-  defaultDurationUs: Math.round(shot.frames / 30 * 1_000_000),
+  defaultDurationUs: shot.id === "shotcraft-timeline-travel" ? 4_800_000 : Math.round(shot.frames / 30 * 1_000_000),
   defaultText: shot.id === "shotcraft-blur-slide" ? "让创意 成为作品｜从灵感到画面，每一步都清晰" : shot.id === "shotcraft-basic-3d" ? "理解｜创造｜呈现｜让想法成为作品" : shot.id === "shotcraft-before-after" ? "处理前｜处理后" : "",
   defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
   defaultParams: { surface: "#111316", fit: "contain", ...Object.fromEntries((libraryShot(shot.id)?.texts ?? []).map((text) => [text.key, text.default])), ...(shot.id === "shotcraft-spotlight-hero-card" ? { patchColor: "#ffffff" } : {}) },
