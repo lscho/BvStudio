@@ -8,8 +8,10 @@ import {
   isValidCardKey,
   isValidDeviceId,
   MAX_REDEEM_ATTEMPTS_PER_WINDOW,
+  MONTHLY_CARD_DAYS,
   nextFailureState,
   normalizeCardKey,
+  planLabelForCard,
   sha256Hex,
   signLicenseStatus,
   statusForDeviceRecord,
@@ -161,6 +163,24 @@ describe("cardExpiryAt and idempotent expiry", () => {
     const decision = decideRedemption(card, DEVICE_ID, NOW + 1000);
     expect(decision.outcome).toBe("idempotent");
     expect(decision.deviceRecord.expireAt).toBe(NOW + 30 * 24 * 60 * 60 * 1000);
+  });
+});
+
+describe("monthly cards", () => {
+  const MONTH_MS = MONTHLY_CARD_DAYS * 24 * 60 * 60 * 1000;
+
+  it("labels monthly cards and expires them 30 days after binding", () => {
+    const card = unusedCard({ plan: "monthly", days: MONTHLY_CARD_DAYS });
+    expect(planLabelForCard(card)).toBe("月卡 VIP 会员");
+    expect(cardExpiryAt(card, NOW)).toBe(NOW + MONTH_MS);
+
+    const decision = decideRedemption(card, DEVICE_ID, NOW);
+    expect(decision.outcome).toBe("bind");
+    expect(decision.deviceRecord).toMatchObject({ planName: "月卡 VIP 会员", expireAt: NOW + MONTH_MS });
+  });
+
+  it("falls back to the fixed 30-day window when days is missing", () => {
+    expect(cardExpiryAt(unusedCard({ plan: "monthly" }), NOW)).toBe(NOW + MONTH_MS);
   });
 });
 

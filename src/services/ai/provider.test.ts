@@ -1,6 +1,6 @@
 import { isShotcraftComposition } from "@/domain/shotcraft";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captionNumericData, compactMotionText, extractTokenUsage, generateSubtitleChapters, generateTimedScript, generateVideoPlan, groundMotionMatchesToSelection, listProviderModels, matchTimelineMotion, motionCaptionChunks, normalizeMotionChart, normalizeMotionMatches, normalizeTimedScript, providerEndpoint, selectMotionCandidates, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
+import { captionNumericData, compactMotionText, extractTokenUsage, generateSubtitleChapters, generateTimedScript, generateVideoPlan, groundMotionMatchesToSelection, listProviderModels, matchTimelineMotion, motionCaptionChunks, normalizeMotionChart, normalizeMotionMatches, normalizeTimedScript, providerEndpoint, selectMotionCandidates, truncateRepairOutput, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
 import { allCompositions } from "@/domain/effects";
 
 const pricing = { inputCostPerMillion: 2.5, outputCostPerMillion: 10 };
@@ -60,6 +60,23 @@ describe("extractTokenUsage", () => {
   it("derives Anthropic total tokens and tolerates missing usage", () => {
     expect(extractTokenUsage("anthropic", { usage: { input_tokens: 7, output_tokens: 9 } }, pricing).totalTokens).toBe(16);
     expect(extractTokenUsage("anthropic", {}, pricing)).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostUsd: 0 });
+  });
+});
+
+describe("truncateRepairOutput", () => {
+  it("keeps the repair payload parseable by dropping trailing matches", () => {
+    const value = {
+      matches: Array.from({ length: 120 }, (_, captionIndex) => ({ captionIndex, primaryText: "很长的画面文案".repeat(30) }))
+    };
+    const text = truncateRepairOutput(value, 4_000);
+    expect(text.length).toBeLessThanOrEqual(4_000);
+    const parsed = JSON.parse(text) as { matches: unknown[] };
+    expect(parsed.matches.length).toBeGreaterThan(0);
+    expect(parsed.matches.length).toBeLessThan(120);
+  });
+
+  it("returns the serialized value unchanged when it fits", () => {
+    expect(truncateRepairOutput({ matches: [{ captionIndex: 0 }] }, 4_000)).toBe('{"matches":[{"captionIndex":0}]}');
   });
 });
 
@@ -205,9 +222,18 @@ describe("provider requests", () => {
     }
     expect(selectionPayload.messages[0]?.content).toContain('"purposeGroup":"证据实证"');
     expect(selectionPayload.messages[0]?.content).toContain('"referenceStage":true');
+    expect(selectionPayload.messages[0]?.content).toContain('"usage":"fullscreen"');
+    expect(selectionPayload.messages[0]?.content).toContain('"usage":"talking-head"');
+    expect(selectionPayload.messages[0]?.content).toContain('"layer":"background"');
+    expect(selectionPayload.messages[0]?.content).toContain('"exclusive":true');
+    expect(timelinePayload.messages[0]?.content).toContain('"usage":"both"');
+    expect(timelinePayload.messages[0]?.content).toContain("动效适用范围规则：每张卡的 usage");
+    expect(timelinePayload.messages[0]?.content).toContain("roleHint=a-roll 或 presenter 时只能选 talking-head 和 both");
     expect(timelinePayload.messages[0]?.content).toContain('"id":"stat-proof"');
     expect(timelinePayload.messages[0]?.content).toContain('"category":"数据"');
     expect(timelinePayload.messages[0]?.content).toContain('"purposeGroup":"证据实证"');
+    expect(timelinePayload.messages[0]?.content).toContain("证据出处规则");
+    expect(timelinePayload.messages[0]?.content).toContain("本次已选动效中 stat-proof");
     expect(timelinePayload.messages[0]?.content).toContain("里程碑/成绩/金额");
     expect(timelinePayload.messages[0]?.content).toContain("referenceStage=true 时，外层 x=50、y=50、scale=1");
     for (const id of ["chapter-bar", "caption-track"]) expect(selectionPayload.messages[0]?.content).not.toContain(`"id":"${id}"`);

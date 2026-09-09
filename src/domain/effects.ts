@@ -1,9 +1,10 @@
 import { EASING_NAMES, eased as evaluateEasing, type EasingName } from "@/domain/easing";
 import { FOCUS_CARD_SLOTS, MEDIA_COMPOSITIONS, type CompositionSlot } from "@/domain/compositions";
+import { FREE_EFFECTS_PER_CATEGORY, PREMIUM_EFFECT_CATEGORY } from "@/domain/effectAccess";
 import { importedOverlayStudioEffectIds, importedOverlayStudioEffects, importedOverlayStudioTextParamKeys } from "@/domain/overlayStudioCatalog";
 import { isShotcraftComposition, SHOTCRAFT_COMPOSITIONS } from "@/domain/shotcraft";
 
-export type EffectCategory = "标题" | "强调" | "卡片" | "标注" | "数据" | "布局" | "场景" | "背景" | "展示";
+export type EffectCategory = "标题" | "强调" | "卡片" | "标注" | "数据" | "布局" | "场景" | "背景" | "展示" | "高级";
 export type EffectLayout = "highlight" | "number" | "panel" | "underline" | "frame";
 export type EffectEntrance = "slide-left" | "fade-up" | "pop" | "none";
 export type EffectAnimationEasing = EasingName;
@@ -757,12 +758,44 @@ const REPLICATED_OVERLAY_STUDIO_EFFECTS: readonly CompositionDefinition[] = impo
   recipe: { ...effect.recipe }
 }));
 
-export const BUILTIN_EFFECTS: readonly CompositionDefinition[] = [
+/**
+ * 高级动效：3D 空间与复杂运镜品类，默认只对 Pro 开放。
+ * 新增或调整时必须同步 docs/effect-access.md 的清单说明。
+ */
+export const PREMIUM_EFFECT_IDS = [
+  "terminal-3d", "poster-wall-3d", "image-duet-3d",
+  "shotcraft-basic-3d", "shotcraft-carousel3-d", "shotcraft-cube-navigation", "shotcraft-cube-rotate",
+  "shotcraft-shared-element-morph", "shotcraft-crash-impact-real", "shotcraft-crash-zoom-real",
+  "shotcraft-dolly-zoom-real", "shotcraft-multiplane-real", "shotcraft-graze-face-tour",
+  "shotcraft-overhead-tabletop-drop", "shotcraft-tilt-reveal", "shotcraft-drone-dive-landing",
+  "shotcraft-exploded-view", "shotcraft-steep-tilt-glide", "shotcraft-bullet-time-freeze-orbit",
+  "shotcraft-dutch-roll-to-level", "shotcraft-pull-back-isolation", "shotcraft-slow-push-in",
+  "shotcraft-terminal3-d"
+] as const;
+
+const premiumEffectIdSet = new Set<string>(PREMIUM_EFFECT_IDS);
+
+/** 这些分类只保留免费额度内的动效，其余整体归入高级分类。 */
+export const PROMOTED_EFFECT_CATEGORIES: readonly EffectCategory[] = ["展示"];
+
+/** 按分类顺序把超出免费额度的动效并入高级分类；扩展包不会参与这里的计数。 */
+function applyAccessCategory(effects: readonly CompositionDefinition[]): readonly CompositionDefinition[] {
+  const seenPerCategory = new Map<EffectCategory, number>();
+  return effects.map((effect) => {
+    const index = seenPerCategory.get(effect.category) ?? 0;
+    seenPerCategory.set(effect.category, index + 1);
+    const promoted = premiumEffectIdSet.has(effect.id)
+      || (PROMOTED_EFFECT_CATEGORIES.includes(effect.category) && index >= FREE_EFFECTS_PER_CATEGORY);
+    return promoted ? { ...effect, category: PREMIUM_EFFECT_CATEGORY } : effect;
+  });
+}
+
+export const BUILTIN_EFFECTS: readonly CompositionDefinition[] = applyAccessCategory([
   ...TALKING_HEAD_EFFECTS,
   ...REPLICATED_OVERLAY_STUDIO_EFFECTS,
   ...MEDIA_COMPOSITIONS,
   ...SHOTCRAFT_COMPOSITIONS
-];
+]);
 export const OVERLAY_STUDIO_BASE_FONT_SIZE = 48;
 
 // Old project files may still reference these IDs, but they are intentionally hidden from

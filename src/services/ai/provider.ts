@@ -24,7 +24,7 @@ import {
 } from "@/services/ai/schema";
 import type { CompositionDefinition } from "@/domain/effects";
 import { allowedAiMotionParameterKeys, motionMatchingProfile, referenceMotionMatchingPolicy } from "@/domain/motionMatching";
-import { assertMotionMatchPlan, assertMotionSelectionPlan, MotionPlanValidationError } from "@/domain/motionMatchingPlan";
+import { assertMotionMatchPlan, assertMotionSelectionPlan, MotionPlanValidationError, requiresEvidenceSource } from "@/domain/motionMatchingPlan";
 import { isReferenceStageComposition } from "@/domain/overlayStudioReference";
 import { CAMERA_PRESETS } from "@/domain/camera";
 import { mergeLeadingCaptionFragments } from "@/domain/captions";
@@ -366,6 +366,12 @@ export function groundMotionMatchesToSelection(
     });
 }
 
+function evidenceSourceEffectIds(candidates: readonly CompositionDefinition[]) {
+  return candidates
+    .filter((effect) => requiresEvidenceSource(effect))
+    .map((effect) => effect.id);
+}
+
 function motionSystemPrompt(candidates: CompositionDefinition[], materials: AiMaterialCandidate[], selection: AiMotionSelection, preferences: readonly MotionMatchingPreference[] = []) {
   const effects = candidates.map(({ id, name, category, description, tags, recipe, renderer }) => ({
     ...motionMatchingProfile(compositionById(id)),
@@ -386,9 +392,13 @@ function motionSystemPrompt(candidates: CompositionDefinition[], materials: AiMa
   const media = materials.map(({ id, name, kind, durationSeconds, width, height, roleHint, transcriptExcerpt }) => ({ id, name, kind: kind ?? "video", durationSeconds, width, height, roleHint: roleHint ?? "unspecified", transcriptExcerpt: transcriptExcerpt?.slice(0, 500) ?? "" }));
   const cameras = CAMERA_PRESETS.map(({ id, name, description }) => ({ id, name, description }));
   const placementPreferences = preferences.map(({ effectId, averageDurationRatio, averageX, averageY, averageScale }) => ({ effectId, averageDurationRatio, averageX, averageY, averageScale }));
+  const evidenceEffectIds = evidenceSourceEffectIds(candidates);
+  const evidenceSourceRule = evidenceEffectIds.length
+    ? `证据出处规则：本次已选动效中 ${evidenceEffectIds.join("、")} 属于证据实证，必须在文案里写明真实出处：有 source/caption/title/footEn/footZh 参数的用该参数填写，没有来源参数的（如 info-board）在 rows 或文案中加一行 note|来源：…；写不出真实出处时不要编造，改用字幕中已有的量化事实。`
+    : "";
   return `你是视频场景、A-roll/B-roll、多图层动效编排器。这是第二阶段。第一阶段已经完成语义分段和选型：${JSON.stringify(selection.segments)}。不要重新选其他动效，也不要改变段落范围。只能使用这些已选动效：${JSON.stringify(effects)}。可用运镜：${JSON.stringify(cameras)}。可用本地素材：${JSON.stringify(media)}。用户已确认的时长与位置偏好：${JSON.stringify(placementPreferences)}，只能作为安全区内的软建议。
-素材动效规则：带 slots 的动效只可作为 primaryEffectId。compositionBindings 按 slots 填写 slotId 和 assetIds，严格满足 minItems/maxItems，kind=image 槽只选图片，kind=video 槽只选视频，kind=visual 槽可选图片或视频；没有 slots 的动效 compositionBindings=[]。如果第一阶段选中了素材动效但没有任何兼容素材，必须返回 compositionBindings=[]、materialPlaceholder=true，使用半透明占位等待用户补素材，禁止填写示例图、虚构路径或拿不相关素材凑数；有完整素材或动效没有 slots 时 materialPlaceholder=false。素材展示动效限制为 2–10 秒，素材不要重复放入 videoLayers。proof-shot、doc-scroll、quote-cite 等证据卡必须在对应文案或 source/caption/title 参数中写明真实来源。\n场景连续性规则：第一阶段同一语义段的连续字幕必须使用该段 segmentId 作为 motionGroupId，persistUntilCaptionIndex 指向该段 endCaptionIndex；单条字幕段可将两者设为 null。第一阶段选中的每个动效必须在该段恰好返回一次，禁止把同一卡拆成多个逐步累积状态；多条内容应在一张卡内部按字幕锚点逐项出现。同段最多逐步加入 2 个内容层，两个内容层必须放在不同 captionIndex，且真实进场时间至少错开 0.5 秒；第一层保持到场景结束。不要按每条字幕机械切换动效，不要清空旧层再换一套。普通过渡字幕可以不返回 match；不需要每条字幕都有动效。相邻场景不能连续使用相同 kind，并避免连续使用强冲击、3D 或有声音的动效。同一段所有返回项的 accentColor 必须完全一致。
-A-roll/B-roll 规则：roleHint=a-roll 表示当前口播主叙事素材，通常继续播放，不要在 videoLayers 中重复插入；需要强调时使用 cameraPreset 做克制运镜。B-roll 用于例证、产品画面、操作画面或信息密集段落，每个场景最多选择一段主要 B-roll，通常持续 3 到 8 秒并覆盖多条字幕，volume=0 以保留口播。场景有多个独立信息点时，优先选择语义相关的 B-roll，以 full+rectangle+fade 呈现，再在其上逐步叠加最多 2 个短内容层；不要让多个小文字卡在每条字幕间闪烁。roleHint、文件名和 transcriptExcerpt 都是素材判断依据。讲解人适合 presenter-bottom-right+circle；教程操作画面适合 screen 全屏并启用 focus，没有准确鼠标坐标时焦点必须用 50/50，等待用户手动调整。多个视频同屏时使用分屏或画中画，避免完全遮挡。
+素材动效规则：带 slots 的动效只可作为 primaryEffectId。compositionBindings 按 slots 填写 slotId 和 assetIds，严格满足 minItems/maxItems，kind=image 槽只选图片，kind=video 槽只选视频，kind=visual 槽可选图片或视频；没有 slots 的动效 compositionBindings=[]。如果第一阶段选中了素材动效但没有任何兼容素材，必须返回 compositionBindings=[]、materialPlaceholder=true，使用半透明占位等待用户补素材，禁止填写示例图、虚构路径或拿不相关素材凑数；有完整素材或动效没有 slots 时 materialPlaceholder=false。素材展示动效限制为 2–10 秒，素材不要重复放入 videoLayers。proof-shot、doc-scroll、quote-cite 等证据卡必须在对应文案或 source/caption/title 参数中写明真实来源。${evidenceSourceRule}\n场景连续性规则：第一阶段同一语义段的连续字幕必须使用该段 segmentId 作为 motionGroupId，persistUntilCaptionIndex 指向该段 endCaptionIndex；单条字幕段可将两者设为 null。第一阶段选中的每个动效必须在该段恰好返回一次，禁止把同一卡拆成多个逐步累积状态；多条内容应在一张卡内部按字幕锚点逐项出现。同段最多逐步加入 2 个内容层，两个内容层必须放在不同 captionIndex，且真实进场时间至少错开 0.5 秒；第一层保持到场景结束。不要按每条字幕机械切换动效，不要清空旧层再换一套。普通过渡字幕可以不返回 match；不需要每条字幕都有动效。相邻场景不能连续使用相同 kind，并避免连续使用强冲击、3D 或有声音的动效。同一段所有返回项的 accentColor 必须完全一致。
+A-roll/B-roll 规则：roleHint=a-roll 表示当前口播主叙事素材，通常继续播放，不要在 videoLayers 中重复插入；需要强调时使用 cameraPreset 做克制运镜。B-roll 用于例证、产品画面、操作画面或信息密集段落，每个场景最多选择一段主要 B-roll，通常持续 3 到 8 秒并覆盖多条字幕，volume=0 以保留口播。场景有多个独立信息点时，优先选择语义相关的 B-roll，以 full+rectangle+fade 呈现，再在其上逐步叠加最多 2 个短内容层；不要让多个小文字卡在每条字幕间闪烁。roleHint、文件名和 transcriptExcerpt 都是素材判断依据。讲解人适合 presenter-bottom-right+circle；教程操作画面适合 screen 全屏并启用 focus，没有准确鼠标坐标时焦点必须用 50/50，等待用户手动调整。多个视频同屏时使用分屏或画中画，避免完全遮挡。\n动效适用范围规则：每张卡的 usage 表示适用范围——talking-head 只用于有人物的口播段，fullscreen 只用于 B-roll、屏幕录制或无人物段，both 两种都可用。roleHint=a-roll 或 presenter 时只能选 talking-head 和 both；roleHint=b-roll 或 screen 时只能选 fullscreen 和 both；roleHint=unspecified 时只选 both。layer=background 的底噪卡不受人物条件限制，但同一段最多一层背景。exclusive=true 的卡独占全屏，不能与其他卡同屏。
 选型规则：先按 purposeGroup 判断用途，再根据 description 选具体表现。证据、原文、真实图片或录屏优先使用“证据实证”“场景 · 运镜”；多个痛点、步骤、流程、对比或信息层级优先使用对应的结构化动效；只有单个短观点才使用纯文字强调或文字进场。内容有两个以上可视化要点时，优先选择能承载完整结构的动效，不要总是退化成简单标题、胶囊或通用清单。同一语义只选最贴切的一种，避免堆叠同类效果。章节导航和字幕由编辑器独立处理，不参与自动匹配。
 文字规则：每条字幕默认最多一个主动效；只有辅助动效承载不同且必要的信息时才使用，否则 secondaryEffectId=null。subtitleKeywords 返回 0 到 3 个逐字存在于当前字幕原文的关键词，只用于字幕高亮。primaryText/secondaryText 是简洁且有信息增量的画面文案，中文通常 2 到 14 个字，不照抄完整字幕，不虚构数字、品牌、事实或因果。候选动效带有 copyFormat 时，严格按该结构用“｜”组织文案，普通结构总长度可以放宽到 48 个汉字；quote-lockup 可使用最多 5 行金句，总长度不超过 64 个汉字。每一段都必须有字幕依据，禁止模板示例和占位文字。只有字幕或同场景字幕包含明确数字时才用图表或数字对比；单值只用 counter，line/bar 至少两个真实数据点，donut 至少两个真实占比。
 参数与节奏规则：primaryParams/secondaryParams 只填写对应动效 allowedParams 中确有必要覆盖的非媒体、非时间参数；素材路径只能通过 compositionBindings。referenceStage=true 时，外层 x=50、y=50、scale=1，必须使用 primaryParams/secondaryParams 内的 position 或 side 选择参考落位，只在确有避让需要时小幅调整 offsetX/offsetY，并用 0.3–1 范围内的参数 scale 调整卡片大小；禁止用外层坐标移动或缩放完整舞台。逐条、逐词、逐步、滚动、多阶段或动作剧本动效必须填写 primaryTimingCaptionIndices/secondaryTimingCaptionIndices，按内容条目或阶段顺序给出每项开始口播的字幕索引。客户端会从真实字幕时间计算全部 times、At、Ms、Sec、cps 以及 acts 中的时间部分，不要直接猜时间值；acts 只填写“任意时间|动作”内容，客户端会重写时间。
@@ -805,15 +815,40 @@ function structuredValidationSummary(error: unknown) {
   return error instanceof Error ? error.message.slice(0, 1_000) : "返回内容无法通过本地校验";
 }
 
-function repairPrompt(user: string, invalidOutput: unknown, error: unknown) {
-  let serialized = "无法解析上一次输出";
-  if (invalidOutput !== undefined) {
+const MAX_REPAIR_OUTPUT_CHARACTERS = 24_000;
+
+/** Keeps the repair payload parseable by dropping trailing array items instead of cutting the JSON in half. */
+export function truncateRepairOutput(value: unknown, limit = MAX_REPAIR_OUTPUT_CHARACTERS) {
+  const serialize = (candidate: unknown) => {
     try {
-      serialized = JSON.stringify(invalidOutput).slice(0, 16_000);
+      return JSON.stringify(candidate) ?? "";
     } catch {
-      serialized = "无法序列化上一次输出";
+      return "";
+    }
+  };
+  const full = serialize(value);
+  if (!full) return "无法序列化上一次输出";
+  if (full.length <= limit) return full;
+  const arrays: Array<{ length: number; rebuild: (count: number) => unknown }> = [];
+  if (Array.isArray(value)) {
+    arrays.push({ length: value.length, rebuild: (count) => value.slice(0, count) });
+  } else if (value && typeof value === "object") {
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (!Array.isArray(entry) || !entry.length) continue;
+      arrays.push({ length: entry.length, rebuild: (count) => ({ ...(value as Record<string, unknown>), [key]: entry.slice(0, count) }) });
     }
   }
+  for (const candidate of arrays) {
+    for (let count = Math.floor(candidate.length / 2); count >= 1; count = Math.floor(count / 2)) {
+      const text = serialize(candidate.rebuild(count));
+      if (text && text.length <= limit) return text;
+    }
+  }
+  return full.slice(0, limit);
+}
+
+function repairPrompt(user: string, invalidOutput: unknown, error: unknown) {
+  const serialized = invalidOutput === undefined ? "无法解析上一次输出" : truncateRepairOutput(invalidOutput);
   return `${user}\n\n上一次返回未通过本地校验。校验问题：${structuredValidationSummary(error)}。\n上一次输出：${serialized}\n请修正全部问题，只返回修正后的完整 JSON，不要解释。`;
 }
 

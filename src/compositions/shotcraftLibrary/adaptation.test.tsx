@@ -60,6 +60,21 @@ it("焦点说明可编辑，预览渲染会随四个焦点切换", () => {
   const props = { compositionId: clip.compositionId, text: clip.text, color: clip.color, accentColor: clip.accentColor, fontSize: clip.fontSize, recipe: clip.recipe!, durationUs: clip.durationUs, canvasWidth: 1920, canvasHeight: 1080, shotcraftData: { clip } };
   expect(renderToStaticMarkup(<ShotcraftComposition {...props} timeUs={1_000_000} />)).toContain("识别素材");
   expect(renderToStaticMarkup(<ShotcraftComposition {...props} timeUs={5_500_000} />)).toContain("继续编辑");
+  for (const [t, caption] of [[0.35, "识别素材"], [0.55, "匹配镜头"], [0.75, "绑定图片"], [0.95, "继续编辑"]] as const) {
+    clip.shotcraft = { ...defaultShotcraftSettings(clip.compositionId), timeMap: [{ timeUs: 0, frame: 0 }, { timeUs: 1_000_000, frame: 179 }] };
+    expect(renderToStaticMarkup(<ShotcraftComposition {...props} timeUs={t * 1_000_000} />)).toContain(caption);
+  }
+});
+
+it("对比镜头可在结尾完整展示后图，默认保留双图对比", () => {
+  const clip = createEffectPreviewClip("shotcraft-before-after", createEmptyProject().motionTheme, []);
+  const props = { compositionId: clip.compositionId, text: clip.text, color: clip.color, accentColor: clip.accentColor, fontSize: clip.fontSize, recipe: clip.recipe!, durationUs: clip.durationUs, canvasWidth: 1920, shotcraftData: { clip }, timeUs: 10_000_000 };
+  expect(renderToStaticMarkup(<ShotcraftComposition {...props} />)).toContain("↔");
+  clip.params = { ...clip.params, revealAfter: true };
+  const html = renderToStaticMarkup(<ShotcraftComposition {...props} />);
+  expect(html).toContain("inset(0 100% 0 0)");
+  expect(html).not.toContain("↔");
+  expect(effectControlsFor(clip)).toContainEqual(expect.objectContaining({ kind: "param-toggle", field: "revealAfter" }));
 });
 
 it("慢推长中文自适应宽度，未绑定图片时尾部保留文案", async () => {

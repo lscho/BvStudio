@@ -31,7 +31,15 @@ test("generates unique well-formed lifetime cards with importable KV records", a
   assert.equal(keys.size, 50);
 });
 
-test("computes period expiry inputs and rejects invalid options", async () => {
+test("computes monthly and period expiry inputs and rejects invalid options", async () => {
+  const monthly = await generateCards({ count: 2, plan: "monthly" });
+  assert.equal(monthly.plan, "monthly");
+  assert.equal(monthly.days, 30);
+  for (const card of monthly.cards) {
+    assert.equal(card.kvValue.plan, "monthly");
+    assert.equal(card.kvValue.days, 30);
+  }
+
   const period = await generateCards({ count: 3, plan: "period", days: 365 });
   assert.equal(period.days, 365);
   for (const card of period.cards) {
@@ -41,7 +49,8 @@ test("computes period expiry inputs and rejects invalid options", async () => {
 
   await assert.rejects(() => generateCards({ count: 0, plan: "lifetime" }), /count/);
   await assert.rejects(() => generateCards({ count: 20001, plan: "lifetime" }), /count/);
-  await assert.rejects(() => generateCards({ count: 1, plan: "monthly" }), /plan/);
+  await assert.rejects(() => generateCards({ count: 1, plan: "weekly" }), /plan/);
+  await assert.rejects(() => generateCards({ count: 1, plan: "monthly", days: 60 }), /30 天/);
   await assert.rejects(() => generateCards({ count: 1, plan: "period" }), /days/);
   await assert.rejects(() => generateCards({ count: 1, plan: "period", days: 0 }), /days/);
 });
@@ -62,6 +71,29 @@ test("cli writes a manifest to the requested output path", async () => {
     assert.equal(manifest.cards.length, 3);
     for (const card of manifest.cards) {
       assert.match(card.cardKey, CARD_KEY_RE);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("cli generates 30-day monthly cards without a days flag", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "bvideo-cards-"));
+  try {
+    const output = join(directory, "monthly.json");
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    await promisify(execFile)(process.execPath, [
+      "scripts/generate-license-cards.mjs", "--count", "2", "--plan", "monthly", "--output", output
+    ]);
+
+    const manifest = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(manifest.plan, "monthly");
+    assert.equal(manifest.days, 30);
+    assert.equal(manifest.cards.length, 2);
+    for (const card of manifest.cards) {
+      assert.equal(card.kvValue.plan, "monthly");
+      assert.equal(card.kvValue.days, 30);
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });

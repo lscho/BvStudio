@@ -89,6 +89,9 @@ bvideo-license-v1\n{ts}\n{isVip}\n{planName}\n{expireAt}\n{activatedAt}\n{licens
 # 生成 100 张永久卡并直接写入线上 KV，终端输出卡密列表
 npm run esa:import -- --count 100 --plan lifetime
 
+# 月卡（兑换后固定 30 天到期）
+npm run esa:import -- --count 100 --plan monthly
+
 # 限时卡（365 天）
 npm run esa:import -- --count 50 --plan period --days 365
 

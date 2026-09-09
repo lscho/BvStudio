@@ -65,8 +65,8 @@ import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
 import { useLicenseStore } from "@/stores/licenseStore";
 import { rasterizeCompositions } from "@/compositions/exportRenderer";
 import { lintMotionProject } from "@/domain/motionLint";
-import { builtinSoundAssetId, builtinSoundEffectById, type BuiltinSoundEffectId } from "@/domain/soundEffects";
-import { createBuiltinSoundAsset, previewBuiltinSound } from "@/services/builtinSounds";
+import { builtinSoundAssetId, builtinSoundEffectById } from "@/domain/soundEffects";
+import { createBuiltinSoundAsset } from "@/services/builtinSounds";
 import { createMotionMatchingFeedbackRecord, readConfirmedMotionPreferences, saveMotionMatchingFeedback } from "@/services/motionMatchingFeedback";
 
 function loadVideoMetadata(url: string) {
@@ -600,22 +600,6 @@ export default function App() {
     }
   }
 
-  async function addBuiltinSound(soundId: BuiltinSoundEffectId) {
-    try {
-      const expectedName = `${builtinSoundEffectById(soundId)?.name}.wav`;
-      const current = useEditorStore.getState().project.assets.find((asset) => asset.id === builtinSoundAssetId(soundId) && !asset.missing && asset.name === expectedName);
-      const asset = current ?? await createBuiltinSoundAsset(soundId, { refresh: true });
-      addAudio(asset, "sound");
-      setNotice(`已在播放头添加“${builtinSoundEffectById(soundId)?.name ?? "内置音效"}”`);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "内置音效添加失败");
-    }
-  }
-
-  function playBuiltinSound(soundId: BuiltinSoundEffectId) {
-    void previewBuiltinSound(soundId).catch(() => setNotice("浏览器阻止了音效试听，请再次点击试听"));
-  }
-
   async function exportVideo(options: VideoExportOptions) {
     setExportOpen(false);
     if (!isDesktopRuntime()) {
@@ -811,7 +795,7 @@ export default function App() {
           </div>
           <WindowControls />
         </header>
-        <EditorWorkspace aiProvider={settings.aiProvider} onNeedSettings={() => setSettingsOpen(true)} onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onMatchEffects={() => void matchSubtitleEffects()} onReviewMotionMatching={() => setMotionFeedbackOpen(true)} onMatchSounds={() => void matchSubtitleEffects("sound")} matching={Boolean(aiRequestController)} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => { const state = useEditorStore.getState(); setAudioContext(narrationContext(state.project, state.selectedClipIds, state.playheadUs)); setAudioOpen(true); }} onManageEffects={() => setEffectLibraryOpen(true)} onPreviewBuiltinSound={playBuiltinSound} onAddBuiltinSound={(soundId) => void addBuiltinSound(soundId)} />
+        <EditorWorkspace aiProvider={settings.aiProvider} onNeedSettings={() => setSettingsOpen(true)} onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onMatchEffects={() => void matchSubtitleEffects()} onReviewMotionMatching={() => setMotionFeedbackOpen(true)} onMatchSounds={() => void matchSubtitleEffects("sound")} matching={Boolean(aiRequestController)} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => { const state = useEditorStore.getState(); setAudioContext(narrationContext(state.project, state.selectedClipIds, state.playheadUs)); setAudioOpen(true); }} onManageEffects={() => setEffectLibraryOpen(true)} onNeedLicense={() => { setSettingsInitialSection("license"); setSettingsOpen(true); }} />
         <input ref={fileInput} className="visually-hidden" type="file" accept="video/*,audio/*,image/png,image/jpeg,image/webp,image/bmp" onChange={(event) => void importBrowserMedia(event)} />
       </div>
       {(busyMessage || notice) && <div className={`status-toast ${busyMessage ? "busy" : ""}`}>{busyMessage && <LoaderCircle className="spin" size={15} />}<span>{busyMessage ?? notice}{exportProgress ? <small>{Math.round(exportProgress.progress * 100)}% · {exportProgress.segmentIndex}/{exportProgress.segmentCount || "-"}</small> : proxyProgress ? <small>{Math.round(proxyProgress.progress * 100)}%</small> : asrProgress ? <small>{Math.round(asrProgress.progress * 100)}% · 云端处理</small> : null}</span>{(compositionExportController.current || aiRequestController || exportJobId || proxyJobId || audioExtractionJobId || asrJobId) && <button type="button" aria-label={aiRequestController ? "取消 AI 匹配" : (exportJobId || compositionExportController.current) ? "取消视频导出" : proxyJobId ? "取消代理生成" : audioExtractionJobId ? "取消音频分离" : "取消字幕识别"} title="取消任务" onClick={() => void cancelCurrentTask()}><Square size={12} fill="currentColor" /></button>}{notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button>}</div>}

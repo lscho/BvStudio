@@ -198,4 +198,64 @@ describe("motion matching plan validation", () => {
     ], selection, captions);
     expect(issues.map((issue) => issue.code)).toContain("evidence-source-missing");
   });
+
+  it("accepts a match that leaves the motion group empty inside a multi-caption segment", () => {
+    const selection: AiMotionSelection = { segments: [selectionSegment()] };
+    const issues = validateMotionMatchPlan([
+      motionMatch({ motionGroupId: null, persistUntilCaptionIndex: null })
+    ], selection, captions);
+    expect(issues).toEqual([]);
+  });
+
+  it("accepts an evidence source written as a structured note row", () => {
+    const selection: AiMotionSelection = { segments: [selectionSegment({ primaryEffectId: "info-board" })] };
+    const issues = validateMotionMatchPlan([
+      motionMatch({
+        primaryEffectId: "info-board",
+        primaryText: "单桩回本周期 2-4 年",
+        primaryParams: [{ key: "rows", value: "head|单桩回本周期\nnote|来源：公开数据" }]
+      })
+    ], selection, captions);
+    expect(issues.map((issue) => issue.code)).not.toContain("evidence-source-missing");
+  });
+
+  it("keeps a real source when another row is only a placeholder", () => {
+    const selection: AiMotionSelection = { segments: [selectionSegment({ primaryEffectId: "info-board" })] };
+    const issues = validateMotionMatchPlan([
+      motionMatch({
+        primaryEffectId: "info-board",
+        primaryText: "单桩回本周期 2-4 年",
+        primaryParams: [{ key: "rows", value: "head|单桩回本周期\nnote|来源：公开数据\nimg||示例配图" }]
+      })
+    ], selection, captions);
+    expect(issues.map((issue) => issue.code)).not.toContain("evidence-source-missing");
+  });
+
+  it("still requires a source on an evidence card that has a source field", () => {
+    const selection: AiMotionSelection = { segments: [selectionSegment({ primaryEffectId: "stat-proof" })] };
+    const withoutSource = validateMotionMatchPlan([
+      motionMatch({ primaryEffectId: "stat-proof", primaryText: "42%｜核心指标增长", primaryParams: [] })
+    ], selection, captions);
+    expect(withoutSource.map((issue) => issue.code)).toContain("evidence-source-missing");
+    const withSource = validateMotionMatchPlan([
+      motionMatch({
+        primaryEffectId: "stat-proof",
+        primaryText: "42%｜核心指标增长",
+        primaryParams: [{ key: "footZh", value: "来源：公开数据" }]
+      })
+    ], selection, captions);
+    expect(withSource.map((issue) => issue.code)).not.toContain("evidence-source-missing");
+  });
+
+  it("does not require a source on a comparison card without a source field", () => {
+    const selection: AiMotionSelection = { segments: [selectionSegment({ primaryEffectId: "win-lose" })] };
+    const issues = validateMotionMatchPlan([
+      motionMatch({
+        primaryEffectId: "win-lose",
+        primaryText: "选 A 不选 B",
+        primaryParams: [{ key: "winName", value: "方案 A" }, { key: "loseName", value: "方案 B" }]
+      })
+    ], selection, captions);
+    expect(issues.map((issue) => issue.code)).not.toContain("evidence-source-missing");
+  });
 });

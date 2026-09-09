@@ -4,8 +4,9 @@ import { AssetPanel } from "@/components/AssetPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
 import { createEmptyProject } from "@/domain/project";
 import { useEditorStore } from "@/stores/editorStore";
-import { BUILTIN_EFFECTS } from "@/domain/effects";
+import { BUILTIN_EFFECTS, PREMIUM_EFFECT_IDS } from "@/domain/effects";
 import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
+import { useLicenseStore } from "@/stores/licenseStore";
 
 describe("AssetPanel video audio actions", () => {
   it("opens script records from subtitles and keeps editing undoable without a timeline row", () => {
@@ -25,23 +26,22 @@ describe("AssetPanel video audio actions", () => {
     act(() => useEditorStore.getState().redo());
     expect(useEditorStore.getState().project.tracks.find(t => t.kind === "generated")!.clips[0]).toMatchObject({ article: "更新文章" });
   });
-  it("previews and manually adds a built-in sound effect", () => {
+  it("groups the Shotcraft audio library by category and hides built-in sound effects", () => {
     const project = createEmptyProject();
     useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
-    const onPreviewBuiltinSound = vi.fn();
-    const onAddBuiltinSound = vi.fn();
-    render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} onPreviewBuiltinSound={onPreviewBuiltinSound} onAddBuiltinSound={onAddBuiltinSound} />);
+    const { container } = render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} />);
 
     const soundsTab = screen.getByRole("tab", { name: "音效" });
     fireEvent.mouseDown(soundsTab, { button: 0, ctrlKey: false });
     fireEvent.click(soundsTab);
-    expect(screen.getByText("丝滑转场")).toBeInTheDocument();
-    expect(screen.getByText("片头冲击")).toBeInTheDocument();
-    expect(screen.getByText("字幕弹出")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "试听 字幕弹出" }));
-    fireEvent.click(screen.getByRole("button", { name: "添加 字幕弹出" }));
-    expect(onPreviewBuiltinSound).toHaveBeenCalledWith("clean-click");
-    expect(onAddBuiltinSound).toHaveBeenCalledWith("clean-click");
+
+    for (const name of ["丝滑转场", "片头冲击", "字幕弹出"]) expect(screen.queryByText(name)).not.toBeInTheDocument();
+    for (const category of ["转场", "冲击", "音乐"]) expect(screen.getByText(category, { selector: "summary span" })).toBeInTheDocument();
+    expect(container.querySelectorAll(".shotcraft-audio-library .effect-group").length).toBeGreaterThan(0);
+    expect(container.querySelectorAll(".shotcraft-audio-library .effect-group[open]")).toHaveLength(0);
+    const musicGroup = screen.getByText("音乐", { selector: "summary span" }).closest("details")!;
+    expect(musicGroup).toHaveTextContent("bgm-tech-house");
+    expect(within(musicGroup).getAllByRole("button", { name: /^添加 /, hidden: true })).toHaveLength(5);
   });
 
   it("offers cloud subtitle extraction, aligned audio separation and audio export", () => {
@@ -68,10 +68,10 @@ describe("AssetPanel video audio actions", () => {
     useEffectLibraryStore.setState({ effects: [...BUILTIN_EFFECTS] });
     const { container } = render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} />);
 
-    for (const category of ["背景", "展示", "场景", "标题", "强调", "卡片", "标注", "数据", "布局"]) {
+    for (const category of ["背景", "展示", "场景", "标题", "强调", "卡片", "标注", "数据", "布局", "高级"]) {
       expect(screen.getByText(category, { selector: "summary span" })).toBeInTheDocument();
     }
-    expect(container.querySelectorAll(".effect-group")).toHaveLength(9);
+    expect(container.querySelectorAll(".effect-group")).toHaveLength(10);
     expect(container.querySelectorAll(".effect-group[open]")).toHaveLength(0);
     const dataGroup = screen.getByText("数据", { selector: "summary span" }).closest("details");
     const backgroundGroup = screen.getByText("背景", { selector: "summary span" }).closest("details");
@@ -90,16 +90,21 @@ describe("AssetPanel video audio actions", () => {
     expect(annotationGroup).not.toHaveTextContent("玻璃底幕");
     expect(displayGroup).toHaveTextContent("截图实证");
     expect(displayGroup).toHaveTextContent("录屏演示运镜");
-    expect(displayGroup).toHaveTextContent("3D 海报墙");
-    expect(displayGroup).toHaveTextContent("双图展示");
+    expect(displayGroup).not.toHaveTextContent("3D 海报墙");
+    expect(displayGroup).not.toHaveTextContent("双图展示");
+    const premiumGroup = screen.getByText("高级", { selector: "summary span" }).closest("details");
+    expect(premiumGroup).toHaveTextContent("3D 海报墙");
+    expect(premiumGroup).toHaveTextContent("双图展示");
     expect(sceneGroup).not.toHaveTextContent("3D 海报墙");
     expect(sceneGroup).not.toHaveTextContent("双图展示");
     expect(layoutGroup).toHaveTextContent("动作卡组");
     expect(layoutGroup).toHaveTextContent("步骤清单");
     expect(screen.getByText("章节导航条")).toBeInTheDocument();
     expect(screen.getByText("双语字幕轨")).toBeInTheDocument();
-    expect(container.querySelectorAll(".effect-swatch")).toHaveLength(BUILTIN_EFFECTS.length);
-    expect(container.querySelectorAll(".effect-swatch i")).toHaveLength(BUILTIN_EFFECTS.length);
+    const swatches = container.querySelectorAll(".effect-swatch");
+    expect(swatches).toHaveLength(BUILTIN_EFFECTS.length);
+    expect(container.querySelectorAll(".effect-swatch i > svg")).toHaveLength(BUILTIN_EFFECTS.length);
+    expect([...swatches].every((swatch) => swatch.querySelector("svg"))).toBe(true);
   });
 
   it("previews an effect from the row and only adds it from the plus button", () => {
@@ -118,6 +123,44 @@ describe("AssetPanel video audio actions", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "添加 金句强调条 到时间线", hidden: true }));
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips).toHaveLength(1);
+  });
+
+  it("keeps premium effects previewable but replaces the add button with a locked PRO button", () => {
+    const project = createEmptyProject();
+    useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
+    useEffectLibraryStore.setState({ effects: [...BUILTIN_EFFECTS] });
+    useLicenseStore.setState({ status: { isVip: false, planName: "普通用户", expireAt: null, activatedAt: null, licenseKey: null } });
+    const onNeedLicense = vi.fn();
+    const onPreviewEffect = vi.fn();
+    const { container } = render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} onNeedLicense={onNeedLicense} onPreviewEffect={onPreviewEffect} />);
+
+    const premiumGroup = screen.getByText("高级", { selector: "summary span" }).closest("details")!;
+    expect(container.querySelectorAll(".effect-library-item.locked").length).toBeGreaterThanOrEqual(PREMIUM_EFFECT_IDS.length);
+    const proButtons = within(premiumGroup).getAllByRole("button", { name: /需要 Pro 会员$/, hidden: true });
+    expect(proButtons.length).toBeGreaterThanOrEqual(PREMIUM_EFFECT_IDS.length);
+    expect(proButtons.every((button) => button.textContent === "PRO")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "预览 3D 终端", hidden: true }));
+    expect(onPreviewEffect).toHaveBeenCalledWith("terminal-3d");
+    expect(onNeedLicense).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "3D 终端 需要 Pro 会员", hidden: true }));
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips).toHaveLength(0);
+    expect(onNeedLicense).toHaveBeenCalledTimes(1);
+  });
+
+  it("unlocks every effect once the device holds an active Pro license", () => {
+    const project = createEmptyProject();
+    useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
+    useEffectLibraryStore.setState({ effects: [...BUILTIN_EFFECTS] });
+    useLicenseStore.setState({ status: { isVip: true, planName: "终身 VIP 会员", expireAt: null, activatedAt: Date.now(), licenseKey: null } });
+    const onNeedLicense = vi.fn();
+    const { container } = render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} onNeedLicense={onNeedLicense} />);
+
+    expect(container.querySelectorAll(".effect-library-item.locked")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "添加 3D 终端 到时间线", hidden: true }));
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips).toHaveLength(1);
+    expect(onNeedLicense).not.toHaveBeenCalled();
   });
 
   it("selects one project accent color for new effects with undo support", () => {

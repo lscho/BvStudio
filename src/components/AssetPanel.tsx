@@ -1,16 +1,20 @@
 import * as Tabs from "@radix-ui/react-tabs";
 import { useMemo, useState } from "react";
-import { AudioLines, AudioWaveform, BadgePercent, Captions, ChartNoAxesColumnIncreasing, ChartPie, ChartSpline, Check, ChevronDown, Download, FileText, FileVideo2, History, ImageIcon, Layers3, Link2, Music2, PackageOpen, Play, Plus, Search, SlidersHorizontal, Sparkles, TriangleAlert, WandSparkles, X } from "lucide-react";
+import { AudioLines, AudioWaveform, Captions, Check, ChevronDown, Download, FileText, FileVideo2, History, ImageIcon, Link2, Music2, PackageOpen, Play, Plus, Search, SlidersHorizontal, Sparkles, TriangleAlert, WandSparkles, X } from "lucide-react";
+import { EffectGlyphIcon, effectGlyphFamily } from "@/components/EffectGlyphIcon";
 import { SubtitleStyleDialog } from "@/components/SubtitleStyleDialog";
 import { ShotcraftAudioLibrary } from "@/components/ShotcraftAudioLibrary";
-import type { EffectCategory, CompositionDefinition } from "@/domain/effects";
+import { canUseEffect, EFFECT_CATEGORY_ORDER, effectTier, effectTierMap, PREMIUM_EFFECT_CATEGORY } from "@/domain/effectAccess";
+import { effectGlyphKey, type EffectGlyphKey } from "@/domain/effectGlyph";
+import { BUILTIN_EFFECTS, type CompositionDefinition } from "@/domain/effects";
 import { MOTION_ACCENT_COLOR_PRESETS, motionThemeAccentColor, motionThemeUsesAccentColor, motionThemeWithAccentColor } from "@/domain/motionTheme";
 import type { GeneratedBlock, SubtitleClip } from "@/domain/project";
 import { displaySubtitleText } from "@/domain/videoDecorations";
+import { isVipActive } from "@/services/license";
 import { localMediaUrl } from "@/services/media";
 import { useEditorStore } from "@/stores/editorStore";
 import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
-import { BUILTIN_SOUND_EFFECTS, type BuiltinSoundCategory, type BuiltinSoundEffectId } from "@/domain/soundEffects";
+import { useLicenseStore } from "@/stores/licenseStore";
 
 interface Props {
   onImport: () => void;
@@ -25,13 +29,15 @@ interface Props {
   onRelink: (assetId: string) => void;
   onCreateAudio: () => void;
   onManageEffects: () => void;
+  onNeedLicense?: () => void;
   previewingEffectId?: string | null;
   onPreviewEffect?: (compositionId: string | null) => void;
-  onPreviewBuiltinSound?: (soundId: BuiltinSoundEffectId) => void;
-  onAddBuiltinSound?: (soundId: BuiltinSoundEffectId) => void;
 }
 
-export function AssetPanel({ onImport, onGenerate, onMatchEffects, onReviewMotionMatching, onMatchSounds, matching, onTranscribe, onExtractAudio, onExportAudio, onRelink, onCreateAudio, onManageEffects, previewingEffectId, onPreviewEffect, onPreviewBuiltinSound, onAddBuiltinSound }: Props) {
+// 档位只由内置库决定：已安装的扩展动效包不会挤占分类内的免费名额。
+const EFFECT_TIERS = effectTierMap(BUILTIN_EFFECTS);
+
+export function AssetPanel({ onImport, onGenerate, onMatchEffects, onReviewMotionMatching, onMatchSounds, matching, onTranscribe, onExtractAudio, onExportAudio, onRelink, onCreateAudio, onManageEffects, onNeedLicense, previewingEffectId, onPreviewEffect }: Props) {
   const [subtitleStyleOpen, setSubtitleStyleOpen] = useState(false);
   const [scriptsOpen, setScriptsOpen] = useState(false);
   const [effectQuery, setEffectQuery] = useState("");
@@ -45,18 +51,16 @@ export function AssetPanel({ onImport, onGenerate, onMatchEffects, onReviewMotio
   const motionAccentColor = motionThemeAccentColor(project.motionTheme);
   const subtitles = useMemo(() => project.tracks.flatMap((track) => track.clips).filter((clip): clip is SubtitleClip => clip.kind === "subtitle").sort((left, right) => left.startUs - right.startUs), [project]);
   const effects = useEffectLibraryStore((state) => state.effects);
+  const vipStatus = useLicenseStore((state) => state.status);
+  const isPro = isVipActive(vipStatus);
   const filteredEffects = useMemo(() => {
     const query = effectQuery.trim().toLocaleLowerCase("zh-CN");
     if (!query) return effects;
     return effects.filter((effect) => `${effect.name} ${effect.description} ${effect.category} ${effect.tags.join(" ")}`.toLocaleLowerCase("zh-CN").includes(query));
   }, [effectQuery, effects]);
-  const effectGroups = useMemo(() => (["背景", "展示", "场景", "标题", "强调", "卡片", "标注", "数据", "布局"] satisfies EffectCategory[])
+  const effectGroups = useMemo(() => EFFECT_CATEGORY_ORDER
     .map((category) => ({ category, effects: filteredEffects.filter((effect) => effect.category === category) }))
     .filter((group) => group.effects.length > 0), [filteredEffects]);
-  const soundGroups = (["转场", "强调", "氛围"] satisfies BuiltinSoundCategory[]).map((category) => ({
-    category,
-    sounds: BUILTIN_SOUND_EFFECTS.filter((sound) => sound.category === category)
-  }));
   return (
     <aside className="asset-panel panel-border">
       <Tabs.Root defaultValue={assets.length ? "media" : "effects"} className="panel-tabs">
@@ -88,13 +92,15 @@ export function AssetPanel({ onImport, onGenerate, onMatchEffects, onReviewMotio
                 <div className="effect-group-items">
                   {group.effects.map((effect) => {
                     const previewing = previewingEffectId === effect.id;
-                    return <div className={`effect-library-item ${previewing ? "previewing" : ""}`} key={effect.id}>
-                      <button className="effect-preview-button" type="button" aria-label={`预览 ${effect.name}`} aria-pressed={previewing} title="在画布中预览" onClick={() => onPreviewEffect?.(effect.id)}>
+                    const locked = !canUseEffect(effectTier(effect, EFFECT_TIERS), isPro);
+                    const lockHint = group.category === PREMIUM_EFFECT_CATEGORY ? "高级动效需要 Pro 会员" : "第 11 个起的动效需要 Pro 会员";
+                    return <div className={`effect-library-item ${previewing ? "previewing" : ""} ${locked ? "locked" : ""}`} key={effect.id}>
+                      <button className="effect-preview-button" type="button" aria-label={`预览 ${effect.name}`} aria-pressed={previewing} title={locked ? `${lockHint}，可先预览再兑换` : "在画布中预览"} onClick={() => onPreviewEffect?.(effect.id)}>
                         <EffectThumbnail effect={effect} accentColor={motionAccentColor} />
                         <span><strong>{effect.name}</strong><small>{effect.description}</small></span>
                         <Play size={13} fill="currentColor" aria-hidden="true" />
                       </button>
-                      <button className="effect-add-button" type="button" aria-label={`添加 ${effect.name} 到时间线`} title="添加到播放头" onClick={() => { onPreviewEffect?.(null); addComposition(effect.id); }}><Plus size={14} /></button>
+                      <button className={`effect-add-button ${locked ? "pro-locked" : ""}`} type="button" aria-label={locked ? `${effect.name} 需要 Pro 会员` : `添加 ${effect.name} 到时间线`} title={locked ? `${lockHint}，点击兑换` : "添加到播放头"} onClick={() => { if (locked) { onNeedLicense?.(); return; } onPreviewEffect?.(null); addComposition(effect.id); }}>{locked ? "PRO" : <Plus size={14} />}</button>
                     </div>;
                   })}
                 </div>
@@ -109,15 +115,7 @@ export function AssetPanel({ onImport, onGenerate, onMatchEffects, onReviewMotio
         </Tabs.Content>
         <Tabs.Content value="sounds" className="panel-content asset-action-panel" tabIndex={-1}>
           <div className="asset-panel-scroll sound-library">
-          <header><AudioWaveform size={15} aria-hidden="true" /><span><strong>内置音效</strong><small>添加到当前播放头</small></span></header>
-          {soundGroups.map((group) => <section key={group.category} className="sound-group" aria-labelledby={`sound-group-${group.category}`}>
-            <h3 id={`sound-group-${group.category}`}>{group.category}</h3>
-            {group.sounds.map((sound) => <div className="sound-row" key={sound.id}>
-              <button type="button" aria-label={`试听 ${sound.name}`} title="试听音效" onClick={() => onPreviewBuiltinSound?.(sound.id)}><Play size={13} fill="currentColor" /></button>
-              <span><strong>{sound.name}</strong><small>{sound.description} · {(sound.durationUs / 1_000_000).toFixed(2)} 秒</small></span>
-              <button type="button" aria-label={`添加 ${sound.name}`} title="添加到播放头" onClick={() => onAddBuiltinSound?.(sound.id)}><Plus size={14} /></button>
-            </div>)}
-          </section>)}
+          <header><AudioWaveform size={15} aria-hidden="true" /><span><strong>Shotcraft 音效</strong><small>按分类展开，添加到当前播放头</small></span></header>
           <ShotcraftAudioLibrary />
           </div>
           <div className="asset-panel-actions" aria-label="音效操作">
@@ -177,21 +175,19 @@ function formatCaptionTime(timeUs: number) {
 
 function EffectThumbnail({ effect, accentColor }: { effect: CompositionDefinition; accentColor: string }) {
   const chartKind = effect.recipe.chart?.kind;
-  const label = effect.recipe.layout === "number"
-    ? effect.defaultText.match(/[\d.%+\-]+/)?.[0] ?? "42%"
-    : effect.defaultText.slice(0, 8);
-  const chartIcon = chartKind === "counter" ? <BadgePercent size={18} />
-    : chartKind === "bar" ? <ChartNoAxesColumnIncreasing size={18} />
-      : chartKind === "donut" ? <ChartPie size={18} />
-        : chartKind === "line" ? <ChartSpline size={18} />
+  const chartGlyph: EffectGlyphKey | null = chartKind === "counter" ? "data-counter"
+    : chartKind === "bar" ? "data-bar"
+      : chartKind === "donut" ? "data-ring"
+        : chartKind === "line" ? "data-line"
           : null;
+  const glyph = chartGlyph ?? effectGlyphKey(effect);
   return (
     <span
-      className={`effect-swatch recipe-${effect.recipe.layout} ${chartKind ? `chart-swatch chart-${chartKind}` : ""} ${effect.kind === "scene" || effect.recipe.sceneBackground ? "scene-swatch" : ""}`}
+      className={`effect-swatch glyph-${effectGlyphFamily(glyph)} ${chartKind ? `chart-swatch chart-${chartKind}` : ""} ${effect.kind === "scene" || effect.recipe.sceneBackground ? "scene-swatch" : ""}`}
       style={{ "--swatch-accent": accentColor, "--swatch-text": effect.defaultColor } as React.CSSProperties}
       aria-hidden="true"
     >
-      <i>{(effect.renderer === "three" || effect.renderer === "canvas") || effect.kind === "scene" || effect.recipe.sceneBackground ? <Layers3 size={18} /> : chartIcon ?? label}</i>
+      <i><EffectGlyphIcon glyph={glyph} /></i>
     </span>
   );
 }

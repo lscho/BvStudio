@@ -7,9 +7,27 @@ import {
 } from "@/services/license";
 import type { RedeemResult, VipStatus } from "@/services/license";
 
+/** 开发环境专用的身份模拟值；发布构建中该能力被整体裁剪。 */
+export type DevLicenseOverride = "free" | "pro";
+
+/**
+ * 开发环境身份模拟：在真实授权身份之上叠加 free/pro，用于验证 Pro 功能。
+ * 未兑换卡密（无 licenseKey）或非开发环境时恒返回真实身份。
+ */
+function resolveStatus(base: VipStatus, override: DevLicenseOverride | null): VipStatus {
+  if (!import.meta.env.DEV || !override || !base.licenseKey) return base;
+  return override === "pro"
+    ? { ...base, isVip: true, expireAt: null }
+    : { ...base, isVip: false };
+}
+
 interface LicenseState {
   deviceId: string;
+  /** 界面实际生效的身份（开发环境可能已被模拟覆盖） */
   status: VipStatus;
+  /** 授权服务/缓存返回的真实身份，作为退出模拟时的还原基准 */
+  baseStatus: VipStatus;
+  devOverride: DevLicenseOverride | null;
   isInitialized: boolean;
   isChecking: boolean;
   isRedeeming: boolean;
@@ -18,11 +36,14 @@ interface LicenseState {
   initialize: () => Promise<void>;
   checkVipStatus: () => Promise<void>;
   redeem: (cardKey: string) => Promise<RedeemResult>;
+  setDevOverride: (override: DevLicenseOverride | null) => void;
 }
 
 export const useLicenseStore = create<LicenseState>((set, get) => ({
   deviceId: "",
   status: DEFAULT_VIP_STATUS,
+  baseStatus: DEFAULT_VIP_STATUS,
+  devOverride: null,
   isInitialized: false,
   isChecking: false,
   isRedeeming: false,
@@ -50,9 +71,10 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
     const currentDeviceId = get().deviceId || (await getHardwareDeviceId());
     set({ deviceId: currentDeviceId, isChecking: true, error: null });
     try {
-      const status = await verifyVipStatus(currentDeviceId);
+      const baseStatus = await verifyVipStatus(currentDeviceId);
       set({
-        status,
+        baseStatus,
+        status: resolveStatus(baseStatus, get().devOverride),
         lastCheckedAt: Date.now(),
         isChecking: false
       });
@@ -75,7 +97,9 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
       const result = await redeemCardKey(currentDeviceId, cardKey);
       if (result.success && result.status) {
         set({
+          baseStatus: result.status,
           status: result.status,
+          devOverride: null,
           error: null
         });
       }
@@ -83,5 +107,12 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
     } finally {
       set({ isRedeeming: false });
     }
+  },
+
+  setDevOverride: (override) => {
+    if (!import.meta.env.DEV) return;
+    const baseStatus = get().baseStatus;
+    if (!baseStatus.licenseKey) return;
+    set({ devOverride: override, status: resolveStatus(baseStatus, override) });
   }
 }));

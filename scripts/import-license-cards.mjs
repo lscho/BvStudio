@@ -4,6 +4,7 @@
  *
  * 用法（推荐通过 npm 快捷方式，工作目录固定在仓库根目录）：
  *   npm run esa:import -- --count 100 --plan lifetime
+ *   npm run esa:import -- --count 100 --plan monthly
  *   npm run esa:import -- --count 50 --plan period --days 365
  *   npm run esa:import -- --input license-cards-2026.json          # 导入已生成的清单（幂等，重复 put 覆盖）
  *   npm run esa:import -- --count 1 --plan lifetime --dry-run      # 只生成和展示，不上传
@@ -122,7 +123,7 @@ function printCardKeys(cards) {
 async function runCli(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
   const plan = args.plan ?? "lifetime";
-  const days = plan === "period" ? Number.parseInt(args.days ?? "", 10) : null;
+  const days = args.days === undefined ? null : Number.parseInt(args.days, 10);
 
   let manifest;
   if (args.input) {

@@ -18,6 +18,8 @@ describe("licenseStore", () => {
     useLicenseStore.setState({
       deviceId: "",
       status: licenseService.DEFAULT_VIP_STATUS,
+      baseStatus: licenseService.DEFAULT_VIP_STATUS,
+      devOverride: null,
       isInitialized: false,
       isChecking: false,
       isRedeeming: false,
@@ -61,6 +63,60 @@ describe("licenseStore", () => {
     expect(result.success).toBe(true);
     expect(useLicenseStore.getState().status.isVip).toBe(true);
     expect(useLicenseStore.getState().status.planName).toBe("终身 VIP 会员");
+    expect(useLicenseStore.getState().baseStatus.isVip).toBe(true);
+    expect(useLicenseStore.getState().devOverride).toBeNull();
+  });
+
+  it("only simulates free/pro identity after a card key is redeemed", () => {
+    useLicenseStore.getState().setDevOverride("pro");
+    expect(useLicenseStore.getState().status.isVip).toBe(false);
+    expect(useLicenseStore.getState().devOverride).toBeNull();
+
+    const redeemed = {
+      isVip: true,
+      planName: "终身 VIP 会员",
+      expireAt: null,
+      activatedAt: Date.now(),
+      licenseKey: "VIP-****-9999"
+    };
+    useLicenseStore.setState({ baseStatus: redeemed, status: redeemed });
+
+    useLicenseStore.getState().setDevOverride("free");
+    expect(useLicenseStore.getState().status.isVip).toBe(false);
+    expect(useLicenseStore.getState().status.licenseKey).toBe("VIP-****-9999");
+
+    useLicenseStore.getState().setDevOverride("pro");
+    expect(useLicenseStore.getState().status.isVip).toBe(true);
+
+    useLicenseStore.getState().setDevOverride(null);
+    expect(useLicenseStore.getState().status.isVip).toBe(true);
+  });
+
+  it("re-applies the simulated identity on refresh and drops it once the license is gone", async () => {
+    const redeemed = {
+      isVip: true,
+      planName: "终身 VIP 会员",
+      expireAt: null,
+      activatedAt: Date.now(),
+      licenseKey: "VIP-****-9999"
+    };
+    useLicenseStore.setState({ deviceId: "BV-DEVICE-123", baseStatus: redeemed, status: redeemed });
+    useLicenseStore.getState().setDevOverride("free");
+
+    vi.mocked(licenseService.verifyVipStatus).mockResolvedValue(redeemed);
+    await useLicenseStore.getState().checkVipStatus();
+    expect(useLicenseStore.getState().status.isVip).toBe(false);
+
+    vi.mocked(licenseService.verifyVipStatus).mockResolvedValue({
+      isVip: false,
+      planName: "普通用户",
+      expireAt: null,
+      activatedAt: null,
+      licenseKey: null
+    });
+    await useLicenseStore.getState().checkVipStatus();
+    expect(useLicenseStore.getState().status.isVip).toBe(false);
+    expect(useLicenseStore.getState().status.licenseKey).toBeNull();
   });
 });
 

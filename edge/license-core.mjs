@@ -100,8 +100,12 @@ export function freeStatus() {
   return { isVip: false, planName: "普通用户", expireAt: null, activatedAt: null, licenseKey: null };
 }
 
+/** 月卡固定有效天数：兑换后 30 天到期 */
+export const MONTHLY_CARD_DAYS = 30;
+
 export function planLabelForCard(card) {
   if (card.plan === "lifetime") return "终身 VIP 会员";
+  if (card.plan === "monthly") return "月卡 VIP 会员";
   return `${card.days} 天 VIP 会员`;
 }
 
@@ -122,7 +126,9 @@ export function statusForDeviceRecord(record, now) {
 }
 
 export function cardExpiryAt(card, boundAt) {
-  return card.plan === "lifetime" || !card.days ? null : boundAt + card.days * DAY_MS;
+  if (card.plan === "lifetime") return null;
+  const days = card.plan === "monthly" ? MONTHLY_CARD_DAYS : card.days;
+  return !days ? null : boundAt + days * DAY_MS;
 }
 
 function buildDeviceRecord(card, deviceId, activatedAt, expireAt) {

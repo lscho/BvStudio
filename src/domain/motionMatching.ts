@@ -1,4 +1,5 @@
 import type { CompositionDefinition, CompositionParams } from "@/domain/effects";
+import { mediaComposition } from "@/domain/compositions";
 import { referenceMotionMatchingCards, referenceMotionMatchingPolicy } from "@/domain/motionMatchingCatalog.generated";
 import { isReferenceStageComposition } from "@/domain/overlayStudioReference";
 
@@ -6,6 +7,8 @@ export { referenceMotionMatchingPolicy };
 
 export type MotionLayerRole = "background" | "content" | "persistent" | "exclusive";
 export type MotionDurationScope = "beat" | "caption" | "segment" | "chapter";
+export type MotionUsage = "talking-head" | "fullscreen" | "both";
+export type MotionLayerKind = "background" | "overlay";
 
 export interface MotionMatchingProfile {
   effectId: string;
@@ -17,6 +20,9 @@ export interface MotionMatchingProfile {
   parameterGuide: string;
   verticalPolicy: string;
   layerRole: MotionLayerRole;
+  usage: MotionUsage;
+  layer: MotionLayerKind;
+  exclusive: boolean;
   durationScope: MotionDurationScope;
   rhythmKeys: string[];
 }
@@ -89,6 +95,66 @@ function layerRole(effect: CompositionDefinition, card?: ReferenceMotionMatching
   return "content";
 }
 
+export interface MotionUsageMarkers {
+  usage: MotionUsage;
+  layer: MotionLayerKind;
+  exclusive: boolean;
+}
+
+const sceneMotionGroups = new Set(["场景 · 运镜", "场景 · B-roll"]);
+// "场景" cards without a presenter keep working on both talking-head and full-screen footage.
+const presenterAnchorPattern = /人|口播/;
+const fullFrameAmbientPattern = /盖住画面|只配\s*B-roll/;
+
+function cardRuleText(card?: ReferenceMotionMatchingCard) {
+  return `${card?.purposeGroup ?? ""} ${card?.purpose ?? ""} ${card?.triggerWhen ?? ""} ${card?.parameterGuide ?? ""}`;
+}
+
+// Only the authored purpose and trigger text may claim a backdrop role; parameter names mention 背景 too loosely.
+function backdropText(card?: ReferenceMotionMatchingCard) {
+  return `${card?.purpose ?? ""} ${card?.triggerWhen ?? ""}`;
+}
+
+function usageMarkers(effect: CompositionDefinition, card?: ReferenceMotionMatchingCard): MotionUsageMarkers {
+  const exclusive = layerRole(effect, card) === "exclusive";
+  const media = mediaComposition(effect.id);
+  const mediaBackground = media?.category === "背景";
+  // Panel categories are overridden for imported cards, so full-canvas media is detected by composition identity.
+  const fullCanvas = effect.id.startsWith("shotcraft-") || Boolean(media);
+  const purposeGroup = card?.purposeGroup ?? "";
+  const verticalPolicy = card?.verticalPolicy ?? "";
+  const text = cardRuleText(card);
+  const backdrop = /背景/.test(backdropText(card));
+
+  let usage: MotionUsage;
+  if (mediaBackground) usage = "both";
+  else if (exclusive) usage = "fullscreen";
+  else if (fullCanvas) usage = "fullscreen";
+  else if (verticalPolicy.startsWith("full")) usage = "fullscreen";
+  else if (verticalPolicy.startsWith("half")) usage = "both";
+  else if (purposeGroup === "氛围底噪") usage = fullFrameAmbientPattern.test(text) ? "fullscreen" : "both";
+  else if (backdrop) usage = "both";
+  else if (purposeGroup === "转场") usage = "both";
+  else if (sceneMotionGroups.has(purposeGroup) && !presenterAnchorPattern.test(text)) usage = "both";
+  else if (effect.tags.includes("口播") || verticalPolicy.startsWith("still")) usage = "talking-head";
+  else if (effect.slots?.some((slot) => slot.kind === "video")) usage = "talking-head";
+  else usage = "both";
+
+  const layer: MotionLayerKind = usage !== "fullscreen" && (mediaBackground || backdrop || purposeGroup === "氛围底噪")
+    ? "background"
+    : "overlay";
+  return { usage, layer, exclusive };
+}
+
+export function motionUsage(effect: CompositionDefinition): MotionUsage {
+  return usageMarkers(effect, referenceCards.get(effect.id)).usage;
+}
+
+export function motionLayerMarkers(effect: CompositionDefinition): { layer: MotionLayerKind; exclusive: boolean } {
+  const markers = usageMarkers(effect, referenceCards.get(effect.id));
+  return { layer: markers.layer, exclusive: markers.exclusive };
+}
+
 function durationScope(card?: ReferenceMotionMatchingCard): MotionDurationScope {
   const ruleText = `${card?.purposeGroup ?? ""} ${card?.purpose ?? ""} ${card?.triggerWhen ?? ""}`;
   if (/每期一张|视频结尾|全程/.test(ruleText)) return "chapter";
@@ -112,6 +178,7 @@ export function motionMatchingProfile(effect: CompositionDefinition): MotionMatc
     ?? `内容明确符合“${effect.description}”，并出现这些语义之一时使用：${effect.tags.join("、")}`;
   const parameterGuide = card?.parameterGuide
     ?? Object.keys(effect.defaultParams ?? {}).map((key) => `\`${key}\``).join("、");
+  const markers = usageMarkers(effect, card);
   return {
     effectId: effect.id,
     purposeGroup,
@@ -126,6 +193,9 @@ export function motionMatchingProfile(effect: CompositionDefinition): MotionMatc
     parameterGuide,
     verticalPolicy: card?.verticalPolicy ?? "按画布安全区自适应",
     layerRole: layerRole(effect, card),
+    usage: markers.usage,
+    layer: markers.layer,
+    exclusive: markers.exclusive,
     durationScope: durationScope(card),
     rhythmKeys: rhythmKeys(parameterGuide, effect.defaultParams)
   };

@@ -1,6 +1,7 @@
 import { compositionSlots } from "@/domain/compositions";
 import { allCompositions } from "@/domain/effects";
-import { motionMatchingProfile, referenceMotionMatchingPolicy } from "@/domain/motionMatching";
+import type { CompositionDefinition } from "@/domain/effects";
+import { allowedAiMotionParameterKeys, motionMatchingProfile, referenceMotionMatchingPolicy } from "@/domain/motionMatching";
 import type { AiMotionMatch, AiMotionSelection } from "@/services/ai/schema";
 
 export type MotionPlanIssueCode =
@@ -23,7 +24,6 @@ export type MotionPlanIssueCode =
   | "segment-accent-mismatch"
   | "content-entry-stagger"
   | "too-many-content-layers"
-  | "motion-group-mismatch"
   | "unsupported-chart-data"
   | "evidence-source-missing";
 
@@ -165,12 +165,23 @@ function structuredEntryCount(entry: { text: string | null; params: readonly { v
 }
 
 const explicitSourceParameterKeys = new Set(["source", "caption", "captionEn", "title", "src", "footEn", "footZh"]);
+const placeholderSourcePattern = /(?:待补|占位|示例|写这里|placeholder)/iu;
+const sourceKeywordPattern = /(?:SOURCE|NEWS|CASE|来源|出处|官网|官方|报告|公告|原文|合同|新闻|媒体|采访|公开数据|统计口径|自述|《[^》]+》)/iu;
+
+/** Only evidence cards that expose a real attribution field can be asked for a source; comparison cards such as win-lose cannot. */
+export function requiresEvidenceSource(effect: CompositionDefinition, profile = motionMatchingProfile(effect)) {
+  if (profile.purposeGroup !== "证据实证" && effect.id !== "quote-cite") return false;
+  return /(?:来源|出处|署名|口径)/u.test(profile.parameterGuide)
+    || allowedAiMotionParameterKeys(effect).some((key) => explicitSourceParameterKeys.has(key));
+}
 
 function hasEvidenceSource(entry: { text: string | null; params: readonly { key: string; value: string | number | boolean }[] }) {
-  const usableSource = (value: string) => value.trim().length >= 2 && !/(?:待补|占位|示例|写这里|placeholder)/iu.test(value);
+  const usableSource = (value: string) => value.trim().length >= 2 && !placeholderSourcePattern.test(value);
   if (entry.params.some((param) => explicitSourceParameterKeys.has(param.key) && typeof param.value === "string" && usableSource(param.value))) return true;
-  const visible = [entry.text, ...entry.params.map((param) => typeof param.value === "string" ? param.value : "")].join(" ");
-  return usableSource(visible) && /(?:SOURCE|NEWS|CASE|来源|出处|官网|官方|报告|公告|原文|合同|新闻|媒体|采访|公开数据|统计口径|自述|《[^》]+》)/iu.test(visible);
+  // Cards keep one item per "|"- or newline-delimited row, so a placeholder word in an unrelated row must not void a real citation.
+  return [entry.text ?? "", ...entry.params.map((param) => typeof param.value === "string" ? param.value : "")]
+    .flatMap((value) => value.split(/[|｜\n]/u))
+    .some((item) => usableSource(item) && sourceKeywordPattern.test(item));
 }
 
 export function validateMotionMatchPlan(matches: readonly AiMotionMatch[], selection: AiMotionSelection, captions: readonly MotionPlanCaption[] = []): MotionPlanIssue[] {
@@ -195,17 +206,7 @@ export function validateMotionMatchPlan(matches: readonly AiMotionMatch[], selec
       return;
     }
 
-    const multiCaption = segment.endCaptionIndex > segment.startCaptionIndex;
-    const expectedGroupId = multiCaption ? segment.segmentId : null;
-    const expectedPersistIndex = multiCaption ? segment.endCaptionIndex : null;
-    if ((match.motionGroupId ?? null) !== expectedGroupId || (match.persistUntilCaptionIndex ?? null) !== expectedPersistIndex) {
-      issues.push({
-        code: "motion-group-mismatch",
-        path: `${path}.motionGroupId`,
-        message: `语义段“${segment.title}”必须保持同一分组并持续到字幕 ${segment.endCaptionIndex}`
-      });
-    }
-
+    // motionGroupId/persistUntilCaptionIndex are rebuilt from the semantic segment afterwards, so a model slip there must not fail the plan.
     const allowedEffects = new Set(selectedEffectIds(segment));
     const entries = [
       { slot: "primary" as const, effectId: match.primaryEffectId, text: match.primaryText, timing: match.primaryTimingCaptionIndices ?? [] },
@@ -246,7 +247,7 @@ export function validateMotionMatchPlan(matches: readonly AiMotionMatch[], selec
             message: `逐项动效 ${entry.effectId} 必须提供真实字幕节奏锚点`
           });
         }
-        if ((profile.purposeGroup === "证据实证" || entry.effectId === "quote-cite") && !hasEvidenceSource({ text: entry.text, params })) {
+        if (requiresEvidenceSource(effect, profile) && !hasEvidenceSource({ text: entry.text, params })) {
           issues.push({
             code: "evidence-source-missing",
             path: `${path}.${entry.slot}Params`,

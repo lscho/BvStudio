@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { CompositionDefinition } from "@/domain/effects";
 import { BUILTIN_EFFECTS } from "@/domain/effects";
-import { allowedAiMotionParameterKeys, compileAiMotionParams, hasReferenceMotionMatchingCard, motionMatchingProfile, referenceMotionMatchingCardCount, referenceMotionMatchingPolicy, referenceMotionTimingKeys } from "@/domain/motionMatching";
+import { allowedAiMotionParameterKeys, compileAiMotionParams, hasReferenceMotionMatchingCard, motionLayerMarkers, motionMatchingProfile, motionUsage, referenceMotionMatchingCardCount, referenceMotionMatchingPolicy, referenceMotionTimingKeys } from "@/domain/motionMatching";
 import { referenceMotionMatchingCards } from "@/domain/motionMatchingCatalog.generated";
 import { importedOverlayStudioEffects } from "@/domain/overlayStudioCatalog";
 
@@ -153,4 +154,59 @@ describe("motion matching catalog", () => {
     });
     expect(costParams).toMatchObject({ oldAt: 0, newAt: 2.5, punchAt: 6 });
   });
+
+  it("classifies every full-canvas composition as fullscreen", () => {
+    const shotcraft = BUILTIN_EFFECTS.filter((effect) => effect.id.startsWith("shotcraft-"));
+    expect(shotcraft).toHaveLength(216);
+    expect(shotcraft.every((effect) => motionUsage(effect) === "fullscreen")).toBe(true);
+    for (const id of ["poster-wall-3d", "image-duet-3d", "motion-zoom", "slide-gallery", "card-stack", "split-reveal"]) {
+      expect(motionUsage(effectById(id))).toBe("fullscreen");
+    }
+  });
+
+  it("keeps overlay cards that take over the frame in the fullscreen class", () => {
+    const fullscreenOverlays = [
+      "screen-demo", "demo-tour", "cam-pan", "focus-card", "focus-takeover", "demo-rail", "letter-glitch",
+      "info-board", "column-stack", "flow-chart", "ecosystem-hub", "terminal-3d", "project-window"
+    ];
+    for (const id of fullscreenOverlays) expect([id, motionUsage(effectById(id))]).toEqual([id, "fullscreen"]);
+    expect(fullscreenOverlays.filter((id) => motionLayerMarkers(effectById(id)).exclusive)).toEqual([
+      "screen-demo", "demo-tour", "cam-pan", "focus-card", "focus-takeover", "demo-rail"
+    ]);
+  });
+
+  it("treats backdrops and ambience as background layers usable in both contexts", () => {
+    for (const id of ["background-stripes", "background-grid", "background-dots", "background-contours", "frost-screen", "ambient-wash", "dust-field"]) {
+      expect(motionUsage(effectById(id))).toBe("both");
+      expect(motionLayerMarkers(effectById(id)).layer).toBe("background");
+    }
+  });
+
+  it("keeps presenter-anchored cards on the talking-head side", () => {
+    for (const id of ["photo-halo", "icon-pop", "word-flank", "cam-frame", "punch-zoom", "cover-stack", "caption-track"]) {
+      expect(motionUsage(effectById(id))).toBe("talking-head");
+    }
+  });
+
+  it("falls back to both for effects without reference metadata", () => {
+    const thirdParty: CompositionDefinition = {
+      id: "custom-package-card", name: "第三方卡", category: "卡片", description: "未提供参考目录元数据",
+      tags: ["第三方"], defaultDurationUs: 4_000_000, defaultText: "", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+      recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 }
+    };
+    expect(motionUsage(thirdParty)).toBe("both");
+    expect(motionUsage({ ...thirdParty, id: "custom-presenter", slots: [{ id: "presenter", label: "人物视频", kind: "video", minItems: 1, maxItems: 1 }] })).toBe("talking-head");
+  });
+
+  it("splits the builtin catalog into talking-head, fullscreen, and both", () => {
+    const counts: Record<string, number> = { "talking-head": 0, fullscreen: 0, both: 0 };
+    for (const effect of BUILTIN_EFFECTS) counts[motionUsage(effect)] += 1;
+    expect(counts).toEqual({ "talking-head": 42, fullscreen: 235, both: 51 });
+  });
 });
+
+function effectById(id: string) {
+  const effect = BUILTIN_EFFECTS.find((candidate) => candidate.id === id);
+  if (!effect) throw new Error(`missing builtin effect ${id}`);
+  return effect;
+}

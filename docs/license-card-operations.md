@@ -23,6 +23,7 @@ BVideo Pro 会员卡密的全套操作命令。背景与架构见 [`license-api.
 
 ```bash
 npm run esa:import -- --count 100 --plan lifetime
+npm run esa:import -- --count 100 --plan monthly
 ```
 
 一次完成：生成 N 张卡密 → 通过 ESA OpenAPI `PutKv` 写入 EdgeKV → 终端打印**纯卡密列表**（每行一张，可直接复制或重定向 `> cards.txt`）。完整数据（明文、哈希、掩码）同时写入本地清单文件。
@@ -32,8 +33,9 @@ npm run esa:import -- --count 100 --plan lifetime
 | 参数 | 必填 | 说明 |
 | --- | --- | --- |
 | `--count N` | 否（默认 1） | 生成数量，1–10000 |
-| `--plan lifetime` | 二选一 | 永久卡，不过期 |
-| `--plan period --days N` | 二选一 | 限时卡，兑换后 N 天到期（如 `--days 365`） |
+| `--plan lifetime` | 三选一 | 永久卡，不过期 |
+| `--plan monthly` | 三选一 | 月卡，兑换后固定 30 天到期（不接受 `--days`） |
+| `--plan period --days N` | 三选一 | 限时卡，兑换后 N 天到期（如 `--days 365`） |
 | `--input <file.json>` | 否 | 跳过生成，导入已有清单（见下） |
 | `--output <file.json>` | 否 | 指定清单文件名（默认 `license-cards-<时间戳>.json`） |
 | `--namespace <名称>` | 否 | 覆盖默认命名空间 |
@@ -47,6 +49,7 @@ npm run esa:import -- --count 100 --plan lifetime
 
 ```bash
 node scripts/generate-license-cards.mjs --count 100 --plan lifetime --output license-cards-batch1.json
+node scripts/generate-license-cards.mjs --count 100 --plan monthly --output license-cards-monthly.json
 node scripts/generate-license-cards.mjs --count 50 --plan period --days 365 --output license-cards-yearly.json
 ```
 
@@ -89,13 +92,15 @@ npm run esa:clear-kv -- --dry-run     # 只列出将删除的键，不执行
 | 字段 | 说明 |
 | --- | --- |
 | `status` | `unused` → `bound`（兑换）→ 可手动改 `revoked`（吊销） |
-| `plan` | `lifetime` \| `period` |
-| `days` | period 卡的有效天数，lifetime 为 `null` |
+| `plan` | `lifetime` \| `monthly` \| `period` |
+| `days` | `monthly` 固定 30，`period` 为生成时指定的有效天数，`lifetime` 为 `null` |
 | `maskedKey` | 脱敏展示（如 `VIP-****S7TD`），写进设备记录供客户端显示 |
 | `hash` | 卡密明文的 SHA-256，即 KV 键 `card:<hash>` 的来源 |
 | `issuedAt` | 生成时间戳 |
 
 卡密明文**不写入 KV**，只存在于清单文件与发放渠道。字符集剔除易混淆的 `I/L/O/0/1`，格式 `VIP-XXXX-XXXX-XXXX-XXXX`。
+
+月卡（`plan: "monthly"`）记录里同样写入 `days: 30`，因此即使边缘函数尚未更新，兑换后仍按 30 天正确到期，只是客户端展示为「30 天 VIP 会员」；部署最新 `edge/license-core.mjs` 后展示为「月卡 VIP 会员」。
 
 ## 常见问题
 

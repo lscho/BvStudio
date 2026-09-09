@@ -59,6 +59,14 @@ describe("AiSettingsDialog License tab", () => {
         activatedAt: null,
         licenseKey: null
       },
+      baseStatus: {
+        isVip: false,
+        planName: "普通用户",
+        expireAt: null,
+        activatedAt: null,
+        licenseKey: null
+      },
+      devOverride: null,
       isInitialized: true,
       isChecking: false,
       isRedeeming: false,
@@ -134,6 +142,46 @@ describe("AiSettingsDialog License tab", () => {
     // The store should reflect the Pro status
     expect(screen.getByText(/已激活 Pro 专业版/)).toBeInTheDocument();
     expect(screen.getByText(/永久授权/)).toBeInTheDocument();
+  });
+
+  it("exposes the dev identity switch only after a card key is redeemed", async () => {
+    vi.mocked(licenseService.redeemCardKey).mockResolvedValue({
+      success: true,
+      message: "兑换成功",
+      status: {
+        isVip: true,
+        planName: "终身 VIP 会员",
+        expireAt: null,
+        activatedAt: Date.now(),
+        licenseKey: "VIP-****-9999"
+      }
+    });
+
+    render(
+      <AiSettingsDialog
+        open={true}
+        settings={DEFAULT_SETTINGS}
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /会员与授权/ }));
+    expect(screen.queryByRole("group", { name: "模拟会员身份" })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("请输入卡密兑换码"), { target: { value: "VIP-9999-8888-7777" } });
+    fireEvent.click(screen.getByRole("button", { name: "立即兑换" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("group", { name: "模拟会员身份" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Free" }));
+    expect(screen.getByText(/当前为 Free 基础版/)).toBeInTheDocument();
+    expect(useLicenseStore.getState().status.licenseKey).toBe("VIP-****-9999");
+
+    fireEvent.click(screen.getByRole("button", { name: "Pro" }));
+    expect(screen.getByText(/已激活 Pro 专业版/)).toBeInTheDocument();
   });
 
   it("shows error when redemption fails", async () => {

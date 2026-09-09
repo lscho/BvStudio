@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { AudioWaveform, Check, Cloud, Copy, Gauge, Gift, KeyRound, LoaderCircle, PlugZap, ShieldCheck, Sparkles, X } from "lucide-react";
+import { AudioWaveform, Check, Cloud, Copy, FlaskConical, Gauge, Gift, KeyRound, LoaderCircle, PlugZap, ShieldCheck, Sparkles, X } from "lucide-react";
 import { useLicenseStore } from "@/stores/licenseStore";
 import { browserApiKey, hasApiKey, providerEndpoint, saveApiKey, verifyProviderConfiguration, type AiProtocol } from "@/services/ai/provider";
 import { Select } from "@/components/Select";
@@ -55,6 +55,7 @@ export function AiSettingsDialog({ open, settings, onOpenChange, onSave, initial
   const isRedeeming = useLicenseStore((state) => state.isRedeeming);
   const initializeLicense = useLicenseStore((state) => state.initialize);
   const redeemLicense = useLicenseStore((state) => state.redeem);
+  const setDevOverride = useLicenseStore((state) => state.setDevOverride);
   const [draft, setDraft] = useState(settings.aiProvider);
   const [speechDraft, setSpeechDraft] = useState(settings.cloudSpeech ?? DEFAULT_SETTINGS.cloudSpeech);
   const [mediaDraft, setMediaDraft] = useState(settings.media ?? DEFAULT_SETTINGS.media);
@@ -334,6 +335,21 @@ export function AiSettingsDialog({ open, settings, onOpenChange, onSave, initial
                       </p>
                     )}
                   </div>
+                  {import.meta.env.DEV && vipStatus.licenseKey && (
+                    <div className="license-dev-panel">
+                      <div className="license-dev-header">
+                        <span className="license-dev-title"><FlaskConical size={13} />开发调试</span>
+                        <span className="license-dev-badge">仅开发环境</span>
+                      </div>
+                      <div className="license-dev-row">
+                        <span>模拟身份</span>
+                        <div className="segmented-control dual" role="group" aria-label="模拟会员身份">
+                          <button type="button" className={vipStatus.isVip ? "" : "active"} aria-pressed={!vipStatus.isVip} onClick={() => setDevOverride("free")}>Free</button>
+                          <button type="button" className={vipStatus.isVip ? "active" : ""} aria-pressed={vipStatus.isVip} onClick={() => setDevOverride("pro")}>Pro</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>}
               </section>
             </div>
