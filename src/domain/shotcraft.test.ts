@@ -65,10 +65,10 @@ describe("Shotcraft shot data", () => {
     const track = project.tracks.find((candidate) => candidate.kind === "composition")!;
     track.clips = SHOTCRAFT_SHOTS.map((shot, index) => ({ ...shotClip(`shot-${index}`, shot.id), trackId: track.id }));
     const restored = parseProject(serializeProject(project));
-    expect(restored.schemaVersion).toBe(31);
+    expect(restored.schemaVersion).toBe(32);
     expect(parseProject(serializeProject(restored))).toEqual(restored);
     const previous = parseProject(JSON.stringify({ ...createEmptyProject(), schemaVersion: 30 }));
-    expect(previous.schemaVersion).toBe(31);
+    expect(previous.schemaVersion).toBe(32);
     expect(previous.tracks.flatMap((entry) => entry.clips)).toEqual([]);
     const broken = { ...project, tracks: [{ ...track, clips: [{ ...track.clips[0], shotcraft: { version: 999 } }] }] };
     expect(() => parseProject(JSON.stringify(broken))).toThrow("镜头");

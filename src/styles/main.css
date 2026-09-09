@@ -996,3 +996,17 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .shotcraft-region-preview > span.active { border: 2px solid var(--accent); background: var(--accent-soft); }
 .shotcraft-region-preview b { position: absolute; top: 0; left: 0; padding: 1px 4px; font-size: 10px; color: var(--text); background: var(--surface); }
 .shotcraft-missing { position: absolute; inset: 0; display: grid; place-items: center; padding: 5%; color: #d9dee5; background: #24282e; font-size: 3cqw; text-align: center; }
+.shotcraft-planner { width: min(760px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow-y: auto; }
+.shotcraft-planner fieldset { display: grid; gap: 12px; min-width: 0; }
+.shotcraft-planner-options { display: flex; flex-wrap: wrap; gap: 12px; }
+.shotcraft-planner-options label, .shotcraft-planner-assets label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.shotcraft-planner-options input, .shotcraft-planner-assets input { width: 14px; height: 14px; flex-shrink: 0; }
+.shotcraft-planner-assets { max-height: 132px; overflow-y: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; }
+.shotcraft-planner-assets span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shotcraft-planner-status { display: flex; align-items: center; gap: 8px; color: var(--soft); }
+.shotcraft-audio-library > .effect-search, .shotcraft-audio-library > .select-trigger { margin-bottom: 8px; width: 100%; }
+.shotcraft-plan-review { border-top: 1px solid var(--line); padding-top: 12px; }
+.shotcraft-plan-review ol { margin: 8px 0; padding-left: 24px; }
+.shotcraft-plan-review li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.shotcraft-plan-review li div { display: flex; justify-content: space-between; gap: 12px; }
+.shotcraft-plan-review li p { margin: 5px 0 0; color: var(--soft); font-size: 12px; }

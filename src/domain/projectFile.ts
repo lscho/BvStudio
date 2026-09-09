@@ -15,6 +15,8 @@ import { normalizeVideoMask } from "@/domain/videoFrame";
 import { migrateSceneTracks } from "@/domain/sceneBackground";
 import { isReferenceStageComposition, referenceStageOuterTransform } from "@/domain/overlayStudioReference";
 import { isShotcraftComposition, normalizeShotcraftSettings } from "@/domain/shotcraft";
+import { musicAnalysisSchema } from "@/domain/musicBeats";
+import { z } from "zod";
 
 function normalizeEffectSoundCues(value: unknown): EffectSoundCue[] {
   if (!Array.isArray(value)) return [];
@@ -60,7 +62,7 @@ const motionSkins: readonly MotionSkin[] = ["dark", "light"];
 const motionStyles: readonly MotionStyle[] = ["minimal", "editorial"];
 const motionFonts: readonly MotionFont[] = ["sans", "display"];
 const motionColorRoles: readonly MotionColorRole[] = ["data", "opinion", "warning", "auxiliary", "custom"];
-const supportedProjectSchemaVersions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] as const;
+const supportedProjectSchemaVersions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32] as const;
 
 function migrateCompositionFields(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
@@ -365,7 +367,8 @@ export function parseProject(contents: string): EditorProject {
   const project = {
     ...fallback,
     ...candidate,
-    schemaVersion: 31 as const,
+    schemaVersion: 32 as const,
+    musicAnalyses: candidate.musicAnalyses === undefined ? undefined : z.array(z.object({ assetId: z.string().min(1).max(256), analysis: musicAnalysisSchema }).strict()).max(16).parse(candidate.musicAnalyses),
     canvas: { ...fallback.canvas, ...candidate.canvas },
     presenterSafeArea: normalizePresenterSafeArea(candidate.presenterSafeArea),
     motionTheme: normalizeMotionTheme(candidate.motionTheme),

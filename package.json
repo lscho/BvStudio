@@ -26,7 +26,8 @@
     "desktop:build": "tauri build",
     "release:config": "node scripts/write-tauri-release-config.mjs",
     "release:manifest": "node scripts/build-desktop-release-manifest.mjs",
-    "generate:icons": "tauri icon src-tauri/app-icon-macos26.svg -o src-tauri/icons-macos26"
+    "generate:icons": "tauri icon src-tauri/app-icon-macos26.svg -o src-tauri/icons-macos26",
+    "prepare:shotcraft-assets": "node scripts/prepare-shotcraft-assets.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

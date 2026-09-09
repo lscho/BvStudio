@@ -9,6 +9,7 @@ import { isReplicatedOverlayStudioEffect, replicatedOverlayStudioEffects, Replic
 import { overlayStudioMediaControlLabel, overlayStudioMediaControlMode } from "@/domain/overlayStudioMedia";
 import { isShotcraftComposition, SHOTCRAFT_SHOTS, type ShotcraftRenderData } from "@/domain/shotcraft";
 import { ShotcraftComposition, type ShotcraftAsset } from "@/compositions/shotcraft";
+import { libraryShot } from "@/domain/shotcraftLibrary/catalog";
 import { ArgumentBoardCard, CausalChainCard, ConceptMapCard, MythFactCard, QuoteLinesCard } from "@/compositions/knowledgeCards";
 import { ChecklistCard, EntityChipsCard, PinBoardCard, StatProofCard, VersusCard } from "@/compositions/talkingHeadCards";
 import {
@@ -118,6 +119,7 @@ const componentRegistrations: Readonly<Record<string, ComponentRegistration>> = 
   ...Object.fromEntries(SHOTCRAFT_SHOTS.map((shot) => [shot.id, {
     component: ShotcraftComposition,
     controls: [
+      ...(libraryShot(shot.id)?.texts ?? []).map((field) => ({ kind: "param-text" as const, field: field.key, label: `${field.label} · ${field.default.slice(0, 20)}`, rows: 2 })),
       ...(shot.id === "shotcraft-blur-slide" || shot.id === "shotcraft-before-after" || shot.id === "shotcraft-basic-3d" ? [{ kind: "text" as const, field: "text" as const, label: "内容（用｜分隔，空格拆词）", rows: 3 }] : []),
       { kind: "color" as const, field: "color" as const, label: "文字颜色" },
       { kind: "color" as const, field: "accentColor" as const, label: "强调色" },

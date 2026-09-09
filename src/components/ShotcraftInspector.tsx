@@ -2,8 +2,9 @@ import { useState } from "react";
 import { Select } from "@/components/Select";
 import { TimelineTimeInput } from "@/components/CompositionTiming";
 import type { CompositionClip } from "@/domain/project";
-import { defaultShotcraftSettings, shotcraftAdjacentShot, shotcraftPredecessor, type ShotcraftRegion } from "@/domain/shotcraft";
+import { SHOTCRAFT_TRANSITIONS, defaultShotcraftSettings, shotcraftAdjacentShot, shotcraftPredecessor, type ShotcraftRegion } from "@/domain/shotcraft";
 import { useEditorStore } from "@/stores/editorStore";
+import { shotcraftAdaptationIssue } from "@/domain/shotcraftLibrary/aiPolicy";
 
 export function ShotcraftInspector({ clip, locked, onPatch }: { clip: CompositionClip; locked: boolean; onPatch: (patch: Partial<CompositionClip>) => void }) {
   const tracks = useEditorStore((state) => state.project.tracks);
@@ -13,10 +14,11 @@ export function ShotcraftInspector({ clip, locked, onPatch }: { clip: Compositio
   const settings = clip.shotcraft ?? defaultShotcraftSettings(clip.compositionId);
   const index = Math.min(active, Math.max(0, settings.regions.length - 1));
   const region = settings.regions[index];
-  const assetId = clip.bindings?.find((binding) => binding.slotId === "page")?.assetIds[0];
+  const assetId = clip.bindings?.find((binding) => binding.slotId === "page" || binding.slotId === "images")?.assetIds[0];
   const asset = assets.find((candidate) => candidate.id === assetId);
   const previous = shotcraftAdjacentShot({ tracks }, clip);
   const connected = shotcraftPredecessor({ tracks }, clip);
+  const adaptationIssue = shotcraftAdaptationIssue(clip.compositionId);
   const patchRegion = (patch: Partial<ShotcraftRegion>) => {
     if (locked || !region) return;
     const next = { ...region, ...patch };
@@ -28,6 +30,7 @@ export function ShotcraftInspector({ clip, locked, onPatch }: { clip: Compositio
   };
   return <fieldset className="camera-fields shotcraft-controls" disabled={locked}>
     <span>镜头</span>
+    {adaptationIssue && <p className="composition-validation" role="status">{adaptationIssue}</p>}
     <TimelineTimeInput label="额外停留（秒）" valueUs={Math.round(settings.holdUs / clip.speed)} disabled={locked} onChange={(value) => onPatch({ shotcraft: { ...settings, holdUs: Math.min(10_000_000, Math.round(value * clip.speed)) } })} />
     {region && <>
       {settings.regions.length > 1 && <label><span>焦点</span><Select label="编辑焦点" disabled={locked} value={String(index)} options={settings.regions.map((_, i) => ({ value: String(i), label: `焦点 ${i + 1}` }))} onChange={(value) => setActive(Number(value))} /></label>}
@@ -44,8 +47,8 @@ export function ShotcraftInspector({ clip, locked, onPatch }: { clip: Compositio
         if (Number.isFinite(event.target.valueAsNumber)) patchRegion({ [field]: event.target.valueAsNumber });
       }} /></label>)}</div>
     </>}
-    <label><span>衔接上一镜头</span><Select label="镜头转场" disabled={locked || !previous} value={settings.transition.preset} options={[{ value: "none", label: "直接切换" }, { value: "flash-cut", label: "流白" }, { value: "push-up", label: "整屏上推" }]} onChange={(preset) => {
-      if (preset === "none" || preset === "flash-cut" || preset === "push-up") onPatch({ shotcraft: { ...settings, transition: { ...settings.transition, preset, fromClipId: preset === "none" ? undefined : previous?.id } } });
+    <label><span>衔接上一镜头</span><Select label="镜头转场" disabled={locked || !previous} value={settings.transition.preset} options={SHOTCRAFT_TRANSITIONS} onChange={(preset) => {
+      if (SHOTCRAFT_TRANSITIONS.some((item) => item.value === preset)) onPatch({ shotcraft: { ...settings, transition: { ...settings.transition, preset, fromClipId: preset === "none" ? undefined : previous?.id } } });
     }} /></label>
     {settings.transition.preset !== "none" && <>
       <TimelineTimeInput label="转场时长（秒）" valueUs={Math.round(settings.transition.durationUs / clip.speed)} disabled={locked} onChange={(value) => onPatch({ shotcraft: { ...settings, transition: { ...settings.transition, durationUs: Math.max(100_000, Math.min(1_500_000, Math.round(value * clip.speed))) } } })} />

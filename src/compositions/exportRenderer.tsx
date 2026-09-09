@@ -1,4 +1,5 @@
 import { isShotcraftComposition } from "@/domain/shotcraft";
+import { preloadLibraryShot } from "@/compositions/shotcraftLibrary/adapter";
 import { desktopCompositionFrames } from "@/services/compositionFrames";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -96,6 +97,10 @@ export function dynamicDurationUs(overlay: RenderTextOverlay) {
 
 async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, options: CompositionExportOptions): Promise<RenderTextOverlay> {
   const { signal } = options;
+  for (const id of [overlay.compositionId, overlay.shotcraftData?.previous?.compositionId, overlay.shotcraftData?.clip.shotcraft?.transition.preset]) {
+    if (id) await preloadLibraryShot(id);
+    signal?.throwIfAborted();
+  }
   const recipe = clockControlledRecipe(overlay.recipe);
   const host = document.createElement("div");
   configureReactOverlayHost(host, plan.width, plan.height);
@@ -129,6 +134,11 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
       </div>
     ));
     await nextPaint();
+    for (let attempt = 0; host.querySelector("[data-shotcraft-pending]"); attempt += 1) {
+      signal?.throwIfAborted();
+      if (attempt >= 120) throw new Error("镜头文字布局未就绪，请缩短文案后重试");
+      await nextPaint();
+    }
     await prepareReferenceVideoFrames(host, animationLocalUs * overlay.speed / 1_000_000, signal);
     const restoreSvgStyles = inlineReactOverlaySvgStyles(host);
     try {

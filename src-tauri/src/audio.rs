@@ -47,6 +47,7 @@ pub fn save_recording(
         "ogg" => "ogg",
         "mp4" | "m4a" => "m4a",
         "wav" => "wav",
+        "mp3" => "mp3",
         _ => return Err("不支持此录音格式".into()),
     };
     let bytes = BASE64

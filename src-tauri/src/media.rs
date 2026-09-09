@@ -2089,11 +2089,13 @@ fn render_overlays(
                 source_filters.push("gblur=sigma=2.4:steps=1".into());
             }
         }
-        if overlay
-            .sequence_frames_base64
-            .as_ref()
-            .is_some_and(|frames| !frames.is_empty())
+        if overlay.sequence_path.is_some()
+            || overlay
+                .sequence_frames_base64
+                .as_ref()
+                .is_some_and(|frames| !frames.is_empty())
         {
+            // Beat-aligned clip offsets can outlast the sequence's rounded last PTS.
             source_filters.push(format!(
                 "tpad=stop_mode=clone:stop_duration={overlay_duration}"
             ));
@@ -3718,6 +3720,97 @@ mod tests {
         assert!(streamed_result.is_ok(), "{streamed_result:?}");
         assert!(fs::metadata(&streamed_output).is_ok_and(|metadata| metadata.len() > 1000));
         let _ = fs::remove_dir_all(job_dir);
+    }
+
+    #[test]
+    fn streamed_overlay_covers_the_last_fractional_frame() -> Result<(), String> {
+        let ffmpeg = PathBuf::from("ffmpeg");
+        if Command::new(&ffmpeg).arg("-version").output().is_err() {
+            return Ok(());
+        }
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let job_dir = env::temp_dir().join(format!("bvideo-sequence-tail-test-{stamp}"));
+        fs::create_dir_all(&job_dir).map_err(|error| error.to_string())?;
+        let result = (|| {
+            let fixture = job_dir.join("frame.png");
+            let generated = Command::new(&ffmpeg)
+                .args([
+                    "-v",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=red:s=64x64",
+                    "-frames:v",
+                    "1",
+                ])
+                .arg(&fixture)
+                .output()
+                .map_err(|error| error.to_string())?;
+            assert!(
+                generated.status.success(),
+                "{}",
+                String::from_utf8_lossy(&generated.stderr)
+            );
+            let sequence_dir = job_dir.join("sequence");
+            fs::create_dir(&sequence_dir).map_err(|error| error.to_string())?;
+            for index in 0..31 {
+                fs::copy(&fixture, sequence_dir.join(format!("{index:05}.png")))
+                    .map_err(|error| error.to_string())?;
+            }
+            let output = job_dir.join("output.mp4");
+            let mut plan: RenderPlan = serde_json::from_value(serde_json::json!({
+                "width": 64, "height": 64, "fps": 30, "format": "mp4", "outputPath": output, "encoder": "software",
+                "segments": [{ "kind": "generated", "durationUs": 1600000, "color": "#000000" }],
+                "audios": [],
+                "overlays": [{ "kind": "composition", "startUs": 281633, "durationUs": 1026576,
+                    "sequenceFps": 30, "x": 50, "y": 50, "scale": 1, "opacity": 1 }]
+            })).map_err(|error| error.to_string())?;
+            plan.overlays[0].sequence_path = Some(sequence_dir.join("%05d.png"));
+            execute_export(&ffmpeg, &plan, &job_dir, &output, &ExportReporter::silent())?;
+            let frames = Command::new(&ffmpeg)
+                .args(["-v", "error", "-copyts", "-i"])
+                .arg(&output)
+                .args([
+                    "-vf",
+                    "select=between(t\\,1.29999\\,1.34)",
+                    "-fps_mode",
+                    "passthrough",
+                    "-frames:v",
+                    "2",
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "pipe:1",
+                ])
+                .output()
+                .map_err(|error| error.to_string())?;
+            assert!(
+                frames.status.success(),
+                "{}",
+                String::from_utf8_lossy(&frames.stderr)
+            );
+            assert_eq!(frames.stdout.len(), 2 * 64 * 64 * 3);
+            let center = (32 * 64 + 32) * 3;
+            let tail = &frames.stdout[center..center + 3];
+            let after = &frames.stdout[64 * 64 * 3 + center..64 * 64 * 3 + center + 3];
+            assert!(
+                tail[0] > 200 && tail[1] < 30,
+                "1.3s is inside the clip and must retain its last frame: {tail:?}"
+            );
+            assert!(
+                after.iter().all(|channel| *channel < 30),
+                "the held frame must disappear after the clip ends: {after:?}"
+            );
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&job_dir);
+        result
     }
 
     #[test]

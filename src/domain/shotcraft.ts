@@ -3,9 +3,11 @@
 import { z } from "zod";
 import type { CompositionDefinition } from "@/domain/effects";
 import type { CompositionClip, EditorProject } from "@/domain/project";
+import { SHOTCRAFT_LIBRARY, libraryShot } from "@/domain/shotcraftLibrary/catalog";
+import { LIBRARY_TRANSITIONS, libraryTransition } from "@/domain/shotcraftLibrary/transitions";
 
 // Reference timings use 30 fps; project clocks stay in integer microseconds.
-export const SHOTCRAFT_SHOTS = [
+export const SHOTCRAFT_NATIVE_SHOTS = [
   { id: "shotcraft-blur-slide", card: "blur-slide", name: "柔焦标题", frames: 114, holdFrame: 103, description: "标题逐词上浮收焦，副标题错峰跟进", slots: [] },
   { id: "shotcraft-before-after", card: "before-after-slider-scrub", name: "前后对比", frames: 150, holdFrame: 104, description: "分割杆快甩回弹，再慢扫比较两张图片", slots: [{ id: "before", label: "处理前", kind: "image", minItems: 1, maxItems: 1 }, { id: "after", label: "处理后", kind: "image", minItems: 1, maxItems: 1 }] },
   { id: "shotcraft-cursor-flyover", card: "cursor-flyover", name: "焦点巡览", frames: 180, holdFrame: 172, description: "在真实截图的四个区域间巡览，光标随相机指点", slots: [{ id: "page", label: "页面截图", kind: "image", minItems: 1, maxItems: 1 }] },
@@ -14,7 +16,12 @@ export const SHOTCRAFT_SHOTS = [
   { id: "shotcraft-card-stack", card: "card-stack", name: "叠卡扇展", frames: 126, holdFrame: 110, description: "2–8 张图片逐张弹入叠起，落稳后统一展开", slots: [{ id: "cards", label: "卡片图片", kind: "image", minItems: 2, maxItems: 8 }] }
 ] as const;
 
-export type ShotcraftId = (typeof SHOTCRAFT_SHOTS)[number]["id"];
+export const SHOTCRAFT_SHOTS = [...SHOTCRAFT_NATIVE_SHOTS, ...SHOTCRAFT_LIBRARY];
+export type ShotcraftId = `shotcraft-${string}`;
+export const SHOTCRAFT_TRANSITIONS = [
+  { value: "none", label: "直接切换" }, { value: "flash-cut", label: "流白" }, { value: "push-up", label: "整屏上推" },
+  ...LIBRARY_TRANSITIONS.map((item) => ({ value: item.id, label: libraryShot(item.id)!.name }))
+];
 const regionSchema = z.object({
   x: z.number().finite().min(0).max(99), y: z.number().finite().min(0).max(99),
   width: z.number().finite().min(1).max(100), height: z.number().finite().min(1).max(100)
@@ -22,9 +29,11 @@ const regionSchema = z.object({
 const shotcraftSchema = z.object({
   version: z.literal(1),
   holdUs: z.number().int().min(0).max(10_000_000),
+  leadInUs: z.number().int().min(0).max(1_500_000).optional(),
   regions: z.array(regionSchema).max(4),
+  timeMap: z.array(z.object({ timeUs: z.number().int().min(0).max(120_000_000), frame: z.number().finite().min(0).max(3600) }).strict()).min(2).max(32).optional(),
   transition: z.object({
-    preset: z.enum(["none", "flash-cut", "push-up"]),
+    preset: z.string().refine((value) => SHOTCRAFT_TRANSITIONS.some((item) => item.value === value), "未知转场"),
     durationUs: z.number().int().min(100_000).max(1_500_000),
     fromClipId: z.string().min(1).max(256).optional()
   }).strict()
@@ -38,7 +47,7 @@ export function shotcraftShot(id: string) { return SHOTCRAFT_SHOTS.find((shot) =
 export function isShotcraftComposition(id: string): id is ShotcraftId { return Boolean(shotcraftShot(id)); }
 
 export function defaultShotcraftSettings(id: string): ShotcraftSettings {
-  const regions = id === "shotcraft-spotlight-hero-card"
+  const regions = ["shotcraft-spotlight-hero-card", "shotcraft-crash-impact-real", "shotcraft-crash-zoom-real"].includes(id)
     ? [{ x: 35, y: 35, width: 30, height: 30 }]
     : id === "shotcraft-cursor-flyover"
       ? [{ x: 20, y: 15, width: 30, height: 30 }, { x: 60, y: 15, width: 30, height: 30 }, { x: 60, y: 55, width: 30, height: 30 }, { x: 20, y: 55, width: 30, height: 30 }]
@@ -50,42 +59,75 @@ export function normalizeShotcraftSettings(value: unknown, id: string): Shotcraf
   const result = shotcraftSchema.safeParse(value ?? defaultShotcraftSettings(id));
   const count = defaultShotcraftSettings(id).regions.length;
   if (!result.success || result.data.regions.length !== count) throw new Error("镜头参数或版本无效，请检查焦点区域、停留时间和转场设置");
+  const map = result.data.timeMap;
+  if (map && (map[0].timeUs !== 0 || map[0].frame !== 0 || map.at(-1)!.frame !== shotcraftShot(id)?.frames || map.some((point, i) => i > 0 && (point.timeUs <= map[i - 1].timeUs || point.frame <= map[i - 1].frame)))) throw new Error("音乐卡点时钟无效，请重新编排镜头");
   return result.data;
 }
 
 export const SHOTCRAFT_COMPOSITIONS: readonly CompositionDefinition[] = SHOTCRAFT_SHOTS.map((shot) => ({
   id: shot.id, name: shot.name, category: "展示", renderer: "react", slots: shot.slots,
-  description: `Shotcraft · ${shot.description}`, tags: ["Shotcraft", "镜头", shot.name],
+  description: `Shotcraft · ${shot.description}`, tags: ["Shotcraft", "镜头", shot.name, shot.card, libraryShot(shot.id)?.category ?? "展示"],
   defaultDurationUs: Math.round(shot.frames / 30 * 1_000_000),
   defaultText: shot.id === "shotcraft-blur-slide" ? "让创意 成为作品｜从灵感到画面，每一步都清晰" : shot.id === "shotcraft-basic-3d" ? "理解｜创造｜呈现｜让想法成为作品" : shot.id === "shotcraft-before-after" ? "处理前｜处理后" : "",
   defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
-  defaultParams: { surface: "#111316", fit: "contain", ...(shot.id === "shotcraft-spotlight-hero-card" ? { patchColor: "#ffffff" } : {}) },
+  defaultParams: { surface: "#111316", fit: "contain", ...Object.fromEntries((libraryShot(shot.id)?.texts ?? []).map((text) => [text.key, text.default])), ...(shot.id === "shotcraft-spotlight-hero-card" ? { patchColor: "#ffffff" } : {}) },
   recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 }
 }));
 
 export function shotcraftFrame(id: string, sourceTimeUs: number, settings: ShotcraftSettings) {
   const shot = shotcraftShot(id);
   if (!shot) return 0;
-  const holdStartUs = shot.holdFrame / 30 * 1_000_000;
-  const time = Math.max(0, sourceTimeUs);
+  const leadInUs = settings.leadInUs ?? 0;
+  const holdStartUs = shotcraftFrameTimeUs(shot.holdFrame, settings) - leadInUs;
+  const time = Math.max(0, sourceTimeUs - leadInUs);
   const extra = Math.max(0, Math.min(settings.holdUs, time - holdStartUs));
-  const frame = (time - extra) / 1_000_000 * 30;
+  const adjusted = time - extra;
+  const map = settings.timeMap;
+  const index = map?.findIndex((point) => point.timeUs > adjusted) ?? -1;
+  const a = map?.[Math.max(0, index - 1)], b = map?.[index < 0 ? map.length - 1 : index];
+  const frame = a && b ? (index < 0 ? b.frame : a.frame + (b.frame - a.frame) * (adjusted - a.timeUs) / Math.max(1, b.timeUs - a.timeUs)) : adjusted / 1_000_000 * 30;
   const nearest = Math.round(frame);
   // A 30 fps boundary can lose half a microsecond when stored; keep exact landed-state branches.
   return Math.min(shot.frames - 1, Math.abs(frame - nearest) <= 0.00002 ? nearest : frame);
+}
+
+export function shotcraftFrameTimeUs(frame: number, settings: ShotcraftSettings) {
+  const leadInUs = settings.leadInUs ?? 0;
+  const map = settings.timeMap;
+  if (!map) return leadInUs + Math.round(frame / 30 * 1_000_000);
+  const index = map.findIndex((point) => point.frame >= frame);
+  if (index <= 0) return leadInUs + (index < 0 ? map.at(-1)!.timeUs : 0);
+  const a = map[index - 1], b = map[index];
+  return leadInUs + Math.round(a.timeUs + (b.timeUs - a.timeUs) * (frame - a.frame) / (b.frame - a.frame));
+}
+
+export function shotcraftEventTimeUs(id: string, frame: number, settings: ShotcraftSettings) {
+  return shotcraftFrameTimeUs(frame, settings) + (frame > (shotcraftShot(id)?.holdFrame ?? Infinity) ? settings.holdUs : 0);
+}
+
+export function shotcraftTransitionCutRatio(preset: string) {
+  const source = libraryTransition(preset);
+  if (source) return (source.cut - source.start) / (source.end - source.start);
+  if (preset === "none") return 0;
+  if (preset === "push-up") {
+    let low = 0, high = 1;
+    for (let i = 0; i < 24; i += 1) { const mid = (low + high) / 2; if (pushEase(mid) < 0.5) low = mid; else high = mid; }
+    return (low + high) / 2;
+  }
+  return 0.5;
 }
 
 export function shotcraftHoldPatch(clip: CompositionClip, settings: ShotcraftSettings): Partial<CompositionClip> {
   const shot = shotcraftShot(clip.compositionId);
   const oldHold = clip.shotcraft?.holdUs ?? 0;
   if (!shot || oldHold === settings.holdUs) return {};
-  const holdStart = shot.holdFrame / 30 * 1_000_000;
+  const holdStart = shotcraftFrameTimeUs(shot.holdFrame, settings);
   const remap = (timeUs: number) => Math.round(timeUs <= holdStart ? timeUs
     : timeUs < holdStart + oldHold ? holdStart + Math.min(timeUs - holdStart, settings.holdUs)
       : timeUs + settings.holdUs - oldHold);
   const sourceOffsetUs = remap(clip.sourceOffsetUs ?? 0);
   const durationUs = Math.max(100_000, Math.round((remap((clip.sourceOffsetUs ?? 0) + clip.durationUs * clip.speed) - sourceOffsetUs) / clip.speed));
-  return { sourceOffsetUs, durationUs, animationDurationUs: Math.round(shot.frames / 30 * 1_000_000) + settings.holdUs };
+  return { sourceOffsetUs, durationUs, animationDurationUs: shotcraftFrameTimeUs(shot.frames, settings) + settings.holdUs };
 }
 
 // Source-relative focus regions are mapped through contain letterboxing before camera motion.

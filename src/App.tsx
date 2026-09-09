@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { desktopCompositionFrames } from "@/services/compositionFrames";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { Download, FolderOpen, History, LoaderCircle, Redo2, Save, Settings, Square, Undo2 } from "lucide-react";
+import { Clapperboard, Download, FolderOpen, History, LoaderCircle, Redo2, Save, Settings, Square, Undo2 } from "lucide-react";
+import { ShotcraftPlannerDialog } from "@/components/ShotcraftPlannerDialog";
 import { AiGenerateDialog } from "@/components/AiGenerateDialog";
 import { AiSettingsDialog, type SettingsSection } from "@/components/AiSettingsDialog";
 import { AudioCreateDialog, type CreatedAudioSource } from "@/components/AudioCreateDialog";
@@ -110,6 +111,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>("provider");
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [shotcraftOpen, setShotcraftOpen] = useState(false);
   const [audioOpen, setAudioOpen] = useState(false);
   const [audioContext, setAudioContext] = useState<ReturnType<typeof narrationContext> | null>(null);
   const speechSegments = useMemo(() => audioContext?.subtitles.map(subtitle => ({ id: subtitle.id, text: subtitle.text })) ?? [], [audioContext]);
@@ -803,6 +805,7 @@ export default function App() {
             <ToolButton label="打开工程" onClick={() => void openProject()}><FolderOpen size={16} /></ToolButton>
             {isDesktopRuntime() && <ToolButton label="最近工程" onClick={() => setRecentOpen(true)}><History size={16} /></ToolButton>}
             <ToolButton label="保存工程" onClick={() => void saveProject()}><Save size={16} /></ToolButton>
+            <ToolButton label="AI 镜头编排" onClick={() => setShotcraftOpen(true)}><Clapperboard size={17} /></ToolButton>
             <button className="button header-button export" type="button" disabled={Boolean(busyMessage)} onClick={() => setExportOpen(true)}>{busyMessage ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{exportProgress ? `${Math.round(exportProgress.progress * 100)}%` : busyMessage ? "处理中" : "导出"}</button>
             <ToolButton label="模型与客户端设置" onClick={() => { setSettingsInitialSection("provider"); setSettingsOpen(true); }}><Settings size={17} /></ToolButton>
           </div>
@@ -814,6 +817,7 @@ export default function App() {
       {(busyMessage || notice) && <div className={`status-toast ${busyMessage ? "busy" : ""}`}>{busyMessage && <LoaderCircle className="spin" size={15} />}<span>{busyMessage ?? notice}{exportProgress ? <small>{Math.round(exportProgress.progress * 100)}% · {exportProgress.segmentIndex}/{exportProgress.segmentCount || "-"}</small> : proxyProgress ? <small>{Math.round(proxyProgress.progress * 100)}%</small> : asrProgress ? <small>{Math.round(asrProgress.progress * 100)}% · 云端处理</small> : null}</span>{(compositionExportController.current || aiRequestController || exportJobId || proxyJobId || audioExtractionJobId || asrJobId) && <button type="button" aria-label={aiRequestController ? "取消 AI 匹配" : (exportJobId || compositionExportController.current) ? "取消视频导出" : proxyJobId ? "取消代理生成" : audioExtractionJobId ? "取消音频分离" : "取消字幕识别"} title="取消任务" onClick={() => void cancelCurrentTask()}><Square size={12} fill="currentColor" /></button>}{notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button>}</div>}
       <AiSettingsDialog open={settingsOpen} initialSection={settingsInitialSection} settings={settings} onOpenChange={setSettingsOpen} onSave={setSettings} />
       <AiGenerateDialog open={generateOpen} settings={settings} onOpenChange={setGenerateOpen} onNeedSettings={() => { setGenerateOpen(false); setSettingsOpen(true); }} />
+      <ShotcraftPlannerDialog open={shotcraftOpen} settings={settings} onOpenChange={setShotcraftOpen} onNeedSettings={() => { setShotcraftOpen(false); setSettingsOpen(true); }} />
       <AudioCreateDialog open={audioOpen} defaultText={audioContext?.text ?? ""} targetLabel={audioContext ? `${audioContext.block ? `脚本：${audioContext.block.label}` : audioContext.subtitles.length ? "选中字幕" : "自由配音"} · 起点 ${(audioContext.startUs / 1_000_000).toFixed(3)} 秒` : undefined} speechSegments={speechSegments} cloudSpeech={settings.cloudSpeech} onOpenChange={setAudioOpen} onCreated={(source) => addCreatedAudio(source, audioContext?.startUs, audioContext?.block?.id)} />
       <EffectLibraryDialog open={effectLibraryOpen} onOpenChange={setEffectLibraryOpen} />
       <MotionMatchingFeedbackDialog open={motionFeedbackOpen} project={project} onOpenChange={setMotionFeedbackOpen} />

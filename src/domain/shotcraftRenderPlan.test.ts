@@ -13,7 +13,7 @@ describe("Shotcraft rendering contract", () => {
     track.clips = SHOTCRAFT_SHOTS.map((shot, i) => ({ ...createEffectPreviewClip(shot.id, project.motionTheme, project.assets), id: `shot-${i}`, trackId: track.id, startUs: i * 10_000_000, sourceOffsetUs: 500_000, speed: 1.5 }));
     const plan = buildRenderPlan(project, "/out.mp4");
     expect(plan).toMatchObject({ width, height });
-    expect(plan.overlays).toHaveLength(6);
+    expect(plan.overlays).toHaveLength(SHOTCRAFT_SHOTS.length);
     plan.overlays.forEach((overlay, index) => {
       expect(overlay).toMatchObject({ renderer: "react", sourceOffsetUs: 500_000, speed: 1.5, shotcraftData: { clip: track.clips[index] } });
       if (overlay.kind === "composition") for (const image of overlay.compositionImages ?? []) expect(image).toMatchObject({ width: 1440, height: 1000 });

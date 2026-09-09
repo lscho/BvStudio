@@ -17,6 +17,27 @@ function pair() {
 }
 
 describe("editable Shotcraft clips", () => {
+  it("整套编排作为一次撤销操作加入新轨道，保持锁定轨道", () => {
+    useEditorStore.getState().addComposition("shotcraft-blur-slide");
+    const original = clips()[0];
+    useEditorStore.getState().setTrackState(original.trackId, { locked: true });
+    const before = useEditorStore.getState().project;
+    useEditorStore.getState().addShotcraftSequence({ title: "新镜头", scenes: [{ shotId: "shotcraft-marker-underline-title", text: "标题", durationSeconds: 4, copy: [{ key: "copy0", value: "把想法" }, { key: "copy1", value: "变成" }, { key: "copy2", value: "作品" }], bindings: [], regions: [], transition: "none", sounds: [], reason: "开场" }] }, [], { startUs: 5_000_000, musicSourceInUs: 0, musicVolume: 0.2, beatSync: false, soundEnabled: false });
+    const after = useEditorStore.getState().project;
+    expect(after.tracks.find((track) => track.id === original.trackId)).toEqual(before.tracks.find((track) => track.id === original.trackId));
+    expect(clips()).toHaveLength(2);
+    expect(useEditorStore.getState().selectedClipIds).toEqual([]);
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project).toEqual(before);
+    useEditorStore.getState().redo();
+    expect(useEditorStore.getState().project).toEqual(after);
+    const generated = clips().find((clip) => clip.id !== original.id)!;
+    useEditorStore.getState().selectClip(generated.id);
+    useEditorStore.setState({ playheadUs: generated.startUs + 1_500_000 });
+    useEditorStore.getState().splitSelected();
+    const tail = clips().find((clip) => clip.startUs === generated.startUs + 1_500_000)!;
+    expect(shotcraftFrame(tail.compositionId, compositionTimeUs(tail, 500_000), tail.shotcraft!)).toBeCloseTo(shotcraftFrame(generated.compositionId, 2_000_000, generated.shotcraft!));
+  });
   it("inserts full-frame shots and extends a reading hold with undo and redo", () => {
     useEditorStore.getState().addComposition("shotcraft-spotlight-hero-card");
     const original = clips()[0];

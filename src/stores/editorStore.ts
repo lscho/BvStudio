@@ -1,4 +1,5 @@
 import { defaultShotcraftSettings, isShotcraftComposition, normalizeShotcraftSettings, shotcraftHoldPatch } from "@/domain/shotcraft";
+import { appendShotcraftSequence, type ShotcraftPlan, type ShotcraftSequenceOptions } from "@/domain/shotcraftPlan";
 import { create } from "zustand";
 import { compositionLayer, mediaComposition, normalizeBindings, compositionBindingIssues, compositionSlots, compositionTimeUs, compositionRetimeBounds, sceneGroupRetimeRatio, slotAccepts, isBackgroundComposition, isSequencedMediaComposition, type CompositionBinding } from "@/domain/compositions";
 import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
@@ -266,6 +267,7 @@ interface EditorState {
   updateMotionTheme: (patch: Partial<Omit<MotionTheme, "colors">> & { colors?: Partial<MotionTheme["colors"]> }) => void;
   updateChapterProgress: (patch: Partial<ChapterProgressSettings>) => void;
   addComposition: (compositionId: string) => void;
+  addShotcraftSequence: (plan: ShotcraftPlan, assets: readonly MediaAsset[], options: ShotcraftSequenceOptions) => void;
   addVideo: (asset: MediaAsset) => void;
   addImage: (asset: MediaAsset) => void;
   addAudio: (asset: MediaAsset, role?: AudioRole, startUs?: number, sourceBlockId?: string) => void;
@@ -638,6 +640,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   focusPickClipId: null,
   previewRequest: null,
   setFocusPickClip: (focusPickClipId) => set({ focusPickClipId }),
+  addShotcraftSequence: (plan, assets, options) => {
+    const state = get();
+    const next = commit(state, (project) => { appendShotcraftSequence(project, plan, assets, options, () => crypto.randomUUID()); });
+    set({ ...next, selectedClipId: null, selectedClipIds: [], playheadUs: options.startUs });
+  },
   requestPreview: (startUs, endUs) => set((state) => {
     const boundedStartUs = Math.max(0, startUs);
     return { previewRequest: { id: (state.previewRequest?.id ?? 0) + 1, startUs: boundedStartUs, endUs: Math.max(boundedStartUs + 100_000, endUs) } };

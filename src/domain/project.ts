@@ -3,6 +3,7 @@ import type { CameraMotion } from "@/domain/camera";
 import type { EasingName } from "@/domain/easing";
 import type { CompositionBinding } from "@/domain/compositions";
 import type { ShotcraftSettings } from "@/domain/shotcraft";
+import type { MusicAnalysis } from "@/domain/musicBeats";
 import { DEFAULT_SUBTITLE_THEME, type SubtitleTheme } from "@/domain/subtitleTheme";
 
 export type TrackKind = "video" | "image" | "generated" | "scene" | "composition" | "subtitle" | "audio";
@@ -373,7 +374,7 @@ export interface TimelineTrack {
 }
 
 export interface EditorProject {
-  schemaVersion: 31;
+  schemaVersion: 32;
   id: string;
   name: string;
   createdAt: string;
@@ -386,12 +387,13 @@ export interface EditorProject {
   subtitleTheme: SubtitleTheme;
   assets: MediaAsset[];
   tracks: TimelineTrack[];
+  musicAnalyses?: { assetId: string; analysis: MusicAnalysis }[];
 }
 
 export function createEmptyProject(): EditorProject {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 31,
+    schemaVersion: 32,
     id: crypto.randomUUID(),
     name: "未命名项目",
     createdAt: now,

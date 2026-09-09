@@ -46,3 +46,6 @@ npm-debug.log*
 # Temporary folders
 tmp/
 temp/
+
+# Prepared local Shotcraft audio; see README.
+/public/shotcraft-audio/

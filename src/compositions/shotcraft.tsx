@@ -1,4 +1,7 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
+import { LibraryScene } from "@/compositions/shotcraftLibrary/adapter";
+import { libraryShot } from "@/domain/shotcraftLibrary/catalog";
+import { libraryTransition } from "@/domain/shotcraftLibrary/transitions";
 import type { CompositionRenderProps } from "@/compositions/registry";
 import type { CompositionClip, MediaAsset, MotionTheme } from "@/domain/project";
 import { resolveEffectAppearance } from "@/domain/motionTheme";
@@ -175,6 +178,7 @@ function ShotScene({ clip, assets, timeUs, width, height, theme }: SceneProps) {
   else if (clip.compositionId === "shotcraft-cursor-flyover") content = <CursorTour page={slot("page")[0]} settings={settings} t={t} accent={appearance.accentColor} width={width} height={height} />;
   else if (clip.compositionId === "shotcraft-basic-3d") content = <SpatialSteps cards={cards} t={t} text={clip.text} color={appearance.color} accent={appearance.accentColor} surface={surface} />;
   else if (clip.compositionId === "shotcraft-card-stack") content = <CardFan cards={cards.length ? cards : [undefined, undefined]} t={t} fit={fit} />;
+  else if (libraryShot(clip.compositionId)) content = <LibraryScene clip={clip} assets={assets} frame={frame} width={width} height={height} />;
   else content = <HeroCard page={slot("page")[0]} hero={slot("hero")[0]} settings={settings} frame={frame} height={480 * height / width} accent={appearance.accentColor} patch={patch} />;
   return <div className="shotcraft-scene" style={{ ...fill, containerType: "size", background: surface, color: appearance.color, overflow: "hidden", fontFamily: '"PingFang SC", "Microsoft YaHei", system-ui, sans-serif', letterSpacing: 0 }}>{content}</div>;
 }
@@ -189,6 +193,11 @@ export function ShotcraftComposition(props: CompositionRenderProps) {
   if (!previous || settings.transition.preset === "none" || props.timeUs >= settings.transition.durationUs) return scene;
   const state = shotcraftTransitionState(settings.transition.preset, props.timeUs, settings.transition.durationUs);
   const outgoing = <ShotScene clip={previous} assets={assets} timeUs={Math.round((previous.sourceOffsetUs ?? 0) + Math.max(0, previous.durationUs - 1) * previous.speed)} width={props.canvasWidth} height={props.canvasHeight ?? props.canvasWidth * 9 / 16} theme={props.shotcraftTheme} />;
+  const transitionShot = libraryTransition(settings.transition.preset);
+  if (transitionShot) {
+    const stage = (child: ReactNode) => <div style={{ position: "absolute", width: props.canvasWidth, height: props.canvasHeight ?? props.canvasWidth * 9 / 16, transformOrigin: "0 0", transform: `scale(${1920 / props.canvasWidth}, ${1080 / (props.canvasHeight ?? props.canvasWidth * 9 / 16)})` }}>{child}</div>;
+    return <LibraryScene clip={{ ...data.clip, compositionId: transitionShot.id }} assets={assets} frame={transitionShot.start + props.timeUs / settings.transition.durationUs * (transitionShot.end - transitionShot.start)} width={props.canvasWidth} height={props.canvasHeight ?? props.canvasWidth * 9 / 16} outgoing={stage(outgoing)} incoming={stage(scene)} />;
+  }
   return <div style={{ ...fill, overflow: "hidden", containerType: "size" }}>
     {settings.transition.preset === "push-up" ? <>
       <div style={{ ...fill, transform: `translateY(${state.outgoingY}%)` }}>{outgoing}</div>

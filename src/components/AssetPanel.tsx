@@ -2,6 +2,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { useMemo, useState } from "react";
 import { AudioLines, AudioWaveform, BadgePercent, Captions, ChartNoAxesColumnIncreasing, ChartPie, ChartSpline, Check, ChevronDown, Download, FileText, FileVideo2, History, ImageIcon, Layers3, Link2, Music2, PackageOpen, Play, Plus, Search, SlidersHorizontal, Sparkles, TriangleAlert, WandSparkles, X } from "lucide-react";
 import { SubtitleStyleDialog } from "@/components/SubtitleStyleDialog";
+import { ShotcraftAudioLibrary } from "@/components/ShotcraftAudioLibrary";
 import type { EffectCategory, CompositionDefinition } from "@/domain/effects";
 import { MOTION_ACCENT_COLOR_PRESETS, motionThemeAccentColor, motionThemeUsesAccentColor, motionThemeWithAccentColor } from "@/domain/motionTheme";
 import type { GeneratedBlock, SubtitleClip } from "@/domain/project";
@@ -117,6 +118,7 @@ export function AssetPanel({ onImport, onGenerate, onMatchEffects, onReviewMotio
               <button type="button" aria-label={`添加 ${sound.name}`} title="添加到播放头" onClick={() => onAddBuiltinSound?.(sound.id)}><Plus size={14} /></button>
             </div>)}
           </section>)}
+          <ShotcraftAudioLibrary />
           </div>
           <div className="asset-panel-actions" aria-label="音效操作">
             <button type="button" title="按字幕单独匹配音效" disabled={!subtitles.length || matching || !onMatchSounds} onClick={onMatchSounds}><WandSparkles size={15} />匹配</button>

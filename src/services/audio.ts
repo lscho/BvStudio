@@ -18,6 +18,7 @@ export function synthesizeSpeech(text: string, voice: string, rate: number): Pro
 }
 
 function recordingExtension(mimeType: string): string {
+  if (mimeType.includes("mpeg")) return "mp3";
   if (mimeType.includes("ogg")) return "ogg";
   if (mimeType.includes("mp4") || mimeType.includes("m4a")) return "m4a";
   if (mimeType.includes("wav")) return "wav";

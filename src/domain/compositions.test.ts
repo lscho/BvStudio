@@ -70,7 +70,7 @@ describe("composition project migration", () => {
     };
     const project = parseProject(JSON.stringify(old));
     const clip = project.tracks.flatMap((track) => track.clips).find((candidate) => candidate.id === "old");
-    expect(project.schemaVersion).toBe(31);
+    expect(project.schemaVersion).toBe(32);
     expect(clip).toMatchObject({ kind: "composition", compositionId: "odometer", bindings: [], params: { value: 300 } });
     expect(serializeProject(project)).not.toContain('"effectId"');
     expect(parseProject(serializeProject(project))).toEqual(project);
