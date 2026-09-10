@@ -6,6 +6,8 @@ import { CAMERA_PRESETS } from "@/domain/camera";
 import { VIDEO_LAYOUT_PRESETS } from "@/domain/transforms";
 import { BUILTIN_SOUND_EFFECT_IDS } from "@/domain/soundEffects";
 import { VIDEO_TRANSITION_PRESETS } from "@/domain/project";
+import { SHOTCRAFT_TRANSITIONS } from "@/domain/shotcraft";
+import audioCatalog from "@/domain/shotcraftLibrary/audioCatalog.json";
 
 const effectIds = BUILTIN_EFFECTS.map((effect) => effect.id);
 const cameraPresetIds = CAMERA_PRESETS.map((preset) => preset.id);
@@ -17,6 +19,10 @@ const videoShapeSchema = z.enum(["rectangle", "rounded", "circle", "ellipse", "s
 const videoTransitionSchema = z.enum(VIDEO_TRANSITION_PRESETS);
 const backdropPresetSchema = z.enum(["none", "dark", "soft", "light", "accent"]);
 const motionGroupIdSchema = z.string().trim().regex(/^[a-z0-9][a-z0-9-]{0,39}$/);
+const shotcraftTransitionIds = SHOTCRAFT_TRANSITIONS.map((transition) => transition.value);
+const shotcraftSoundIds = audioCatalog.filter((sound) => sound.kind === "sound" && sound.autoEligible).map((sound) => sound.id);
+const shotcraftTransitionSchema = z.string().refine((value) => shotcraftTransitionIds.includes(value), "未知 Shotcraft 转场");
+const shotcraftSoundIdSchema = z.string().refine((value) => shotcraftSoundIds.includes(value), "未知 Shotcraft 音效");
 
 const timedCaptionSchema = z.object({
   startSeconds: z.number().min(0).max(86_400),
@@ -121,7 +127,7 @@ const motionSegmentIntentSchema = z.enum([
 ]);
 const motionEvidenceKindSchema = z.enum(["none", "number", "image", "video", "quote", "comparison", "process", "position"]);
 
-export function createAiMotionSelectionSchema(allowedEffectIds: readonly string[], maxCaptionIndex: number) {
+export function createAiMotionSelectionSchema(allowedEffectIds: readonly string[], maxCaptionIndex: number, requireRoll = false) {
   const compositionId = z.string().refine((value) => allowedEffectIds.includes(value), "未知动效");
   return z.object({
     segments: z.array(z.object({
@@ -137,6 +143,7 @@ export function createAiMotionSelectionSchema(allowedEffectIds: readonly string[
       materialNeed: z.string().trim().max(160),
       selectionReason: z.string().trim().min(1).max(300)
     }).superRefine((segment, context) => {
+      if (requireRoll && !segment.roll) context.addIssue({ code: "custom", message: "统一分镜必须明确 A-roll 或 B-roll", path: ["roll"] });
       if (segment.endCaptionIndex < segment.startCaptionIndex) context.addIssue({ code: "custom", message: "语义段结束字幕不能早于开始字幕", path: ["endCaptionIndex"] });
       if (segment.primaryEffectId && segment.primaryEffectId === segment.secondaryEffectId) context.addIssue({ code: "custom", message: "同一语义段不能重复选择同一个动效", path: ["secondaryEffectId"] });
     })).min(1).max(Math.max(1, maxCaptionIndex + 1))
@@ -145,7 +152,7 @@ export function createAiMotionSelectionSchema(allowedEffectIds: readonly string[
 
 export type AiMotionSelection = z.infer<ReturnType<typeof createAiMotionSelectionSchema>>;
 
-export function createMotionSelectionJsonSchema(allowedEffectIds: readonly string[], maxCaptionIndex: number) {
+export function createMotionSelectionJsonSchema(allowedEffectIds: readonly string[], maxCaptionIndex: number, requireRoll = false) {
   const nullableEffect = { anyOf: [{ type: "string", enum: [...allowedEffectIds] }, { type: "null" }] };
   return {
     type: "object",
@@ -159,7 +166,7 @@ export function createMotionSelectionJsonSchema(allowedEffectIds: readonly strin
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["segmentId", "startCaptionIndex", "endCaptionIndex", "title", "roll", "intent", "evidenceKinds", "primaryEffectId", "secondaryEffectId", "materialNeed", "selectionReason"],
+          required: ["segmentId", "startCaptionIndex", "endCaptionIndex", "title", ...(requireRoll ? ["roll"] : []), "intent", "evidenceKinds", "primaryEffectId", "secondaryEffectId", "materialNeed", "selectionReason"],
           properties: {
             segmentId: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" },
             startCaptionIndex: { type: "integer", minimum: 0, maximum: maxCaptionIndex },
@@ -216,6 +223,12 @@ export function createAiMotionMatchesSchema(allowedEffectIds: readonly string[],
       secondaryY: z.number().min(5).max(95),
       cameraPreset: z.enum(cameraPresetEnum),
       soundEffectId: z.enum(BUILTIN_SOUND_EFFECT_IDS, { error: "未知音效" }).nullable().optional(),
+      shotcraftTransition: shotcraftTransitionSchema.optional().default("none"),
+      shotcraftSounds: z.array(z.object({
+        event: z.string().trim().min(1).max(80),
+        soundId: shotcraftSoundIdSchema,
+        volume: z.number().min(0).max(0.6)
+      }).strict()).max(4).optional().default([]),
       videoLayers: z.array(videoLayerMatchSchema.extend({ assetId: mediaId })).max(6).default([]),
       backdropPreset: backdropPresetSchema.default("none"),
       primaryMediaAssetId: mediaId.nullable().optional().default(null),
@@ -258,12 +271,14 @@ export function createAiMotionMatchesSchema(allowedEffectIds: readonly string[],
 }
 
 type ParsedAiMotionMatch = z.infer<ReturnType<typeof createAiMotionMatchesSchema>>["matches"][number];
-export type AiMotionMatch = Omit<ParsedAiMotionMatch, "primaryParams" | "primaryTimingCaptionIndices" | "secondaryParams" | "secondaryTimingCaptionIndices" | "materialPlaceholder"> & {
+export type AiMotionMatch = Omit<ParsedAiMotionMatch, "primaryParams" | "primaryTimingCaptionIndices" | "secondaryParams" | "secondaryTimingCaptionIndices" | "materialPlaceholder" | "shotcraftTransition" | "shotcraftSounds"> & {
   primaryParams?: ParsedAiMotionMatch["primaryParams"];
   primaryTimingCaptionIndices?: ParsedAiMotionMatch["primaryTimingCaptionIndices"];
   secondaryParams?: ParsedAiMotionMatch["secondaryParams"];
   secondaryTimingCaptionIndices?: ParsedAiMotionMatch["secondaryTimingCaptionIndices"];
   materialPlaceholder?: ParsedAiMotionMatch["materialPlaceholder"];
+  shotcraftTransition?: ParsedAiMotionMatch["shotcraftTransition"];
+  shotcraftSounds?: ParsedAiMotionMatch["shotcraftSounds"];
 };
 
 const legacySceneSchema = z.object({
@@ -334,10 +349,10 @@ export function createMotionMatchesJsonSchema(allowedEffectIds: readonly string[
     properties: {
       matches: { type: "array", minItems: 1, maxItems: 80, items: {
         type: "object", additionalProperties: false,
-        required: ["captionIndex", "subtitleKeywords", "motionGroupId", "persistUntilCaptionIndex", "primaryEffectId", "primaryText", "primaryParams", "primaryTimingCaptionIndices", "compositionBindings", "materialPlaceholder", "secondaryEffectId", "secondaryText", "secondaryParams", "secondaryTimingCaptionIndices", "accentColor", "x", "y", "scale", "secondaryX", "secondaryY", "cameraPreset", "soundEffectId", "videoLayers", "backdropPreset", "chart"],
+        required: ["captionIndex", "subtitleKeywords", "motionGroupId", "persistUntilCaptionIndex", "primaryEffectId", "primaryText", "primaryParams", "primaryTimingCaptionIndices", "compositionBindings", "materialPlaceholder", "secondaryEffectId", "secondaryText", "secondaryParams", "secondaryTimingCaptionIndices", "accentColor", "x", "y", "scale", "secondaryX", "secondaryY", "cameraPreset", "soundEffectId", "shotcraftTransition", "shotcraftSounds", "videoLayers", "backdropPreset", "chart"],
         properties: {
           compositionBindings: { type: "array", maxItems: visualIds.length ? 8 : 0, items: { type: "object", additionalProperties: false, required: ["slotId", "assetIds"], properties: { slotId: { type: "string" }, assetIds: { type: "array", maxItems: 12, items: visualIds.length ? { type: "string", enum: visualIds } : { type: "string" } } } } }, materialPlaceholder: { type: "boolean" },
-          captionIndex: { type: "integer", minimum: 0, maximum: 79 }, subtitleKeywords: { type: "array", maxItems: 3, items: { type: "string", minLength: 2, maxLength: 16 } }, motionGroupId: { anyOf: [{ type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, { type: "null" }] }, persistUntilCaptionIndex: { anyOf: [{ type: "integer", minimum: 0, maximum: 79 }, { type: "null" }] }, primaryEffectId: nullableEnum(allowedEffectIds), primaryText: { type: "string" }, primaryParams: { type: "array", maxItems: 24, items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9]*$", maxLength: 64 }, value: { anyOf: [{ type: "string", maxLength: 4000 }, { type: "number", minimum: -1000000, maximum: 1000000 }, { type: "boolean" }] } } } }, primaryTimingCaptionIndices: { type: "array", maxItems: 16, items: { type: "integer", minimum: 0, maximum: 79 } }, secondaryEffectId: nullableEnum(allowedEffectIds), secondaryText: { anyOf: [{ type: "string" }, { type: "null" }] }, secondaryParams: { type: "array", maxItems: 24, items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9]*$", maxLength: 64 }, value: { anyOf: [{ type: "string", maxLength: 4000 }, { type: "number", minimum: -1000000, maximum: 1000000 }, { type: "boolean" }] } } } }, secondaryTimingCaptionIndices: { type: "array", maxItems: 16, items: { type: "integer", minimum: 0, maximum: 79 } }, accentColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }, x: { type: "number", minimum: 5, maximum: 95 }, y: { type: "number", minimum: 5, maximum: 95 }, scale: { type: "number", minimum: 0.65, maximum: 2.5 }, secondaryX: { type: "number", minimum: 5, maximum: 95 }, secondaryY: { type: "number", minimum: 5, maximum: 95 }, cameraPreset: { type: "string", enum: [...cameraPresetIds] }, soundEffectId: nullableEnum(BUILTIN_SOUND_EFFECT_IDS),
+          captionIndex: { type: "integer", minimum: 0, maximum: 79 }, subtitleKeywords: { type: "array", maxItems: 3, items: { type: "string", minLength: 2, maxLength: 16 } }, motionGroupId: { anyOf: [{ type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, { type: "null" }] }, persistUntilCaptionIndex: { anyOf: [{ type: "integer", minimum: 0, maximum: 79 }, { type: "null" }] }, primaryEffectId: nullableEnum(allowedEffectIds), primaryText: { type: "string" }, primaryParams: { type: "array", maxItems: 24, items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9]*$", maxLength: 64 }, value: { anyOf: [{ type: "string", maxLength: 4000 }, { type: "number", minimum: -1000000, maximum: 1000000 }, { type: "boolean" }] } } } }, primaryTimingCaptionIndices: { type: "array", maxItems: 16, items: { type: "integer", minimum: 0, maximum: 79 } }, secondaryEffectId: nullableEnum(allowedEffectIds), secondaryText: { anyOf: [{ type: "string" }, { type: "null" }] }, secondaryParams: { type: "array", maxItems: 24, items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9]*$", maxLength: 64 }, value: { anyOf: [{ type: "string", maxLength: 4000 }, { type: "number", minimum: -1000000, maximum: 1000000 }, { type: "boolean" }] } } } }, secondaryTimingCaptionIndices: { type: "array", maxItems: 16, items: { type: "integer", minimum: 0, maximum: 79 } }, accentColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }, x: { type: "number", minimum: 5, maximum: 95 }, y: { type: "number", minimum: 5, maximum: 95 }, scale: { type: "number", minimum: 0.65, maximum: 2.5 }, secondaryX: { type: "number", minimum: 5, maximum: 95 }, secondaryY: { type: "number", minimum: 5, maximum: 95 }, cameraPreset: { type: "string", enum: [...cameraPresetIds] }, soundEffectId: nullableEnum(BUILTIN_SOUND_EFFECT_IDS), shotcraftTransition: { type: "string", enum: [...shotcraftTransitionIds] }, shotcraftSounds: { type: "array", maxItems: 4, items: { type: "object", additionalProperties: false, required: ["event", "soundId", "volume"], properties: { event: { type: "string", minLength: 1, maxLength: 80 }, soundId: { type: "string", enum: [...shotcraftSoundIds] }, volume: { type: "number", minimum: 0, maximum: 0.6 } } } },
           videoLayers: { type: "array", maxItems: allowedMediaAssetIds.length ? 6 : 0, items: { type: "object", additionalProperties: false, required: ["assetId", "role", "sourceInSeconds", "layoutPreset", "shapePreset", "transitionPreset", "cameraPreset", "volume", "focus"], properties: {
             assetId: allowedMediaAssetIds.length ? { type: "string", enum: [...allowedMediaAssetIds] } : { type: "string" }, role: { type: "string", enum: videoRoleSchema.options }, sourceInSeconds: { type: "number", minimum: 0, maximum: 86_400 }, layoutPreset: { type: "string", enum: [...videoLayoutPresetIds] }, shapePreset: { type: "string", enum: videoShapeSchema.options }, transitionPreset: { type: "string", enum: videoTransitionSchema.options }, cameraPreset: { type: "string", enum: [...cameraPresetIds] }, volume: { type: "number", minimum: 0, maximum: 1 }, focus: { anyOf: [{ type: "object", additionalProperties: false, required: ["enabled", "x", "y", "zoom", "startOffsetSeconds", "durationSeconds"], properties: { enabled: { type: "boolean" }, x: { type: "number", minimum: 0, maximum: 100 }, y: { type: "number", minimum: 0, maximum: 100 }, zoom: { type: "number", minimum: 1, maximum: 4 }, startOffsetSeconds: { type: "number", minimum: 0, maximum: 86_400 }, durationSeconds: { type: "number", minimum: 0.1, maximum: 86_400 } } }, { type: "null" }] }
           } } }, backdropPreset: { type: "string", enum: backdropPresetSchema.options },

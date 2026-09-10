@@ -43,6 +43,9 @@ import type { AiMotionMatch, AiSoundMatch, AiVideoPlan } from "@/services/ai/sch
 import { createVideoPresentationCue, DEFAULT_EFFECT_BACKDROP, DEFAULT_VIDEO_FOCUS, DEFAULT_VIDEO_MASK, DEFAULT_VIDEO_TRANSITION, selectedVisualTransitionCuts, videoPresentationAt } from "@/domain/videoPresentation";
 import { DEFAULT_SUBTITLE_STYLE, subtitleKeywordsForText } from "@/domain/videoDecorations";
 import { builtinSoundAssetId, builtinSoundEffectById } from "@/domain/soundEffects";
+import { musicAnalysisSchema, musicCutPoints, type MusicAnalysis } from "@/domain/musicBeats";
+import { lintMotionProject } from "@/domain/motionLint";
+import shotcraftAudioCatalog from "@/domain/shotcraftLibrary/audioCatalog.json";
 
 export type SubtitleAppearancePatch = Partial<Pick<
   SubtitleClip,
@@ -63,8 +66,19 @@ export interface MotionMatchApplySummary {
   effectCount: number;
   sceneCount: number;
   soundCount: number;
+  musicCount: number;
   videoCount: number;
   skippedEffectCount: number;
+}
+
+export interface UnifiedStoryboardApplyOptions {
+  assets: readonly MediaAsset[];
+  soundEnabled: boolean;
+  musicAssetId?: string;
+  musicSourceInUs: number;
+  musicVolume: number;
+  beatSync: boolean;
+  analysis?: MusicAnalysis;
 }
 
 function aiEffectScale(compositionId: string, matchScale: number, hasChart: boolean) {
@@ -276,7 +290,7 @@ interface EditorState {
   updateAsset: (assetId: string, patch: Partial<MediaAsset>) => void;
   replaceProject: (project: EditorProject) => void;
   addGeneratedPlan: (plan: AiVideoPlan, prompt: string, mode: InsertMode, target?: { startUs: number; durationUs?: number }) => string;
-  applyMotionMatches: (subtitleIds: string[], matches: AiMotionMatch[]) => MotionMatchApplySummary;
+  applyMotionMatches: (subtitleIds: string[], matches: AiMotionMatch[], storyboardOptions?: UnifiedStoryboardApplyOptions) => MotionMatchApplySummary;
   applySoundMatches: (subtitleIds: string[], matches: AiSoundMatch[], soundAssets?: MediaAsset[]) => number;
   alignGeneratedBlockDuration: (blockId: string, durationUs: number) => void;
   alignGeneratedSceneDurations: (blockId: string, durationsUs: number[], subtitleIds?: string[]) => void;
@@ -1107,12 +1121,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }));
     return id;
   },
-  applyMotionMatches: (subtitleIds, matches) => {
+  applyMotionMatches: (subtitleIds, matches, storyboardOptions) => {
     const summary: MotionMatchApplySummary = {
       requestedEffectCount: 0,
       effectCount: 0,
       sceneCount: 0,
       soundCount: 0,
+      musicCount: 0,
       videoCount: 0,
       skippedEffectCount: 0
     };
@@ -1124,6 +1139,41 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         .flatMap((track) => track.clips)
         .filter((clip): clip is SubtitleClip => clip.kind === "subtitle" && selectedIds.has(clip.id))
         .sort((left, right) => left.startUs - right.startUs);
+      if (storyboardOptions) {
+        for (const asset of storyboardOptions.assets) {
+          const existing = project.assets.find((candidate) => candidate.id === asset.id);
+          if (existing) Object.assign(existing, structuredClone(asset));
+          else project.assets.push(structuredClone(asset));
+        }
+      }
+      const soundTrack = project.tracks.find((track) => track.kind === "audio" && track.audioRole === "sound");
+      const musicTrack = project.tracks.find((track) => track.kind === "audio" && track.audioRole === "music");
+      const lockedSoundSubtitleIds = new Set(soundTrack?.clips.flatMap((clip) => clip.locked && clip.sourceSubtitleId ? [clip.sourceSubtitleId] : []) ?? []);
+      if (storyboardOptions && soundTrack && !soundTrack.locked) {
+        soundTrack.clips = soundTrack.clips.filter((clip) => clip.locked || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
+      }
+      const musicStartUs = subtitles[0]?.startUs ?? 0;
+      const musicEndUs = subtitles.at(-1) ? subtitles.at(-1)!.startUs + subtitles.at(-1)!.durationUs : musicStartUs;
+      if (storyboardOptions && musicTrack && !musicTrack.locked) {
+        musicTrack.clips = musicTrack.clips.filter((clip) => clip.locked || !clip.label.startsWith("AI 编排音乐 · ") || (
+          !selectedIds.has(clip.sourceSubtitleId ?? "")
+          && (clip.startUs >= musicEndUs || clip.startUs + clip.durationUs <= musicStartUs)
+        ));
+      }
+      const musicAnalysis = storyboardOptions?.beatSync && storyboardOptions.analysis
+        ? musicAnalysisSchema.parse(storyboardOptions.analysis)
+        : undefined;
+      const musicPoints = musicAnalysis ? musicCutPoints(musicAnalysis) : [];
+      let lastStoryboardSoundUs = Number.NEGATIVE_INFINITY;
+      let storyboardImpactSoundCount = 0;
+      const beatAlignedTime = (wantedUs: number) => {
+        if (!storyboardOptions?.beatSync || !musicPoints.length) return wantedUs;
+        const wantedSourceUs = storyboardOptions.musicSourceInUs + wantedUs - musicStartUs;
+        const nearest = musicPoints.reduce<number | undefined>((chosen, point) => (
+          Math.abs(point - wantedSourceUs) <= 200_000 && (chosen === undefined || Math.abs(point - wantedSourceUs) < Math.abs(chosen - wantedSourceUs)) ? point : chosen
+        ), undefined);
+        return nearest === undefined ? wantedUs : musicStartUs + nearest - storyboardOptions.musicSourceInUs;
+      };
       const motionGroupSceneIds = new Map<string, string>();
       for (const match of matches) {
         if (!match.motionGroupId || motionGroupSceneIds.has(match.motionGroupId)) continue;
@@ -1208,11 +1258,46 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           const definition = compositionById(entry.compositionId);
           if (effectTrack.locked || (definition.recipe.sceneBackground && sceneTrack.locked)) { summary.skippedEffectCount += 1; continue; }
           if (isShotcraftComposition(definition.id)) {
-            const scene = subtitleShotcraftScene({ compositionId: definition.id, durationSeconds: matchDurationUs / 1_000_000, text: entry.text, params: entry.params, bindings: match.compositionBindings });
-            const compiled = compileShotcraftSequence({ title: "字幕分镜", scenes: [scene] }, project.assets, { startUs: subtitle.startUs, musicSourceInUs: 0, musicVolume: 0, beatSync: false, soundEnabled: false }, () => crypto.randomUUID());
+            const previous = effectTrack.clips
+              .filter((candidate): candidate is CompositionClip => candidate.kind === "composition" && isShotcraftComposition(candidate.compositionId) && candidate.startUs + candidate.durationUs === subtitle.startUs)
+              .sort((left, right) => right.startUs - left.startUs)[0];
+            const scene = subtitleShotcraftScene({
+              compositionId: definition.id,
+              durationSeconds: matchDurationUs / 1_000_000,
+              text: entry.text,
+              params: entry.params,
+              bindings: match.compositionBindings,
+              transition: storyboardOptions ? match.shotcraftTransition : "none",
+              sounds: storyboardOptions?.soundEnabled ? match.shotcraftSounds : []
+            });
+            const localMusicSourceInUs = storyboardOptions
+              ? storyboardOptions.musicSourceInUs + subtitle.startUs - musicStartUs
+              : 0;
+            const compiled = compileShotcraftSequence({ title: "字幕分镜", scenes: [scene] }, project.assets, {
+              startUs: subtitle.startUs,
+              musicAssetId: storyboardOptions?.beatSync ? storyboardOptions.musicAssetId : undefined,
+              musicSourceInUs: localMusicSourceInUs,
+              musicVolume: 0,
+              beatSync: Boolean(storyboardOptions?.beatSync),
+              analysis: storyboardOptions?.analysis,
+              soundEnabled: Boolean(storyboardOptions?.soundEnabled && soundTrack && !soundTrack.locked && !lockedSoundSubtitleIds.has(subtitle.id)),
+              fixedSceneDurations: true,
+              transitionFromClipId: previous?.id
+            }, () => crypto.randomUUID());
             const clip = compiled.tracks[0].clips[0];
             if (clip.kind !== "composition") continue;
             effectTrack.clips.push({ ...clip, trackId: effectTrack.id, label: `AI 分镜 · ${definition.name}`, sourceSubtitleId: subtitle.id, sourceBlockId: subtitle.sourceBlockId, sceneGroupId: match.motionGroupId ? motionGroupSceneIds.get(match.motionGroupId) : undefined, matchQuery: subtitle.text, colorRole: motionColorRoleForEffect(definition.id), accentColor: themeAccentColor });
+            const compiledSounds = compiled.tracks.find((track) => track.kind === "audio" && track.audioRole === "sound")?.clips ?? [];
+            for (const sound of compiledSounds) {
+              if (!soundTrack || sound.kind !== "audio") continue;
+              const soundInfo = shotcraftAudioCatalog.find((item) => item.id === sound.assetId);
+              const eventUs = sound.startUs + Math.max(0, (soundInfo?.sourcePeakUs ?? sound.sourceInUs) - sound.sourceInUs);
+              if (eventUs - lastStoryboardSoundUs < 400_000 || (soundInfo?.category === "impact" && storyboardImpactSoundCount >= 3)) continue;
+              soundTrack.clips.push({ ...sound, trackId: soundTrack.id, sourceSubtitleId: subtitle.id, sourceBlockId: subtitle.sourceBlockId });
+              summary.soundCount += 1;
+              lastStoryboardSoundUs = eventUs;
+              if (soundInfo?.category === "impact") storyboardImpactSoundCount += 1;
+            }
             summary.effectCount += 1;
             continue;
           }
@@ -1305,7 +1390,45 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           }
         }
         matchedVideoLayers(match).forEach((layer) => addMatchedVideo(subtitle, matchDurationUs, layer, "AI 素材"));
+        if (storyboardOptions?.soundEnabled && !match.primaryEffectId?.startsWith("shotcraft-") && match.soundEffectId && soundTrack && !soundTrack.locked && !lockedSoundSubtitleIds.has(subtitle.id)) {
+          const definition = builtinSoundEffectById(match.soundEffectId);
+          const asset = definition ? project.assets.find((candidate) => candidate.id === builtinSoundAssetId(definition.id) && candidate.kind === "audio" && !candidate.missing) : undefined;
+          const startUs = beatAlignedTime(subtitle.startUs);
+          if (definition && asset && startUs - lastStoryboardSoundUs >= 400_000) {
+            const durationUs = Math.min(Math.round(asset.durationUs), Math.max(0, musicEndUs - startUs));
+            if (durationUs >= 50_000) {
+              soundTrack.clips.push({
+                id: crypto.randomUUID(), trackId: soundTrack.id, kind: "audio", label: `AI 音效 · ${definition.name}`,
+                startUs, durationUs, locked: false, assetId: asset.id, sourceInUs: 0, playbackRate: 1, volume: 1,
+                fadeInUs: 0, fadeOutUs: Math.min(50_000, Math.floor(durationUs / 2)), role: "sound",
+                sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id
+              });
+              summary.soundCount += 1;
+              lastStoryboardSoundUs = startUs;
+            }
+          }
+        }
       });
+      if (storyboardOptions?.musicAssetId && musicTrack && !musicTrack.locked && musicEndUs > musicStartUs) {
+        if (!Number.isSafeInteger(storyboardOptions.musicSourceInUs) || storyboardOptions.musicSourceInUs < 0 || !Number.isFinite(storyboardOptions.musicVolume) || storyboardOptions.musicVolume < 0 || storyboardOptions.musicVolume > 1) throw new Error("音乐起点或音量无效");
+        const music = project.assets.find((asset) => asset.id === storyboardOptions.musicAssetId && asset.kind === "audio" && !asset.missing);
+        if (!music) throw new Error("选中的音乐已经移除，请重新选择");
+        const durationUs = musicEndUs - musicStartUs;
+        if (music.durationUs - storyboardOptions.musicSourceInUs < durationUs) throw new Error("音乐剩余长度不足，请调整音乐起点或更换音乐");
+        if (storyboardOptions.beatSync && (!musicAnalysis || musicPoints.length < 2)) throw new Error("所选音乐片段没有足够拍点，请重新分析或关闭卡点");
+        musicTrack.clips.push({
+          id: crypto.randomUUID(), trackId: musicTrack.id, kind: "audio", label: `AI 编排音乐 · ${music.name}`,
+          startUs: musicStartUs, durationUs, locked: false, assetId: music.id, sourceInUs: storyboardOptions.musicSourceInUs,
+          playbackRate: 1, volume: storyboardOptions.musicVolume, fadeInUs: Math.min(500_000, Math.floor(durationUs / 8)),
+          fadeOutUs: Math.min(1_500_000, Math.floor(durationUs / 4)), role: "music", sourceSubtitleId: subtitles[0]?.id
+        });
+        if (storyboardOptions.analysis) project.musicAnalyses = [...(project.musicAnalyses ?? []).filter((item) => item.assetId !== music.id).slice(-15), { assetId: music.id, analysis: storyboardOptions.analysis }];
+        summary.musicCount = 1;
+      }
+      if (storyboardOptions) {
+        const error = lintMotionProject(project).find((issue) => issue.severity === "error");
+        if (error) throw new Error(`AI 编排未通过动效检查：${error.message}`);
+      }
     }));
     return summary;
   },

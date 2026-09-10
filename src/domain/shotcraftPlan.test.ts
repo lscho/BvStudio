@@ -29,6 +29,15 @@ describe("AI 分镜编译", () => {
       expect(shotcraftFrameTimeUs(0, clip.shotcraft!)).toBe(transition.durationUs);
     }
   });
+  it("字幕分镜保持字幕边界，同时保留前镜转场和卡内拍点", () => {
+    const plan = planFixture();
+    plan.scenes = [{ ...plan.scenes[0], durationSeconds: 4.8, transition: "flash-cut" }];
+    const result = compileShotcraftSequence(plan, [musicFixture], { ...optionsFixture, startUs: 2_000_000, musicSourceInUs: 600_000, fixedSceneDurations: true, transitionFromClipId: "previous" }, newId);
+    const clip = result.tracks[0].clips[0];
+    if (clip.kind !== "composition") throw new Error("镜头类型错误");
+    expect(clip).toMatchObject({ startUs: 2_000_000, durationUs: 4_800_000, shotcraft: { leadInUs: 800_000, transition: { preset: "flash-cut", fromClipId: "previous" } } });
+    expect(clip.shotcraft?.timeMap?.at(-1)?.timeUs).toBe(3_500_000);
+  });
   it("拒绝重复槽、超限素材和未知镜头", () => {
     const plan = planFixture();
     plan.scenes[0] = { ...plan.scenes[0], shotId: "shotcraft-card-stack", bindings: [{ slotId: "cards", assetIds: ["a", "a"] }, { slotId: "cards", assetIds: ["a", "a"] }] };

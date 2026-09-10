@@ -778,6 +778,19 @@ describe("provider requests", () => {
     expect(matches.map((match) => match.soundEffectId)).toEqual([null, null, null]);
   });
 
+  it("keeps one shared sound and Shotcraft action plan in storyboard mode", () => {
+    const captions = [{ startSeconds: 0, endSeconds: 4, text: "标题落版。" }];
+    const [match] = normalizeMotionMatches([{
+      captionIndex: 0, primaryEffectId: "shotcraft-blur-slide", primaryText: "标题落版", primaryParams: [], primaryTimingCaptionIndices: [],
+      secondaryEffectId: null, secondaryText: null, secondaryParams: [], secondaryTimingCaptionIndices: [], accentColor: "#5fa8ff",
+      x: 50, y: 50, scale: 1, secondaryX: 50, secondaryY: 50, cameraPreset: "none", videoLayers: [], backdropPreset: "none",
+      primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0,
+      mediaLayoutPreset: "full", chart: null, soundEffectId: null, shotcraftTransition: "flash-cut",
+      shotcraftSounds: [{ event: "title", soundId: "shotcraft-audio:sfx-camera-camera-lens-shutter", volume: 0.3 }]
+    }], captions, 4, [], true);
+    expect(match).toMatchObject({ shotcraftTransition: "flash-cut", shotcraftSounds: [{ event: "title", volume: 0.3 }] });
+  });
+
   it("keeps an imported A-roll on its existing track while preserving the requested camera move", () => {
     const [match] = normalizeMotionMatches([{
       captionIndex: 0,

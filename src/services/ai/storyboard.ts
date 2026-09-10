@@ -13,7 +13,7 @@ export function subtitleShotcraftEligible(id: string) {
 
 export function shotcraftSceneForMatch(match: AiMotionMatch, durationSeconds: number) {
   const id = match.primaryEffectId ?? "";
-  return subtitleShotcraftScene({ compositionId: id, durationSeconds, text: match.primaryText, params: match.primaryParams, bindings: match.compositionBindings });
+  return subtitleShotcraftScene({ compositionId: id, durationSeconds, text: match.primaryText, params: match.primaryParams, bindings: match.compositionBindings, transition: match.shotcraftTransition, sounds: match.shotcraftSounds });
 }
 
 export function assertStoryboardSelection(selection: AiMotionSelection, input: MatchTimelineMotionInput) {
@@ -46,22 +46,41 @@ export function assertStoryboardSelection(selection: AiMotionSelection, input: M
 export function assertStoryboardMatches(matches: readonly AiMotionMatch[], selection: AiMotionSelection, input: MatchTimelineMotionInput) {
   if (!input.storyboard) return;
   const issues: z.core.$ZodIssue[] = [];
+  const shotcraftScenes: Array<{ captionIndex: number; endCaptionIndex: number; matchIndex: number; scene: ReturnType<typeof shotcraftSceneForMatch> }> = [];
   for (const [index, match] of matches.entries()) {
     const segment = selection.segments.find((s) => match.captionIndex >= s.startCaptionIndex && match.captionIndex <= s.endCaptionIndex);
     if (!segment) continue;
     const fail = (message: string) => issues.push({ code: "custom", path: ["matches", index], message });
     if (match.primaryMediaAssetId || match.secondaryMediaAssetId) fail("字幕分镜仅使用 videoLayers 绑定视频，不能使用旧素材字段");
+    if (!input.soundEnabled && (match.soundEffectId || match.shotcraftSounds?.length)) fail("用户已关闭动作音效，分镜不能携带音效");
     if (segment.roll === "a-roll" && match.videoLayers.length) fail("A-roll 段保留现有主叙事视频，不能插入覆盖视频");
     if (segment.roll === "b-roll" && match.videoLayers.some((layer) => ["a-roll", "presenter"].includes(layer.role) || input.materials.some((m) => m.id === layer.assetId && ["a-roll", "presenter"].includes(m.roleHint ?? "")))) fail("B-roll 段不能插入人物主叙事素材");
     if (segment.roll === "b-roll" && (match.cameraPreset !== "none" || match.videoLayers.some((layer) => layer.volume !== 0))) fail("B-roll 保留原口播音轨；补充视频须静音，运镜写在补充视频层内");
     if (match.primaryEffectId && isShotcraftComposition(match.primaryEffectId)) {
       const duration = input.captions[segment.endCaptionIndex].endSeconds - input.captions[match.captionIndex].startSeconds;
       const scene = shotcraftSceneForMatch(match, duration);
+      shotcraftScenes.push({ captionIndex: match.captionIndex, endCaptionIndex: segment.endCaptionIndex, matchIndex: index, scene });
       for (const message of shotcraftContentIssues(scene)) fail(message);
       try { validateShotcraftPlan({ title: "字幕分镜", scenes: [scene] }, input.materials.map((material) => ({ id: material.id, kind: material.kind ?? "video", name: material.name, durationUs: Math.round(material.durationSeconds * 1_000_000) }))); }
       catch (error) { fail(error instanceof Error ? error.message : "镜头内容无效"); }
       if (match.materialPlaceholder) fail("Shotcraft 需要真实绑定素材，不能使用占位页面");
+      if (match.soundEffectId) fail("Shotcraft 镜头只能使用镜头动作音效，不能携带普通字幕音效");
+    } else if ((match.shotcraftTransition && match.shotcraftTransition !== "none") || match.shotcraftSounds?.length) {
+      fail("普通动效不能携带 Shotcraft 转场或动作音效");
     }
+  }
+  const orderedShotcraftScenes = shotcraftScenes.sort((left, right) => left.captionIndex - right.captionIndex);
+  for (const [index, current] of orderedShotcraftScenes.entries()) {
+    if (current.scene.transition === "none") continue;
+    const previous = orderedShotcraftScenes[index - 1];
+    const previousEndSeconds = previous ? input.captions[previous.endCaptionIndex]?.endSeconds : undefined;
+    const currentStartSeconds = input.captions[current.captionIndex]?.startSeconds;
+    if (!previous || previous.endCaptionIndex + 1 !== current.captionIndex || previousEndSeconds === undefined || currentStartSeconds === undefined || Math.abs(previousEndSeconds - currentStartSeconds) > 0.000001) {
+      issues.push({ code: "custom", path: ["matches", current.matchIndex, "shotcraftTransition"], message: "Shotcraft 转场只支持时间上直接相邻的两个 Shotcraft 镜头" });
+    }
+  }
+  if (shotcraftImpactCount(orderedShotcraftScenes.map(({ scene }) => scene)) > 3) {
+    issues.push({ code: "custom", path: ["matches"], message: "镜头内部冲击与闪白转场合计最多三处" });
   }
   for (const [index, segment] of selection.segments.entries()) {
     if (segment.roll !== "b-roll") continue;

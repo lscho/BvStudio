@@ -26,10 +26,10 @@ export const shotcraftPlanSchema = z.object({
   }).strict()).min(1).max(40)
 }).strict();
 export type ShotcraftPlan = z.infer<typeof shotcraftPlanSchema>;
-export function subtitleShotcraftScene(input: { compositionId: string; text: string; params?: readonly { key: string; value: string | number | boolean }[]; bindings?: readonly { slotId: string; assetIds: string[] }[]; durationSeconds: number }): ShotcraftPlan["scenes"][number] {
-  return { shotId: input.compositionId, durationSeconds: input.durationSeconds, text: input.text, copy: (libraryShot(input.compositionId)?.texts ?? []).map((field) => ({ key: field.key, value: String(input.params?.find((param) => param.key === field.key)?.value ?? "") })), bindings: [...(input.bindings ?? [])], regions: [], transition: "none", sounds: [], reason: "依据字幕内容编排" };
+export function subtitleShotcraftScene(input: { compositionId: string; text: string; params?: readonly { key: string; value: string | number | boolean }[]; bindings?: readonly { slotId: string; assetIds: string[] }[]; durationSeconds: number; transition?: string; sounds?: readonly { event: string; soundId: string; volume: number }[] }): ShotcraftPlan["scenes"][number] {
+  return { shotId: input.compositionId, durationSeconds: input.durationSeconds, text: input.text, copy: (libraryShot(input.compositionId)?.texts ?? []).map((field) => ({ key: field.key, value: String(input.params?.find((param) => param.key === field.key)?.value ?? "") })), bindings: [...(input.bindings ?? [])], regions: [], transition: input.transition ?? "none", sounds: [...(input.sounds ?? [])], reason: "依据字幕内容编排" } as ShotcraftPlan["scenes"][number];
 }
-export interface ShotcraftSequenceOptions { startUs: number; musicAssetId?: string; musicSourceInUs: number; musicVolume: number; beatSync: boolean; analysis?: MusicAnalysis; soundEnabled: boolean }
+export interface ShotcraftSequenceOptions { startUs: number; musicAssetId?: string; musicSourceInUs: number; musicVolume: number; beatSync: boolean; analysis?: MusicAnalysis; soundEnabled: boolean; fixedSceneDurations?: boolean; transitionFromClipId?: string }
 
 export function validateShotcraftPlan(value: unknown, assets: readonly MediaAsset[]): ShotcraftPlan {
   const plan = shotcraftPlanSchema.parse(value);
@@ -81,7 +81,7 @@ export function compileShotcraftSequence(plan: ShotcraftPlan, assets: readonly M
   const points = analysis ? musicCutPoints(analysis).map((time) => time - options.musicSourceInUs).filter((time) => time >= 0) : [];
   if (analysis && points.length < 2) throw new Error("所选音乐片段没有足够拍点，请换一段音乐或关闭卡点");
   const warnings: string[] = [];
-  const transitions = plan.scenes.map((scene, index) => index && scene.transition !== "none" ? Math.min(800_000, Math.round(scene.durationSeconds * 250_000)) : 0);
+  const transitions = plan.scenes.map((scene, index) => (index > 0 || options.transitionFromClipId) && scene.transition !== "none" ? Math.min(800_000, Math.round(scene.durationSeconds * 250_000)) : 0);
   let cursor = 0, previous: CompositionClip | undefined, impactCount = 0, lastSoundUs = -Infinity;
   for (const [sceneIndex, scene] of plan.scenes.entries()) {
     const shot = shotcraftShot(scene.shotId)!;
@@ -89,7 +89,7 @@ export function compileShotcraftSequence(plan: ShotcraftPlan, assets: readonly M
     const requested = Math.round(scene.durationSeconds * 1_000_000);
     const next = plan.scenes[sceneIndex + 1];
     const nextCutOffset = next ? Math.round(transitions[sceneIndex + 1] * shotcraftTransitionCutRatio(next.transition)) : 0;
-    const cut = analysis ? nearestInWindow(points, cursor + requested + nextCutOffset, cursor + Math.max(1_000_000, requested * 0.75) + nextCutOffset, cursor + requested * 1.25 + nextCutOffset) : cursor + requested + nextCutOffset;
+    const cut = analysis && !options.fixedSceneDurations ? nearestInWindow(points, cursor + requested + nextCutOffset, cursor + Math.max(1_000_000, requested * 0.75) + nextCutOffset, cursor + requested * 1.25 + nextCutOffset) : cursor + requested + nextCutOffset;
     if (cut === undefined) throw new Error(`第 ${sceneIndex + 1} 镜附近没有有效拍点，请调整时长、音乐起点或关闭卡点`);
     const end = cut - nextCutOffset;
     const durationUs = Math.round(end - cursor);
@@ -114,7 +114,8 @@ export function compileShotcraftSequence(plan: ShotcraftPlan, assets: readonly M
       }
     }
     timeMap.push({ timeUs: motionDurationUs, frame: shot.frames }); settings.timeMap = timeMap;
-    if (previous && scene.transition !== "none") settings.transition = { preset: scene.transition, durationUs: transitions[sceneIndex], fromClipId: previous.id };
+    const transitionFromClipId = previous?.id ?? (sceneIndex === 0 ? options.transitionFromClipId : undefined);
+    if (transitionFromClipId && scene.transition !== "none") settings.transition = { preset: scene.transition, durationUs: transitions[sceneIndex], fromClipId: transitionFromClipId };
     const clip: CompositionClip = {
       id: newId(), trackId: track.id, kind: "composition", label: shot.name, startUs: options.startUs + cursor, durationUs, locked: false,
       compositionId: shot.id, text: scene.text, params: { ...definition.defaultParams, ...Object.fromEntries(scene.copy.map((field) => [field.key, field.value])) },

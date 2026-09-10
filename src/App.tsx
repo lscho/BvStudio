@@ -3,7 +3,7 @@ import { desktopCompositionFrames } from "@/services/compositionFrames";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { Clapperboard, Download, FolderOpen, History, LoaderCircle, Redo2, Save, Settings, Square, Undo2 } from "lucide-react";
 import { ShotcraftPlannerDialog } from "@/components/ShotcraftPlannerDialog";
-import { SubtitleStoryboardDialog } from "@/components/SubtitleStoryboardDialog";
+import { SubtitleStoryboardDialog, type SubtitleStoryboardPreview, type SubtitleStoryboardRequest } from "@/components/SubtitleStoryboardDialog";
 import { storyboardVisuals, type StoryboardOptions } from "@/domain/storyboard";
 import { AiGenerateDialog } from "@/components/AiGenerateDialog";
 import { AiSettingsDialog, type SettingsSection } from "@/components/AiSettingsDialog";
@@ -18,7 +18,7 @@ import { UpdateModal } from "@/components/UpdateModal";
 import { WindowControls } from "@/components/WindowControls";
 import { useAppUpdater } from "@/hooks/useAppUpdater";
 import { useSettings } from "@/hooks/useSettings";
-import type { GeneratedBlock } from "@/domain/project";
+import type { GeneratedBlock, MediaAsset } from "@/domain/project";
 import { buildRenderPlan } from "@/domain/renderPlan";
 import { buildSrtDocument } from "@/domain/srt";
 import { narrationContext } from "@/domain/scriptContext";
@@ -70,6 +70,8 @@ import { lintMotionProject } from "@/domain/motionLint";
 import { builtinSoundAssetId, builtinSoundEffectById } from "@/domain/soundEffects";
 import { createBuiltinSoundAsset } from "@/services/builtinSounds";
 import { createMotionMatchingFeedbackRecord, readConfirmedMotionPreferences, saveMotionMatchingFeedback } from "@/services/motionMatchingFeedback";
+import { mediaAssetVisionThumbnail } from "@/services/ai/shotcraft";
+import { loadShotcraftAudio } from "@/services/shotcraftAudio";
 
 function loadVideoMetadata(url: string) {
   return new Promise<{ duration: number; width: number; height: number }>((resolve, reject) => {
@@ -503,6 +505,95 @@ export default function App() {
     }
   }
 
+  async function generateSubtitleStoryboard(request: SubtitleStoryboardRequest, signal: AbortSignal, onProgress: (message: string) => void): Promise<SubtitleStoryboardPreview> {
+    const sourceProject = useEditorStore.getState().project;
+    const allSubtitles = sourceProject.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle");
+    if (!allSubtitles.length) throw new Error("请先通过视频识别或 AI 生成获得时间字幕");
+    if (!settings.aiProvider.model || !(await hasApiKey())) throw new Error("请先配置云端大模型和 API Key");
+    const subtitles = subtitlesForMotionMatch(allSubtitles, useEditorStore.getState().selectedClipIds);
+    const selectedIds = new Set(request.materialAssetIds);
+    const materials = sourceProject.assets.filter((asset) => selectedIds.has(asset.id) && (asset.kind === "video" || asset.kind === "image") && !asset.missing);
+    const videoClips = sourceProject.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "video");
+    const visionImages: Array<{ assetId: string; dataUrl: string }> = [];
+    if (request.useVision) {
+      const images = materials.filter((asset) => asset.kind === "image").slice(0, 12);
+      for (const [index, asset] of images.entries()) {
+        onProgress(`正在准备图片识别 ${index + 1}/${images.length}`);
+        visionImages.push({ assetId: asset.id, dataUrl: await mediaAssetVisionThumbnail(asset, signal) });
+      }
+    }
+    const motionPreferences = await readConfirmedMotionPreferences(sourceProject.id).catch((preferenceError) => {
+      console.warn("Failed to read motion matching preferences", preferenceError);
+      return [];
+    });
+    const captions = subtitles.map((clip) => ({ startSeconds: clip.startUs / 1_000_000, endSeconds: (clip.startUs + clip.durationUs) / 1_000_000, text: clip.text }));
+    const captionStartUs = Math.round(Math.min(...captions.map((caption) => caption.startSeconds)) * 1_000_000);
+    const captionEndUs = Math.round(Math.max(...captions.map((caption) => caption.endSeconds)) * 1_000_000);
+    const musicWindowDurationUs = Math.max(0, captionEndUs - captionStartUs);
+    const requestedMusic = request.musicAssetId
+      ? sourceProject.assets.find((asset) => asset.id === request.musicAssetId && asset.kind === "audio" && !asset.missing) ?? await loadShotcraftAudio(request.musicAssetId, signal)
+      : undefined;
+    if (requestedMusic && requestedMusic.durationUs - request.musicSourceInUs < musicWindowDurationUs) throw new Error("音乐剩余长度不足，请调整音乐起点或更换音乐");
+    const result = await matchTimelineMotion(settings.aiProvider, {
+      storyboard: request.storyboard,
+      timelineVisuals: storyboardVisuals(sourceProject),
+      topic: sourceProject.name,
+      style: "内容优先、关键词精炼、时间轴感知、避免遮挡字幕",
+      article: generatedClips.map((clip) => clip.article).filter(Boolean).join("\n").slice(0, 8_000),
+      captions,
+      timelineDurationSeconds: Math.max(0.1, sourceProject.durationUs / 1_000_000),
+      materials: materials.map((asset) => {
+        const sourceSubtitles = allSubtitles.filter((subtitle) => subtitle.sourceAssetId === asset.id);
+        const placedRole = videoClips.find((clip) => clip.assetId === asset.id)?.role;
+        return { id: asset.id, kind: asset.kind === "image" ? "image" as const : "video" as const, name: asset.name, durationSeconds: asset.durationUs / 1_000_000, width: asset.width, height: asset.height, roleHint: placedRole && placedRole !== "unspecified" ? placedRole : sourceSubtitles.length && videoClips.some((clip) => clip.assetId === asset.id) ? "a-roll" as const : "unspecified" as const, transcriptExcerpt: sourceSubtitles.map((subtitle) => subtitle.text).join(" ").slice(0, 500) };
+      }),
+      visionImages,
+      soundEnabled: request.soundEnabled,
+      musicRhythm: request.beatSync && request.analysis ? {
+        bpm: request.analysis.bpm,
+        reliableGrid: request.analysis.reliableGrid,
+        sourceInUs: request.musicSourceInUs,
+        beatCount: request.analysis.beatsUs.filter((beat) => beat >= request.musicSourceInUs && beat <= request.musicSourceInUs + musicWindowDurationUs).length,
+        strongHitOffsetsUs: request.analysis.hits.filter((hit) => hit.timeUs >= request.musicSourceInUs && hit.timeUs <= request.musicSourceInUs + musicWindowDurationUs && (hit.kind === "kick" || hit.kind === "snare")).sort((left, right) => right.strength - left.strength).slice(0, 20).sort((left, right) => left.timeUs - right.timeUs).map((hit) => hit.timeUs - request.musicSourceInUs)
+      } : undefined,
+      motionPreferences
+    }, browserApiKey(), signal, (progress) => onProgress(progress.message));
+    signal.throwIfAborted();
+    if (useEditorStore.getState().project !== sourceProject) throw new Error("工程已发生变化，请重新生成分镜");
+    const preparedAssets: MediaAsset[] = [];
+    if (requestedMusic) preparedAssets.push(requestedMusic);
+    if (request.soundEnabled) {
+      const builtinIds = [...new Set(result.matches.flatMap((match) => match.soundEffectId ? [match.soundEffectId] : []))];
+      for (const [index, soundId] of builtinIds.entries()) {
+        onProgress(`正在准备字幕动作音效 ${index + 1}/${builtinIds.length}`);
+        const expectedName = `${builtinSoundEffectById(soundId)?.name}.wav`;
+        const existing = sourceProject.assets.find((asset) => asset.id === builtinSoundAssetId(soundId) && !asset.missing && asset.name === expectedName);
+        preparedAssets.push(existing ?? await createBuiltinSoundAsset(soundId, { refresh: true }));
+      }
+      const shotcraftSoundIds = [...new Set(result.matches.flatMap((match) => match.shotcraftSounds?.map((sound) => sound.soundId) ?? []))];
+      for (const [index, soundId] of shotcraftSoundIds.entries()) {
+        onProgress(`正在准备镜头动作音效 ${index + 1}/${shotcraftSoundIds.length}`);
+        preparedAssets.push(sourceProject.assets.find((asset) => asset.id === soundId && !asset.missing) ?? await loadShotcraftAudio(soundId, signal));
+      }
+    }
+    signal.throwIfAborted();
+    return { subtitleIds: subtitles.map((subtitle) => subtitle.id), captions, selection: result.selection, matches: result.matches, preparedAssets, projectUpdatedAt: sourceProject.updatedAt };
+  }
+
+  function applySubtitleStoryboard(preview: SubtitleStoryboardPreview, request: SubtitleStoryboardRequest) {
+    const current = useEditorStore.getState().project;
+    if (current.updatedAt !== preview.projectUpdatedAt) throw new Error("工程已发生变化，请重新生成分镜后再应用");
+    const subtitleIds = new Set(preview.subtitleIds);
+    const subtitles = current.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle" && subtitleIds.has(clip.id)).sort((left, right) => left.startUs - right.startUs);
+    if (subtitles.length !== preview.subtitleIds.length) throw new Error("分镜引用的字幕已经变化，请重新生成");
+    const applied = applyMotionMatches(preview.subtitleIds, preview.matches, { assets: preview.preparedAssets, soundEnabled: request.soundEnabled, musicAssetId: request.musicAssetId, musicSourceInUs: request.musicSourceInUs, musicVolume: request.musicVolume, beatSync: request.beatSync, analysis: request.analysis });
+    const lintIssues = lintMotionProject(useEditorStore.getState().project);
+    void saveMotionMatchingFeedback(createMotionMatchingFeedbackRecord(useEditorStore.getState().project, subtitles.map((clip) => clip.id), preview.selection)).catch((feedbackError) => console.warn("Failed to save motion matching feedback", feedbackError));
+    const warnings = lintIssues.filter((issue) => issue.severity === "warning");
+    const visualCount = applied.effectCount + applied.sceneCount;
+    setNotice(`整套编排已应用：${visualCount} 个动效、${applied.videoCount} 段素材或运镜、${applied.soundCount} 个动作音效${applied.musicCount ? "、1 段背景音乐" : ""}${warnings.length ? `；${warnings.length} 条提醒：${warnings[0].message}` : ""}`);
+  }
+
   async function matchSubtitleEffects(mode: "motion" | "sound" = "motion", storyboard?: StoryboardOptions) {
     if (aiRequestController) return;
     const project = useEditorStore.getState().project;
@@ -794,7 +885,7 @@ export default function App() {
             <ToolButton label="打开工程" onClick={() => void openProject()}><FolderOpen size={16} /></ToolButton>
             {isDesktopRuntime() && <ToolButton label="最近工程" onClick={() => setRecentOpen(true)}><History size={16} /></ToolButton>}
             <ToolButton label="保存工程" onClick={() => void saveProject()}><Save size={16} /></ToolButton>
-            <ToolButton label="AI 镜头编排" onClick={() => setShotcraftOpen(true)}><Clapperboard size={17} /></ToolButton>
+            <ToolButton label="AI 视频编排" onClick={() => srtSubtitleCount ? setSubtitleStoryboardOpen(true) : setShotcraftOpen(true)}><Clapperboard size={17} /></ToolButton>
             <button className="button header-button export" type="button" disabled={Boolean(busyMessage)} onClick={() => setExportOpen(true)}>{busyMessage ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{exportProgress ? `${Math.round(exportProgress.progress * 100)}%` : busyMessage ? "处理中" : "导出"}</button>
             <ToolButton label="模型与客户端设置" onClick={() => { setSettingsInitialSection("provider"); setSettingsOpen(true); }}><Settings size={17} /></ToolButton>
           </div>
@@ -807,7 +898,7 @@ export default function App() {
       <AiSettingsDialog open={settingsOpen} initialSection={settingsInitialSection} settings={settings} onOpenChange={setSettingsOpen} onSave={setSettings} />
       <AiGenerateDialog open={generateOpen} settings={settings} onOpenChange={setGenerateOpen} onNeedSettings={() => { setGenerateOpen(false); setSettingsOpen(true); }} />
       <ShotcraftPlannerDialog open={shotcraftOpen} settings={settings} onOpenChange={setShotcraftOpen} onSubtitleStoryboard={() => setSubtitleStoryboardOpen(true)} onNeedSettings={() => { setShotcraftOpen(false); setSettingsOpen(true); }} />
-      <SubtitleStoryboardDialog open={subtitleStoryboardOpen} onOpenChange={setSubtitleStoryboardOpen} onGenerate={(options) => void matchSubtitleEffects("motion", options)} subtitleCount={subtitlesForMotionMatch(project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle"), useEditorStore.getState().selectedClipIds).length} durationSeconds={project.durationUs / 1_000_000} />
+      <SubtitleStoryboardDialog open={subtitleStoryboardOpen} assets={project.assets} onOpenChange={setSubtitleStoryboardOpen} onGenerate={generateSubtitleStoryboard} onApply={applySubtitleStoryboard} onNeedSettings={() => { setSubtitleStoryboardOpen(false); setSettingsOpen(true); }} subtitleCount={subtitlesForMotionMatch(project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle"), useEditorStore.getState().selectedClipIds).length} durationSeconds={project.durationUs / 1_000_000} />
       <AudioCreateDialog open={audioOpen} defaultText={audioContext?.text ?? ""} targetLabel={audioContext ? `${audioContext.block ? `脚本：${audioContext.block.label}` : audioContext.subtitles.length ? "选中字幕" : "自由配音"} · 起点 ${(audioContext.startUs / 1_000_000).toFixed(3)} 秒` : undefined} speechSegments={speechSegments} cloudSpeech={settings.cloudSpeech} onOpenChange={setAudioOpen} onCreated={(source) => addCreatedAudio(source, audioContext?.startUs, audioContext?.block?.id)} />
       <EffectLibraryDialog open={effectLibraryOpen} onOpenChange={setEffectLibraryOpen} />
       <MotionMatchingFeedbackDialog open={motionFeedbackOpen} project={project} onOpenChange={setMotionFeedbackOpen} />

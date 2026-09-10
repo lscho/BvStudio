@@ -35,6 +35,20 @@ describe("字幕与分镜内容关联", () => {
     const invalid = { ...match, primaryEffectId: "shotcraft-lead-word-zoom-assemble", primaryParams: [{ key: "copy0", value: "生成很快" }, { key: "copy1", value: "错误词" }] };
     expect(() => assertStoryboardMatches([invalid], selection, input)).toThrow("强调词");
   });
+  it("第二阶段的强转场计入整套镜头冲击预算", () => {
+    const captions = Array.from({ length: 5 }, (_, index) => ({ startSeconds: index * 4, endSeconds: index * 4 + 4, text: `第${index + 1}段内容` }));
+    const segments = captions.map((_, index) => ({ ...selection.segments[0], segmentId: `segment-${index}`, startCaptionIndex: index, endCaptionIndex: index }));
+    const matches = captions.map((_, index) => ({ ...match, captionIndex: index, motionGroupId: null, persistUntilCaptionIndex: null, shotcraftTransition: index ? "flash-cut" as const : "none" as const }));
+    expect(() => assertStoryboardMatches(matches, { segments }, { ...input, captions, timelineDurationSeconds: 20 })).toThrow("最多三处");
+  });
+  it("拒绝没有相邻 Shotcraft 前镜的转场和关闭后的音效", () => {
+    expect(() => assertStoryboardMatches([{ ...match, shotcraftTransition: "flash-cut" }], selection, input)).toThrow("直接相邻");
+    expect(() => assertStoryboardMatches([{ ...match, shotcraftSounds: [{ event: "title", soundId: "shotcraft-audio:sfx-camera-camera-lens-shutter", volume: 0.3 }] }], selection, input)).toThrow("关闭动作音效");
+    const gapCaptions = [{ startSeconds: 0, endSeconds: 4, text: "第一镜" }, { startSeconds: 4.1, endSeconds: 8, text: "第二镜" }];
+    const gapSegments = gapCaptions.map((_, index) => ({ ...selection.segments[0], segmentId: `gap-${index}`, startCaptionIndex: index, endCaptionIndex: index }));
+    const gapMatches = gapCaptions.map((_, index) => ({ ...match, captionIndex: index, motionGroupId: null, persistUntilCaptionIndex: null, shotcraftTransition: index ? "flash-cut" as const : "none" as const }));
+    expect(() => assertStoryboardMatches(gapMatches, { segments: gapSegments }, { ...input, captions: gapCaptions })).toThrow("直接相邻");
+  });
   it("字幕入口仅开放无需人工圈焦点且已通过适配的镜头", () => {
     expect(subtitleShotcraftEligible("shotcraft-blur-slide")).toBe(true);
     expect(subtitleShotcraftEligible("shotcraft-cursor-flyover")).toBe(false);

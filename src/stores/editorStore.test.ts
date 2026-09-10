@@ -8,6 +8,7 @@ import { normalizeMotionMatches } from "@/services/ai/provider";
 import { useEditorStore } from "@/stores/editorStore";
 import { buildRenderPlan } from "@/domain/renderPlan";
 import { lintMotionProject } from "@/domain/motionLint";
+import { builtinSoundAssetId } from "@/domain/soundEffects";
 
 const plan: AiVideoPlan = {
   title: "插入介绍",
@@ -82,6 +83,71 @@ describe("editorStore", () => {
     expect(buildRenderPlan(after, "/out.mp4").overlays.some((o) => o.kind === "composition" && o.shotcraftData?.clip.id === clip.id)).toBe(true);
     useEditorStore.getState().undo();expect(useEditorStore.getState().project).toEqual(before);
     useEditorStore.getState().redo();expect(useEditorStore.getState().project).toEqual(after);
+  });
+  it("一次提交应用动效、卡点音效和背景音乐，并可整体撤销", () => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 5_000_000 });
+    useEditorStore.getState().addSubtitles("voice", [{ startSeconds: 0, endSeconds: 5, text: "统一编排内容" }]);
+    const prepared = structuredClone(useEditorStore.getState().project);
+    const subtitle = prepared.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+    const music = { id: "music", name: "背景音乐", kind: "audio" as const, durationUs: 10_000_000, missing: false };
+    const sound = { id: builtinSoundAssetId("soft-whoosh"), name: "丝滑转场.wav", kind: "audio" as const, durationUs: 680_000, missing: false };
+    prepared.assets.push(music, sound);
+    useEditorStore.setState({ project: prepared, past: [], future: [] });
+    const before = structuredClone(prepared);
+    const analysis = { version: 1 as const, durationUs: music.durationUs, bpm: 120, phaseUs: 100_000, reliableGrid: true, candidates: [], beatsUs: [100_000, 600_000, 1_100_000], hits: [], energy: [] };
+    const summary = useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, soundEffectId: "soft-whoosh" }], { assets: [music, sound], soundEnabled: true, musicAssetId: music.id, musicSourceInUs: 0, musicVolume: 0.2, beatSync: true, analysis });
+    const after = useEditorStore.getState().project;
+    expect(summary).toMatchObject({ effectCount: 1, soundCount: 1, musicCount: 1 });
+    expect(after.tracks.find((track) => track.audioRole === "sound")?.clips[0]).toMatchObject({ startUs: 100_000, sourceSubtitleId: subtitle.id });
+    expect(after.tracks.find((track) => track.audioRole === "music")?.clips[0]).toMatchObject({ startUs: 0, durationUs: 5_000_000, sourceInUs: 0, volume: 0.2 });
+    expect(useEditorStore.getState().past).toHaveLength(1);
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project).toEqual(before);
+    useEditorStore.getState().redo();
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [motionMatch], { assets: [], soundEnabled: false, musicSourceInUs: 0, musicVolume: 0, beatSync: false });
+    expect(useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")?.clips).toHaveLength(0);
+    expect(useEditorStore.getState().project.tracks.find((track) => track.audioRole === "music")?.clips).toHaveLength(0);
+  });
+  it("把 Shotcraft 音效放到镜头内部动作锚点并关联来源字幕", () => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 4_000_000 });
+    useEditorStore.getState().addSubtitles("voice", [{ startSeconds: 0, endSeconds: 4, text: "标题落版" }]);
+    const project = structuredClone(useEditorStore.getState().project);
+    const subtitle = project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+    const sound = { id: "shotcraft-audio:sfx-camera-camera-lens-shutter", name: "镜头快门", kind: "audio" as const, durationUs: 1_462_857, missing: false };
+    project.assets.push(sound);
+    useEditorStore.setState({ project, past: [], future: [] });
+    const summary = useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, primaryEffectId: "shotcraft-blur-slide", primaryText: "标题落版", cameraPreset: "none", shotcraftSounds: [{ event: "title", soundId: sound.id, volume: 0.3 }] }], { assets: [sound], soundEnabled: true, musicSourceInUs: 0, musicVolume: 0, beatSync: false });
+    const effect = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0];
+    const audio = useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")!.clips[0];
+    expect(summary).toMatchObject({ effectCount: 1, soundCount: 1 });
+    expect(effect).toMatchObject({ kind: "composition", sourceSubtitleId: subtitle.id });
+    expect(audio).toMatchObject({ kind: "audio", sourceSubtitleId: subtitle.id, volume: 0.3 });
+    expect(audio.startUs).toBeGreaterThanOrEqual(0);
+    expect(audio.startUs).toBeLessThan(1_000_000);
+  });
+  it("跨 Shotcraft 镜头维持三次 impact 音效上限", () => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 16_000_000 });
+    useEditorStore.getState().addSubtitles("voice", Array.from({ length: 4 }, (_, index) => ({ startSeconds: index * 4, endSeconds: index * 4 + 4, text: `第${index + 1}段冲击` })));
+    const project = structuredClone(useEditorStore.getState().project);
+    const subtitles = project.tracks.find((track) => track.kind === "subtitle")!.clips;
+    const sound = { id: "shotcraft-audio:sfx-impact-bass-hit-futuristic", name: "冲击", kind: "audio" as const, durationUs: 2_795_102, missing: false };
+    project.assets.push(sound);
+    useEditorStore.setState({ project, past: [], future: [] });
+    const matches = subtitles.map((_, captionIndex) => ({ ...motionMatch, captionIndex, primaryEffectId: "shotcraft-blur-slide", primaryText: `第${captionIndex + 1}段冲击`, cameraPreset: "none" as const, shotcraftSounds: [{ event: "title", soundId: sound.id, volume: 0.3 }] }));
+    const summary = useEditorStore.getState().applyMotionMatches(subtitles.map((subtitle) => subtitle.id), matches, { assets: [sound], soundEnabled: true, musicSourceInUs: 0, musicVolume: 0, beatSync: false });
+    expect(summary.soundCount).toBe(3);
+    expect(useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")?.clips).toHaveLength(3);
+  });
+  it("统一编排 lint 失败时不提交工程或改写重做栈", () => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 4_000_000 });
+    useEditorStore.getState().addSubtitles("voice", [{ startSeconds: 0, endSeconds: 4, text: "标题落版" }]);
+    const project = structuredClone(useEditorStore.getState().project);
+    const subtitle = project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+    subtitle.durationUs = 0;
+    const futureProject = { ...structuredClone(project), name: "原有重做工程" };
+    useEditorStore.setState({ project, past: [], future: [futureProject] });
+    expect(() => useEditorStore.getState().applyMotionMatches([subtitle.id], [motionMatch], { assets: [], soundEnabled: false, musicSourceInUs: 0, musicVolume: 0, beatSync: false })).toThrow("动效检查");
+    expect(useEditorStore.getState()).toMatchObject({ project, past: [], future: [futureProject] });
   });
   it("imports and places portrait videos without cropping on a landscape canvas", () => {
     useEditorStore.getState().addVideo({ id: "landscape", name: "landscape.mp4", sourcePath: "/landscape.mp4", kind: "video", width: 1920, height: 1080, durationUs: 20_000_000 });

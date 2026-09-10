@@ -9,6 +9,9 @@ describe("two-stage AI schemas", () => {
     expect(createAiMotionSelectionSchema(["pain-points"], 2).parse(selection)).toEqual(selection);
     expect(() => createAiMotionSelectionSchema(["pain-points"], 2).parse({ ...selection, segments: [{ ...selection.segments[0], endCaptionIndex: 3 }] })).toThrow();
     expect(createMotionSelectionJsonSchema(["pain-points"], 2).properties.segments.items.required).toContain("selectionReason");
+    expect(createMotionSelectionJsonSchema(["pain-points"], 2).properties.segments.items.required).not.toContain("roll");
+    expect(createMotionSelectionJsonSchema(["pain-points"], 2, true).properties.segments.items.required).toContain("roll");
+    expect(() => createAiMotionSelectionSchema(["pain-points"], 2, true).parse(selection)).toThrow("统一分镜");
   });
 
   it("selects a bounded effect palette from every allowed id", () => {

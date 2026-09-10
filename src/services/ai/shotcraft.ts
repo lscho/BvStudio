@@ -9,7 +9,7 @@ import audioCatalog from "@/domain/shotcraftLibrary/audioCatalog.json";
 import { browserApiKey, requestValidatedStructured, type AiRequestProgress } from "@/services/ai/provider";
 import type { AiProviderConfig } from "@/services/ai/provider";
 
-async function thumbnail(asset: MediaAsset, signal?: AbortSignal) {
+export async function mediaAssetVisionThumbnail(asset: MediaAsset, signal?: AbortSignal) {
   signal?.throwIfAborted();
   if (!asset.objectUrl) throw new Error("图片素材缺失，请重新导入");
   const response = await fetch(asset.objectUrl, { signal });
@@ -29,7 +29,7 @@ export async function generateShotcraftPlan(config: AiProviderConfig, input: { b
   const assets = input.assets.filter((asset) => asset.kind === "image" && !asset.missing).slice(0, 12);
   const images: string[] = [];
   if (input.useVision) {
-    for (const asset of assets) { onProgress?.({ phase: "connecting", message: `正在分析图片 ${images.length + 1}/${assets.length}`, receivedCharacters: 0 }); images.push(await thumbnail(asset, signal)); }
+    for (const asset of assets) { onProgress?.({ phase: "connecting", message: `正在分析图片 ${images.length + 1}/${assets.length}`, receivedCharacters: 0 }); images.push(await mediaAssetVisionThumbnail(asset, signal)); }
   }
   const eligible = SHOTCRAFT_SHOTS.filter((shot) => !shotcraftAdaptationIssue(shot.id));
   const selectionSchema = z.object({ shotIds: z.array(z.enum(eligible.map((shot) => shot.id))).min(1).max(24) }).strict();
