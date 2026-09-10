@@ -10,34 +10,60 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const scriptPath = join(repoRoot, "scripts", "write-tauri-release-config.mjs");
 
 const PUBLIC_KEY = "RExhHuaweiTestPublicKeyThatLooksLongEnoughForTheTestFixture";
-const ENDPOINT = "https://updates.example.com/api/desktop-updates/latest?platform={{target}}";
+const SERVER_URL = "https://license.example.com";
+const ENDPOINT = "https://license.example.com/api/desktop-updates/latest?platform={{target}}";
+/** 开发机 shell 或 .env 可能残留同名变量，逐条用例显式构造，保证测试自洽。 */
+const CONTROLLED_KEYS = ["VITE_ENABLE_UPDATER", "VITE_LICENSE_SERVER_URL", "TAURI_UPDATER_ENDPOINT"];
+
+const BASE_ENV = {
+  RELEASE_VERSION: "0.1.0",
+  TAURI_SIGNING_PUBLIC_KEY: PUBLIC_KEY,
+  VITE_ENABLE_UPDATER: "true",
+  VITE_LICENSE_SERVER_URL: SERVER_URL
+};
 
 function runScript(env) {
+  const inherited = { ...process.env };
+  for (const key of CONTROLLED_KEYS) delete inherited[key];
   const result = spawnSync(process.execPath, [scriptPath], {
     cwd: repoRoot,
     encoding: "utf8",
-    env: { ...process.env, ...env }
+    env: { ...inherited, ...env }
   });
   return { status: result.status, stdout: result.stdout.trim(), stderr: result.stderr.trim() };
 }
 
 function outputPath(runnerTemp) {
-  return join(runnerTemp, "tauri-base-release", "tauri.release.conf.json");
+  return join(runnerTemp, "bframe-studio-release", "tauri.release.conf.json");
 }
 
-test("writes a transient override containing only release version and updater settings", () => {
-  const runnerTemp = mkdtempSync(join(tmpdir(), "tauri-base-config-"));
+/**
+ * 在临时 RUNNER_TEMP 下跑一次脚本，再把结果交给断言。
+ * 显式传入的 RUNNER_TEMP: undefined 会被移除，用于验证该变量缺失时的行为。
+ */
+function withOverride(env, assertion) {
+  const runnerTemp = mkdtempSync(join(tmpdir(), "bframe-studio-config-"));
   try {
-    const { status, stdout, stderr } = runScript({
-      RELEASE_VERSION: "v0.1.0",
-      TAURI_SIGNING_PUBLIC_KEY: PUBLIC_KEY,
-      TAURI_UPDATER_ENDPOINT: ENDPOINT,
-      RUNNER_TEMP: runnerTemp
-    });
+    const merged = { RUNNER_TEMP: runnerTemp, ...env };
+    for (const key of Object.keys(merged)) {
+      if (merged[key] === undefined) delete merged[key];
+    }
+    return assertion(runScript(merged), runnerTemp);
+  } finally {
+    rmSync(runnerTemp, { recursive: true, force: true });
+  }
+}
+
+function readOverride(runnerTemp) {
+  return JSON.parse(readFileSync(outputPath(runnerTemp), "utf8"));
+}
+
+test("derives the updater endpoint from the license server URL", () => {
+  withOverride({ ...BASE_ENV, RELEASE_VERSION: "v0.1.0" }, ({ status, stdout, stderr }, runnerTemp) => {
     assert.equal(status, 0, stderr);
     assert.equal(stdout, outputPath(runnerTemp));
 
-    const override = JSON.parse(readFileSync(outputPath(runnerTemp), "utf8"));
+    const override = readOverride(runnerTemp);
     assert.deepEqual(Object.keys(override).sort(), ["bundle", "plugins", "version"]);
     assert.equal(override.version, "0.1.0");
     assert.deepEqual(override.bundle, { createUpdaterArtifacts: true });
@@ -48,131 +74,77 @@ test("writes a transient override containing only release version and updater se
         windows: { installMode: "passive" }
       }
     });
-  } finally {
-    rmSync(runnerTemp, { recursive: true, force: true });
+  });
+});
+
+test("normalizes a trailing slash instead of doubling the path separator", () => {
+  for (const serverUrl of [SERVER_URL, `${SERVER_URL}/`, `  ${SERVER_URL}/  `]) {
+    withOverride({ ...BASE_ENV, VITE_LICENSE_SERVER_URL: serverUrl }, ({ status, stderr }, runnerTemp) => {
+      assert.equal(status, 0, stderr);
+      assert.deepEqual(readOverride(runnerTemp).plugins.updater.endpoints, [ENDPOINT]);
+    });
   }
 });
 
 test("strips a leading v from the version", () => {
-  const runnerTemp = mkdtempSync(join(tmpdir(), "tauri-base-config-"));
-  try {
-    const { status, stderr } = runScript({
-      RELEASE_VERSION: "v1.2.3",
-      TAURI_SIGNING_PUBLIC_KEY: PUBLIC_KEY,
-      TAURI_UPDATER_ENDPOINT: ENDPOINT,
-      RUNNER_TEMP: runnerTemp
-    });
+  withOverride({ ...BASE_ENV, RELEASE_VERSION: "v1.2.3" }, ({ status, stderr }, runnerTemp) => {
     assert.equal(status, 0, stderr);
-    const override = JSON.parse(readFileSync(outputPath(runnerTemp), "utf8"));
-    assert.equal(override.version, "1.2.3");
-  } finally {
-    rmSync(runnerTemp, { recursive: true, force: true });
+    assert.equal(readOverride(runnerTemp).version, "1.2.3");
+  });
+});
+
+test("keeps endpoints empty unless VITE_ENABLE_UPDATER is exactly true", () => {
+  for (const flag of [undefined, "", "false", "1", "TRUE", "yes", " true"]) {
+    withOverride({ ...BASE_ENV, VITE_ENABLE_UPDATER: flag }, ({ status, stderr }, runnerTemp) => {
+      assert.equal(status, 0, stderr);
+      assert.deepEqual(readOverride(runnerTemp).plugins.updater.endpoints, [], `flag=${JSON.stringify(flag)}`);
+    });
   }
 });
 
-test("disables updater endpoints when TAURI_UPDATER_ENDPOINT is not configured", () => {
-  const runnerTemp = mkdtempSync(join(tmpdir(), "tauri-base-config-"));
-  try {
-    const { status, stderr } = runScript({
-      RELEASE_VERSION: "0.1.0",
-      TAURI_SIGNING_PUBLIC_KEY: PUBLIC_KEY,
-      TAURI_UPDATER_ENDPOINT: "",
-      RUNNER_TEMP: runnerTemp
-    });
-    assert.equal(status, 0, stderr);
+test("requires the license server URL once the updater is enabled", () => {
+  withOverride({ ...BASE_ENV, VITE_LICENSE_SERVER_URL: undefined }, ({ status, stderr }) => {
+    assert.notEqual(status, 0);
+    assert.match(stderr, /VITE_ENABLE_UPDATER is true but VITE_LICENSE_SERVER_URL is not set/);
+  });
+});
 
-    const override = JSON.parse(readFileSync(outputPath(runnerTemp), "utf8"));
-    assert.deepEqual(override.plugins.updater.endpoints, []);
-  } finally {
-    rmSync(runnerTemp, { recursive: true, force: true });
+test("rejects a server URL that is not a bare HTTPS origin", () => {
+  const cases = [
+    { value: "http://license.example.com", expected: /must use HTTPS/ },
+    { value: "not a url", expected: /is not a valid URL/ },
+    { value: "https://license.example.com/api", expected: /must contain only the origin/ },
+    { value: `${SERVER_URL}/?platform=x`, expected: /must contain only the origin/ }
+  ];
+  for (const { value, expected } of cases) {
+    withOverride({ ...BASE_ENV, VITE_LICENSE_SERVER_URL: value }, ({ status, stderr }) => {
+      assert.notEqual(status, 0, `${value} should be rejected`);
+      assert.match(stderr, expected);
+    });
   }
 });
 
 test("rejects missing environment values", () => {
-  const runnerTemp = mkdtempSync(join(tmpdir(), "tauri-base-config-"));
-  try {
-    const base = {
-      RELEASE_VERSION: "0.1.0",
-      TAURI_SIGNING_PUBLIC_KEY: PUBLIC_KEY,
-      TAURI_UPDATER_ENDPOINT: ENDPOINT,
-      RUNNER_TEMP: runnerTemp
-    };
-    for (const name of ["RELEASE_VERSION", "TAURI_SIGNING_PUBLIC_KEY", "RUNNER_TEMP"]) {
-      const env = { ...base };
-      delete env[name];
-      const result = runScript(env);
-      assert.notEqual(result.status, 0, `${name} should be required`);
-      assert.match(result.stderr, /Missing required environment variable/);
-    }
-  } finally {
-    rmSync(runnerTemp, { recursive: true, force: true });
+  for (const name of ["RELEASE_VERSION", "TAURI_SIGNING_PUBLIC_KEY", "RUNNER_TEMP"]) {
+    withOverride({ ...BASE_ENV, [name]: undefined }, ({ status, stderr }) => {
+      assert.notEqual(status, 0, `${name} should be required`);
+      assert.match(stderr, /Missing required environment variable/);
+    });
   }
 });
 
 test("rejects malformed semantic versions", () => {
-  const runnerTemp = mkdtempSync(join(tmpdir(), "tauri-base-config-"));
-  try {
-    for (const version of ["not-a-version", "1.2", "1.2.3.4", "v", "1.02.3"]) {
-      const { status, stderr } = runScript({
-        RELEASE_VERSION: version,
-        TAURI_SIGNING_PUBLIC_KEY: PUBLIC_KEY,
-        TAURI_UPDATER_ENDPOINT: ENDPOINT,
-        RUNNER_TEMP: runnerTemp
-      });
+  for (const version of ["not-a-version", "1.2", "1.2.3.4", "v", "1.02.3"]) {
+    withOverride({ ...BASE_ENV, RELEASE_VERSION: version }, ({ status, stderr }) => {
       assert.notEqual(status, 0, `${version} should be rejected`);
       assert.match(stderr, /Invalid semantic version/);
-    }
-  } finally {
-    rmSync(runnerTemp, { recursive: true, force: true });
-  }
-});
-
-test("rejects non-HTTPS endpoints and endpoints without the {{target}} placeholder", () => {
-  const runnerTemp = mkdtempSync(join(tmpdir(), "tauri-base-config-"));
-  try {
-    const httpResult = runScript({
-      RELEASE_VERSION: "0.1.0",
-      TAURI_SIGNING_PUBLIC_KEY: PUBLIC_KEY,
-      TAURI_UPDATER_ENDPOINT: "http://updates.example.com/latest?platform={{target}}",
-      RUNNER_TEMP: runnerTemp
     });
-    assert.notEqual(httpResult.status, 0);
-    assert.match(httpResult.stderr, /must use HTTPS/);
-
-    const noPlaceholderResult = runScript({
-      RELEASE_VERSION: "0.1.0",
-      TAURI_SIGNING_PUBLIC_KEY: PUBLIC_KEY,
-      TAURI_UPDATER_ENDPOINT: "https://updates.example.com/latest",
-      RUNNER_TEMP: runnerTemp
-    });
-    assert.notEqual(noPlaceholderResult.status, 0);
-    assert.match(noPlaceholderResult.stderr, /must contain the \{\{target\}\} placeholder/);
-
-    const invalidUrlResult = runScript({
-      RELEASE_VERSION: "0.1.0",
-      TAURI_SIGNING_PUBLIC_KEY: PUBLIC_KEY,
-      TAURI_UPDATER_ENDPOINT: "not a url",
-      RUNNER_TEMP: runnerTemp
-    });
-    assert.notEqual(invalidUrlResult.status, 0);
-    assert.match(invalidUrlResult.stderr, /not a valid URL/);
-  } finally {
-    rmSync(runnerTemp, { recursive: true, force: true });
   }
 });
 
 test("never writes the override when validation fails", () => {
-  const runnerTemp = mkdtempSync(join(tmpdir(), "tauri-base-config-"));
-  try {
-    const { status } = runScript({
-      RELEASE_VERSION: "bogus",
-      TAURI_SIGNING_PUBLIC_KEY: PUBLIC_KEY,
-      TAURI_UPDATER_ENDPOINT: ENDPOINT,
-      RUNNER_TEMP: runnerTemp
-    });
+  withOverride({ ...BASE_ENV, RELEASE_VERSION: "bogus" }, ({ status }, runnerTemp) => {
     assert.notEqual(status, 0);
     assert.throws(() => readFileSync(outputPath(runnerTemp), "utf8"));
-  } finally {
-    rmSync(runnerTemp, { recursive: true, force: true });
-  }
+  });
 });

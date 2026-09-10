@@ -1,4 +1,4 @@
-# BVideo `.bveffect` 格式规范
+# BFrame `.bveffect` 格式规范
 
 > 编辑器 schemaVersion 27 已统一使用 Composition 片段，旧场景轨道迁移为背景动效，支持独立背景及图片／视频素材槽。本文的 `.bveffect` v1–v6 外部格式和签名不变，包中的 `effects`、`sceneLayers[].effectId` 在服务边界适配为编辑器 Composition 定义。素材槽、Three.js 和 Canvas 场景目前仅由内置定义提供；导入包仍是经过校验的声明式数据，不允许加载 JavaScript、CSS 代码或任意 Three.js 模块。
 

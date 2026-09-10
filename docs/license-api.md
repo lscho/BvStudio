@@ -36,7 +36,7 @@ EdgeKV 命名空间
 - 签名输入为规范化串（`edge/license-core.mjs` 的 `canonicalLicenseString`，客户端在 `src/services/license.ts` 有同一实现）：
 
 ```
-bvideo-license-v1\n{ts}\n{isVip}\n{planName}\n{expireAt}\n{activatedAt}\n{licenseKey}
+bframe-license-v1\n{ts}\n{isVip}\n{planName}\n{expireAt}\n{activatedAt}\n{licenseKey}
 ```
 
 - `ts` 与服务器时间偏差超过 5 分钟视为过期，客户端验签失败。
@@ -68,7 +68,7 @@ bvideo-license-v1\n{ts}\n{isVip}\n{planName}\n{expireAt}\n{activatedAt}\n{licens
 
 | 变量 | 说明 |
 | --- | --- |
-| `VITE_LICENSE_SERVER_URL` | 边缘函数绑定的 API 域名，如 `https://license.example.com` |
+| `VITE_LICENSE_SERVER_URL` | 边缘函数绑定的 API 域名，**只填 origin**（如 `https://license.example.com`，不带路径、查询串或结尾斜杠）。桌面更新端点也由它派生，见 [`updater-api.md`](updater-api.md) |
 | `VITE_LICENSE_RESPONSE_KEY` | 响应 HMAC 密钥，须与 `edge/config.js` 的 `HMAC_SECRET` 一致 |
 
 - 两者均未配置时客户端保持纯本地缓存模式（仅开发预览；发布构建必须配置）。

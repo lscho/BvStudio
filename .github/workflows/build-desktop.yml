@@ -30,7 +30,7 @@ jobs:
           - name: Windows x64
             runner: windows-2025
             target: x86_64-pc-windows-msvc
-            artifact: tauri-base-windows-x64
+            artifact: bframe-studio-windows-x64
             bundles: nsis
             media_arch: x64
             upload_path: |
@@ -39,7 +39,7 @@ jobs:
           - name: Windows ARM64
             runner: windows-11-arm
             target: aarch64-pc-windows-msvc
-            artifact: tauri-base-windows-arm64
+            artifact: bframe-studio-windows-arm64
             bundles: nsis
             media_arch: x64
             upload_path: |
@@ -48,7 +48,7 @@ jobs:
           - name: macOS Intel
             runner: macos-15-intel
             target: x86_64-apple-darwin
-            artifact: tauri-base-macos-x64
+            artifact: bframe-studio-macos-x64
             updater_arch: x64
             bundles: app,dmg
             media_arch: x64
@@ -59,7 +59,7 @@ jobs:
           - name: macOS Apple Silicon
             runner: macos-15
             target: aarch64-apple-darwin
-            artifact: tauri-base-macos-arm64
+            artifact: bframe-studio-macos-arm64
             updater_arch: arm64
             bundles: app,dmg
             media_arch: arm64
@@ -70,7 +70,7 @@ jobs:
           - name: Linux x64
             runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-            artifact: tauri-base-linux-x64
+            artifact: bframe-studio-linux-x64
             bundles: appimage,deb
             media_arch: x64
             upload_path: |
@@ -126,7 +126,8 @@ jobs:
         shell: bash
         env:
           RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
-          TAURI_UPDATER_ENDPOINT: ${{ vars.TAURI_UPDATER_ENDPOINT }}
+          VITE_ENABLE_UPDATER: ${{ vars.VITE_ENABLE_UPDATER == 'true' && 'true' || 'false' }}
+          VITE_LICENSE_SERVER_URL: ${{ vars.VITE_LICENSE_SERVER_URL }}
           TAURI_SIGNING_PUBLIC_KEY: ${{ vars.TAURI_SIGNING_PUBLIC_KEY || secrets.TAURI_SIGNING_PUBLIC_KEY }}
         run: node scripts/write-tauri-release-config.mjs
 
@@ -144,7 +145,7 @@ jobs:
           fi
 
           certificate_path="$RUNNER_TEMP/developer-id.p12"
-          keychain_path="$RUNNER_TEMP/tauri-base-signing.keychain-db"
+          keychain_path="$RUNNER_TEMP/bframe-studio-signing.keychain-db"
           keychain_password="$(openssl rand -base64 32)"
 
           printf '%s' "$APPLE_CERTIFICATE" | openssl base64 -d -A -out "$certificate_path"
@@ -187,19 +188,23 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         env:
-          VITE_ENABLE_UPDATER: ${{ vars.TAURI_UPDATER_ENDPOINT != '' && 'true' || 'false' }}
+          VITE_ENABLE_UPDATER: ${{ vars.VITE_ENABLE_UPDATER == 'true' && 'true' || 'false' }}
+          VITE_LICENSE_SERVER_URL: ${{ vars.VITE_LICENSE_SERVER_URL }}
+          VITE_LICENSE_RESPONSE_KEY: ${{ vars.VITE_LICENSE_RESPONSE_KEY || secrets.VITE_LICENSE_RESPONSE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$RUNNER_TEMP/tauri-base-release/tauri.release.conf.json"
+        run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$RUNNER_TEMP/bframe-studio-release/tauri.release.conf.json"
 
       - name: Build Linux bundles
         if: runner.os == 'Linux'
         shell: bash
         env:
-          VITE_ENABLE_UPDATER: ${{ vars.TAURI_UPDATER_ENDPOINT != '' && 'true' || 'false' }}
+          VITE_ENABLE_UPDATER: ${{ vars.VITE_ENABLE_UPDATER == 'true' && 'true' || 'false' }}
+          VITE_LICENSE_SERVER_URL: ${{ vars.VITE_LICENSE_SERVER_URL }}
+          VITE_LICENSE_RESPONSE_KEY: ${{ vars.VITE_LICENSE_RESPONSE_KEY || secrets.VITE_LICENSE_RESPONSE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$RUNNER_TEMP/tauri-base-release/tauri.release.conf.json"
+        run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$RUNNER_TEMP/bframe-studio-release/tauri.release.conf.json"
 
       - name: Prepare Linux updater
         if: runner.os == 'Linux'
@@ -213,14 +218,16 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         env:
-          VITE_ENABLE_UPDATER: ${{ vars.TAURI_UPDATER_ENDPOINT != '' && 'true' || 'false' }}
+          VITE_ENABLE_UPDATER: ${{ vars.VITE_ENABLE_UPDATER == 'true' && 'true' || 'false' }}
+          VITE_LICENSE_SERVER_URL: ${{ vars.VITE_LICENSE_SERVER_URL }}
+          VITE_LICENSE_RESPONSE_KEY: ${{ vars.VITE_LICENSE_RESPONSE_KEY || secrets.VITE_LICENSE_RESPONSE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
           APPLE_API_ISSUER: ${{ vars.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ vars.APPLE_API_KEY }}
           APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
-        run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$RUNNER_TEMP/tauri-base-release/tauri.release.conf.json"
+        run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$RUNNER_TEMP/bframe-studio-release/tauri.release.conf.json"
 
       - name: Add architecture suffix to macOS updater
         if: runner.os == 'macOS'
@@ -279,7 +286,7 @@ jobs:
       - name: Download desktop bundles
         uses: actions/download-artifact@v4
         with:
-          pattern: tauri-base-*
+          pattern: bframe-studio-*
           path: release-artifacts
 
       - name: Validate bundles and create desktop release manifest
@@ -294,7 +301,7 @@ jobs:
       - name: Upload desktop release manifest
         uses: actions/upload-artifact@v4
         with:
-          name: tauri-base-desktop-release-manifest
+          name: bframe-studio-desktop-release-manifest
           path: release-manifest/desktop-release-manifest.json
           if-no-files-found: error
           retention-days: 14

@@ -32,8 +32,8 @@ export const DEFAULT_VIP_STATUS: VipStatus = {
   licenseKey: null
 };
 
-const BROWSER_DEVICE_ID_KEY = "bvideo:hardware-device-id";
-const VIP_STATUS_STORAGE_KEY = "bvideo:vip-status";
+const BROWSER_DEVICE_ID_KEY = "bframe-studio:hardware-device-id";
+const VIP_STATUS_STORAGE_KEY = "bframe-studio:vip-status";
 
 /**
  * 校验 VIP 状态当前是否依然在有效期内。
@@ -188,7 +188,7 @@ function licenseServerConfig(): { baseUrl: string; responseKey: string } | null 
 const OFFLINE_GRACE_MS = 3 * 24 * 60 * 60 * 1000;
 
 /** 与 edge/license-core.mjs 的 canonicalLicenseString 保持一致，调整需两侧同步。 */
-const LICENSE_SIGNATURE_CONTEXT = "bvideo-license-v1";
+const LICENSE_SIGNATURE_CONTEXT = "bframe-license-v1";
 const LICENSE_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
 
 const vipStatusSchema = z.object({

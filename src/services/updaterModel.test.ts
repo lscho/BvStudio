@@ -45,8 +45,8 @@ describe("positiveInteger", () => {
 
 describe("fileNameFromUrl", () => {
   it("derives the file name from a valid update URL", () => {
-    expect(fileNameFromUrl("https://updates.example.com/releases/tauri-base_0.2.0_x64-setup.exe")).toBe(
-      "tauri-base_0.2.0_x64-setup.exe"
+    expect(fileNameFromUrl("https://updates.example.com/releases/bframe-studio_0.2.0_x64-setup.exe")).toBe(
+      "bframe-studio_0.2.0_x64-setup.exe"
     );
     expect(fileNameFromUrl("https://updates.example.com/a/b/%E6%9B%B4%E6%96%B0.app.tar.gz")).toBe(
       "更新.app.tar.gz"
@@ -77,7 +77,7 @@ describe("parseDesktopUpdateInfo", () => {
         body: "  修复若干问题  ",
         date: "  2026-01-15T08:00:00Z  ",
         rawJson: {
-          fileName: "  tauri-base_0.2.0_aarch64_arm64.app.tar.gz  ",
+          fileName: "  bframe-studio_0.2.0_aarch64_arm64.app.tar.gz  ",
           fileSize: 12345,
           isForceUpdate: true,
           url: "https://updates.example.com/x"
@@ -90,7 +90,7 @@ describe("parseDesktopUpdateInfo", () => {
       currentVersion: "0.1.0",
       version: "0.2.0",
       platform: "macos-arm",
-      fileName: "tauri-base_0.2.0_aarch64_arm64.app.tar.gz",
+      fileName: "bframe-studio_0.2.0_aarch64_arm64.app.tar.gz",
       fileSize: 12345,
       notes: "修复若干问题",
       publishTime: "2026-01-15T08:00:00Z",
@@ -123,24 +123,24 @@ describe("parseDesktopUpdateInfo", () => {
         rawJson: {
           fileSize: "100",
           isForceUpdate: "true",
-          url: "https://updates.example.com/tauri-base_0.2.0_x64-setup.exe"
+          url: "https://updates.example.com/bframe-studio_0.2.0_x64-setup.exe"
         }
       }),
       "windows-x86"
     );
     expect(info.fileSize).toBeNull();
     expect(info.isForceUpdate).toBe(false);
-    expect(info.fileName).toBe("tauri-base_0.2.0_x64-setup.exe");
+    expect(info.fileName).toBe("bframe-studio_0.2.0_x64-setup.exe");
   });
 
   it("derives a fallback file name when fileName is missing", () => {
     const withUrl = parseDesktopUpdateInfo(
       rawUpdate({
-        rawJson: { url: "https://updates.example.com/downloads/tauri-base_0.2.0_arm64.dmg" }
+        rawJson: { url: "https://updates.example.com/downloads/bframe-studio_0.2.0_arm64.dmg" }
       }),
       "macos-arm"
     );
-    expect(withUrl.fileName).toBe("tauri-base_0.2.0_arm64.dmg");
+    expect(withUrl.fileName).toBe("bframe-studio_0.2.0_arm64.dmg");
 
     const withoutUrl = parseDesktopUpdateInfo(rawUpdate(), "macos-arm");
     expect(withoutUrl.fileName).toBe("更新包");

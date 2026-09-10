@@ -7,7 +7,7 @@ import { prepareLinuxUpdater } from "./prepare-linux-updater.mjs";
 
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "bvideo-linux-updater-"));
-  const appImage = join(directory, "BVideo Studio_0.1.4_amd64.AppImage");
+  const appImage = join(directory, "BFrame Studio_0.1.4_amd64.AppImage");
   writeFileSync(appImage, "appimage bytes", "utf8");
   return { directory, appImage, updater: `${appImage}.tar.gz`, signature: `${appImage}.tar.gz.sig` };
 }

@@ -9,7 +9,7 @@
  * canonicalLicenseString 必须保持一致，任何调整需两侧同步。
  */
 
-export const SIGNATURE_CONTEXT = "bvideo-license-v1";
+export const SIGNATURE_CONTEXT = "bframe-license-v1";
 /** 签名时间戳容忍窗口，防止旧响应重放 */
 export const SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
 

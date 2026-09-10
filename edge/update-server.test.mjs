@@ -5,9 +5,9 @@ import { handleUpdateRequest, isUpdateRoute } from "./update-server.mjs";
 const VALID_RECORD = {
   platform: "macos-arm",
   version: "0.4.0",
-  url: "https://github.com/example/tauri-base/releases/download/v0.4.0/tauri-base_0.4.0_aarch64_arm64.app.tar.gz",
+  url: "https://github.com/example/bframe-studio/releases/download/v0.4.0/bframe-studio_0.4.0_aarch64_arm64.app.tar.gz",
   signature: "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZQ==",
-  fileName: "tauri-base_0.4.0_aarch64_arm64.app.tar.gz",
+  fileName: "bframe-studio_0.4.0_aarch64_arm64.app.tar.gz",
   fileSize: 42354176,
   notes: "修复若干问题",
   pub_date: "2026-01-15T08:00:00Z",

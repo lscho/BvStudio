@@ -1,10 +1,21 @@
 import catalog from "@/domain/shotcraftLibrary/audioCatalog.json";
 import type { MediaAsset } from "@/domain/project";
+import { canUseSound, soundTier, soundTierMap } from "@/domain/soundAccess";
 import { saveRecordedAudio } from "@/services/audio";
 import { isDesktopRuntime } from "@/services/runtime";
 import { localMediaUrl } from "@/services/media";
 
 export const SHOTCRAFT_AUDIO = catalog;
+const SHOTCRAFT_AUDIO_TIERS = soundTierMap(SHOTCRAFT_AUDIO);
+
+export function canUseShotcraftAudio(id: string, isPro: boolean): boolean {
+  const item = SHOTCRAFT_AUDIO.find((entry) => entry.id === id);
+  return Boolean(item && canUseSound(soundTier(item, SHOTCRAFT_AUDIO_TIERS), isPro));
+}
+
+export function shotcraftAudioForAccess(isPro: boolean) {
+  return SHOTCRAFT_AUDIO.filter((item) => canUseShotcraftAudio(item.id, isPro));
+}
 const cached = new Map<string, MediaAsset>();
 let previewAudio: HTMLAudioElement | undefined;
 let previewGeneration = 0;

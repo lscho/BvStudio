@@ -7,7 +7,7 @@ import type { MusicAnalysis } from "@/domain/musicBeats";
 import type { MediaAsset } from "@/domain/project";
 import { parseStoryboardCues, type StoryboardOptions } from "@/domain/storyboard";
 import { analyseMusicAsset } from "@/services/musicBeats";
-import { loadShotcraftAudio, SHOTCRAFT_AUDIO } from "@/services/shotcraftAudio";
+import { canUseShotcraftAudio, loadShotcraftAudio, shotcraftAudioForAccess } from "@/services/shotcraftAudio";
 import type { AiMotionMatch, AiMotionSelection, AiTimedScript } from "@/services/ai/schema";
 
 export interface SubtitleStoryboardRequest {
@@ -40,9 +40,10 @@ interface Props {
   onNeedSettings: () => void;
   subtitleCount: number;
   durationSeconds: number;
+  isPro?: boolean;
 }
 
-export function SubtitleStoryboardDialog({ open, assets, onOpenChange, onGenerate, onApply, onNeedSettings, subtitleCount, durationSeconds }: Props) {
+export function SubtitleStoryboardDialog({ open, assets, onOpenChange, onGenerate, onApply, onNeedSettings, subtitleCount, durationSeconds, isPro = false }: Props) {
   const [mode, setMode] = useState<StoryboardOptions["mode"]>("auto");
   const [prompt, setPrompt] = useState("");
   const [selectedAssets, setSelectedAssets] = useState<string[]>([]);
@@ -62,7 +63,7 @@ export function SubtitleStoryboardDialog({ open, assets, onOpenChange, onGenerat
   const mounted = useRef(true);
   const visualAssets = assets.filter((asset) => (asset.kind === "image" || asset.kind === "video") && !asset.missing);
   const selectedImageCount = visualAssets.filter((asset) => asset.kind === "image" && selectedAssets.includes(asset.id)).length;
-  const musicOptions = [{ value: "none", label: "不使用音乐" }, ...assets.filter((asset) => asset.kind === "audio" && !asset.missing).map((asset) => ({ value: asset.id, label: asset.name })), ...SHOTCRAFT_AUDIO.filter((asset) => asset.kind === "music" && !assets.some((item) => item.id === asset.id)).map((asset) => ({ value: asset.id, label: asset.name }))];
+  const musicOptions = [{ value: "none", label: "不使用音乐" }, ...assets.filter((asset) => asset.kind === "audio" && !asset.missing && (!asset.id.startsWith("shotcraft-audio:") || canUseShotcraftAudio(asset.id, isPro))).map((asset) => ({ value: asset.id, label: asset.name })), ...shotcraftAudioForAccess(isPro).filter((asset) => asset.kind === "music" && !assets.some((item) => item.id === asset.id)).map((asset) => ({ value: asset.id, label: asset.name }))];
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; controller.current?.abort(); }; }, []);
   useEffect(() => {
@@ -81,10 +82,11 @@ export function SubtitleStoryboardDialog({ open, assets, onOpenChange, onGenerat
       : visualAssets.filter((asset, index, all) => asset.kind !== "image" || all.slice(0, index).filter((candidate) => candidate.kind === "image").length < 12).slice(0, 24).map((asset) => asset.id));
   }, [open, assets]);
   useEffect(() => { setAnalysis(undefined); }, [musicId]);
-  useEffect(() => { setPreview(undefined); setPreviewRequest(undefined); setError(""); }, [mode, prompt, selectedAssets, musicId, musicOffset, musicVolume, beatSync, soundEnabled, useVision]);
+  useEffect(() => { setPreview(undefined); setPreviewRequest(undefined); setError(""); }, [mode, prompt, selectedAssets, musicId, musicOffset, musicVolume, beatSync, soundEnabled, useVision, isPro]);
 
   async function selectedMusic(signal: AbortSignal) {
     if (musicId === "none") return undefined;
+    if (musicId.startsWith("shotcraft-audio:") && !canUseShotcraftAudio(musicId, isPro)) throw new Error("当前会员无权使用所选音乐，请更换音乐或升级 Pro");
     return assets.find((asset) => asset.id === musicId && asset.kind === "audio" && !asset.missing) ?? loadShotcraftAudio(musicId, signal);
   }
 

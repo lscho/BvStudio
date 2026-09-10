@@ -34,10 +34,10 @@ describe("project session persistence", () => {
     project.assets.push({ id: "asset", name: "source.mp4", kind: "video", durationUs: 1_000_000, sourcePath: "/source.mp4", objectUrl: "blob:temporary", missing: true });
     expect(projectHasRecoverableContent(project)).toBe(true);
 
-    await writeRecoverySnapshot(project, "/project.bvideo.json");
+    await writeRecoverySnapshot(project, "/project.bframe.json");
     const recovery = await readRecoverySnapshot();
 
-    expect(recovery).toMatchObject({ projectPath: "/project.bvideo.json" });
+    expect(recovery).toMatchObject({ projectPath: "/project.bframe.json" });
     expect(recovery?.projectJson).not.toContain("blob:temporary");
     expect(recovery?.projectJson).not.toContain("missing");
   });
@@ -46,14 +46,14 @@ describe("project session persistence", () => {
     const project = createEmptyProject();
     for (let index = 0; index < 12; index += 1) {
       project.name = `Project ${index}`;
-      await rememberRecentProject(`/project-${index}.bvideo.json`, project);
+      await rememberRecentProject(`/project-${index}.bframe.json`, project);
     }
     project.name = "Most recent";
-    await rememberRecentProject("/project-5.bvideo.json", project);
+    await rememberRecentProject("/project-5.bframe.json", project);
 
     const recent = await readRecentProjects();
     expect(recent).toHaveLength(10);
-    expect(recent[0]).toMatchObject({ path: "/project-5.bvideo.json", name: "Most recent" });
+    expect(recent[0]).toMatchObject({ path: "/project-5.bframe.json", name: "Most recent" });
     expect(new Set(recent.map((entry) => entry.path)).size).toBe(10);
   });
 
@@ -115,7 +115,7 @@ describe("project session persistence", () => {
     const project = createEmptyProject();
     project.name = "Recovered";
     project.assets.push({ id: "asset", name: "source.mp4", kind: "video", durationUs: 1_000_000, sourcePath: "/source.mp4" });
-    const restored = await restoreRecoverySnapshot({ projectJson: JSON.stringify(project), projectPath: "/recovered.bvideo.json", savedAt: new Date().toISOString() }, {
+    const restored = await restoreRecoverySnapshot({ projectJson: JSON.stringify(project), projectPath: "/recovered.bframe.json", savedAt: new Date().toISOString() }, {
       desktop: true,
       proxyEnabled: false,
       proxyHeight: 720,

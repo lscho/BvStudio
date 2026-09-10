@@ -1,13 +1,31 @@
 import { z } from "zod";
+import { canUseEffect, effectTier, effectTierMap } from "@/domain/effectAccess";
+import { BUILTIN_EFFECTS, compositionById } from "@/domain/effects";
 import type { MediaAsset } from "@/domain/project";
 import { SHOTCRAFT_SHOTS, SHOTCRAFT_TRANSITIONS, defaultShotcraftSettings } from "@/domain/shotcraft";
 import { libraryShot } from "@/domain/shotcraftLibrary/catalog";
 import { shotcraftAdaptationIssue, shotcraftContentGuidance, shotcraftContentIssues, shotcraftCopyGuide } from "@/domain/shotcraftLibrary/aiPolicy";
 import { SHOTCRAFT_ANCHORS, shotcraftPlanSchema, validateShotcraftPlan } from "@/domain/shotcraftPlan";
+import type { ShotcraftPlan } from "@/domain/shotcraftPlan";
 import type { MusicAnalysis } from "@/domain/musicBeats";
+import { canUseSound, soundTier, soundTierMap } from "@/domain/soundAccess";
 import audioCatalog from "@/domain/shotcraftLibrary/audioCatalog.json";
 import { browserApiKey, requestValidatedStructured, type AiRequestProgress } from "@/services/ai/provider";
 import type { AiProviderConfig } from "@/services/ai/provider";
+
+export function shotcraftPlanAccessIssue(plan: ShotcraftPlan, isPro: boolean): string | undefined {
+  const effectTiers = effectTierMap(BUILTIN_EFFECTS);
+  const soundTiers = soundTierMap(audioCatalog);
+  for (const scene of plan.scenes) {
+    const effect = compositionById(scene.shotId);
+    if (!canUseEffect(effectTier(effect, effectTiers), isPro)) return `当前会员无权使用镜头 ${scene.shotId}`;
+    for (const sound of scene.sounds) {
+      const definition = audioCatalog.find((item) => item.id === sound.soundId && item.kind === "sound" && item.autoEligible);
+      if (!definition || !canUseSound(soundTier(definition, soundTiers), isPro)) return `当前会员无权使用镜头音效 ${sound.soundId}`;
+    }
+  }
+  return undefined;
+}
 
 export async function mediaAssetVisionThumbnail(asset: MediaAsset, signal?: AbortSignal) {
   signal?.throwIfAborted();
@@ -25,13 +43,25 @@ export async function mediaAssetVisionThumbnail(asset: MediaAsset, signal?: Abor
   } finally { image.close(); }
 }
 
-export async function generateShotcraftPlan(config: AiProviderConfig, input: { brief: string; durationSeconds: number; assets: readonly MediaAsset[]; analysis?: MusicAnalysis; musicSourceInUs?: number; useVision: boolean; soundEnabled: boolean }, signal?: AbortSignal, onProgress?: (progress: AiRequestProgress) => void) {
+export async function generateShotcraftPlan(config: AiProviderConfig, input: { brief: string; durationSeconds: number; assets: readonly MediaAsset[]; analysis?: MusicAnalysis; musicSourceInUs?: number; useVision: boolean; soundEnabled: boolean; isPro?: boolean }, signal?: AbortSignal, onProgress?: (progress: AiRequestProgress) => void) {
   const assets = input.assets.filter((asset) => asset.kind === "image" && !asset.missing).slice(0, 12);
   const images: string[] = [];
   if (input.useVision) {
     for (const asset of assets) { onProgress?.({ phase: "connecting", message: `正在分析图片 ${images.length + 1}/${assets.length}`, receivedCharacters: 0 }); images.push(await mediaAssetVisionThumbnail(asset, signal)); }
   }
-  const eligible = SHOTCRAFT_SHOTS.filter((shot) => !shotcraftAdaptationIssue(shot.id));
+  const effectTiers = effectTierMap(BUILTIN_EFFECTS);
+  const eligible = SHOTCRAFT_SHOTS.filter((shot) => (
+    !shotcraftAdaptationIssue(shot.id)
+    && canUseEffect(effectTier(compositionById(shot.id), effectTiers), input.isPro === true)
+  ));
+  if (!eligible.length) throw new Error("当前会员没有可用的 AI 镜头，请升级 Pro 后再编排");
+  const soundTiers = soundTierMap(audioCatalog);
+  const availableSounds = audioCatalog.filter((sound) => (
+    sound.kind === "sound"
+    && sound.autoEligible
+    && canUseSound(soundTier(sound, soundTiers), input.isPro === true)
+  ));
+  const availableSoundIds = new Set(availableSounds.map((sound) => sound.id));
   const selectionSchema = z.object({ shotIds: z.array(z.enum(eligible.map((shot) => shot.id))).min(1).max(24) }).strict();
   const materialSummary = assets.map((asset, index) => ({ index: index + 1, id: asset.id, name: asset.name, width: asset.width, height: asset.height }));
   const selection = await requestValidatedStructured({
@@ -52,7 +82,7 @@ export async function generateShotcraftPlan(config: AiProviderConfig, input: { b
     user: JSON.stringify({ brief: input.brief, durationSeconds: input.durationSeconds, images: materialSummary, transitions: SHOTCRAFT_TRANSITIONS,
       contentRules: "目录 guidance、copy.role/required/maxLength 是硬约束。真实界面必须给清晰操作结果，不能把整页缩成小卡片当证据。所有绑定图片的镜头必须填写 text：这是可见说明，reason 仅供编辑者阅读。原生 blur-slide/before-after/basic-3d 的 text 保留原语义，cursor-flyover 可用四句以｜分隔的说明依次对应四个焦点；其他镜头 text 是独立底部说明，最多两行，纯字卡留空以免重复。禁止编造界面、把阶段里程碑当多轨编辑、把音效库当音乐分析。copy 必填字段不可清空。所有必须展示的能力要落在真实截图及可见文字里。声音列表是可用素材，每镜最多 4 条，并非全片最多 4 条；圈注 draw、品牌 settled 等明显动作应有对应拟音。可用机械 click 与 marker，禁止合成系统反馈音。镜头内冲击与闪白转场合计最多 3 处，优先直接切换。",
       music: input.analysis ? { bpm: input.analysis.bpm, reliableGrid: input.analysis.reliableGrid, sourceInUs: input.musicSourceInUs ?? 0, durationSeconds: input.analysis.durationUs / 1_000_000, energy: input.analysis.energy.filter((entry, index) => entry.timeUs >= (input.musicSourceInUs ?? 0) && entry.timeUs <= (input.musicSourceInUs ?? 0) + input.durationSeconds * 1_000_000 && index % 5 === 0), strongHits: [...input.analysis.hits].filter((hit) => hit.timeUs >= (input.musicSourceInUs ?? 0) && hit.timeUs <= (input.musicSourceInUs ?? 0) + input.durationSeconds * 1_000_000 && (hit.kind === "kick" || hit.kind === "snare")).sort((a, b) => b.strength - a.strength).slice(0, 20) } : null,
-      sounds: input.soundEnabled ? audioCatalog.filter((item) => item.kind === "sound" && item.autoEligible).map((item) => ({ id: item.id, category: item.category, durationSeconds: item.durationUs / 1_000_000 })) : [], catalog }),
+      sounds: input.soundEnabled ? availableSounds.map((item) => ({ id: item.id, category: item.category, durationSeconds: item.durationUs / 1_000_000 })) : [], catalog }),
     images, parse: (value) => {
       const plan = shotcraftPlanSchema.parse(value);
       const issues: z.core.$ZodIssue[] = [];
@@ -60,8 +90,11 @@ export async function generateShotcraftPlan(config: AiProviderConfig, input: { b
         if (!selectedIds.has(scene.shotId)) issues.push({ code: "custom", path: ["scenes", index, "shotId"], message: "请选择候选目录中的镜头" });
         if (plan.scenes.findIndex((item) => item.shotId === scene.shotId) !== index) issues.push({ code: "custom", path: ["scenes", index, "shotId"], message: `第 ${index + 1} 镜重复使用 ${scene.shotId}，请合并内容或选择其他候选镜头` });
         if (!input.soundEnabled && scene.sounds.length) issues.push({ code: "custom", path: ["scenes", index, "sounds"], message: "已关闭音效，请清空sounds" });
+        for (const [soundIndex, sound] of scene.sounds.entries()) if (!availableSoundIds.has(sound.soundId)) issues.push({ code: "custom", path: ["scenes", index, "sounds", soundIndex, "soundId"], message: "当前会员无权使用所选音效" });
         for (const message of shotcraftContentIssues(scene)) issues.push({ code: "custom", path: ["scenes", index], message });
       }
+      const accessIssue = shotcraftPlanAccessIssue(plan, input.isPro === true);
+      if (accessIssue) issues.push({ code: "custom", path: ["scenes"], message: accessIssue });
       try { validateShotcraftPlan(plan, assets); }
       catch (error) { if (error instanceof z.ZodError) issues.push(...error.issues); else throw error; }
       if (Math.abs(plan.scenes.reduce((sum, scene) => sum + scene.durationSeconds, 0) - input.durationSeconds) > Math.max(2, input.durationSeconds * 0.15)) issues.push({ code: "custom", path: ["scenes"], message: "分镜总时长与目标不符，请重新分配时长" });

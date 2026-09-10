@@ -13,7 +13,7 @@ import { basename, dirname, join, resolve } from "node:path";
 const PLATFORM_ARTIFACTS = [
   {
     platform: "windows-x86",
-    artifactDirectory: "tauri-base-windows-x64",
+    artifactDirectory: "bframe-studio-windows-x64",
     installerSuffix: ".exe",
     updaterSuffix: ".exe",
     updaterUsesInstaller: true,
@@ -21,7 +21,7 @@ const PLATFORM_ARTIFACTS = [
   },
   {
     platform: "windows-arm",
-    artifactDirectory: "tauri-base-windows-arm64",
+    artifactDirectory: "bframe-studio-windows-arm64",
     installerSuffix: ".exe",
     updaterSuffix: ".exe",
     updaterUsesInstaller: true,
@@ -29,7 +29,7 @@ const PLATFORM_ARTIFACTS = [
   },
   {
     platform: "macos-x86",
-    artifactDirectory: "tauri-base-macos-x64",
+    artifactDirectory: "bframe-studio-macos-x64",
     installerSuffix: ".dmg",
     updaterSuffix: ".app.tar.gz",
     updaterUsesInstaller: false,
@@ -37,7 +37,7 @@ const PLATFORM_ARTIFACTS = [
   },
   {
     platform: "macos-arm",
-    artifactDirectory: "tauri-base-macos-arm64",
+    artifactDirectory: "bframe-studio-macos-arm64",
     installerSuffix: ".dmg",
     updaterSuffix: ".app.tar.gz",
     updaterUsesInstaller: false,
@@ -45,7 +45,7 @@ const PLATFORM_ARTIFACTS = [
   },
   {
     platform: "linux-x86",
-    artifactDirectory: "tauri-base-linux-x64",
+    artifactDirectory: "bframe-studio-linux-x64",
     installerSuffix: ".AppImage",
     updaterSuffix: ".AppImage.tar.gz",
     updaterUsesInstaller: false,

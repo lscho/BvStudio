@@ -16,29 +16,29 @@ const MACOS_ARM_SIGNATURE = "macos-arm-signature";
 const LINUX_SIGNATURE = "linux-x64-signature";
 
 const PLATFORM_FILES = {
-  "tauri-base-windows-x64": [
-    ["tauri-base_0.1.0_x64-setup.exe", "windows-x64-installer-bytes"],
-    ["tauri-base_0.1.0_x64-setup.exe.sig", WINDOWS_SIGNATURE]
+  "bframe-studio-windows-x64": [
+    ["bframe-studio_0.1.0_x64-setup.exe", "windows-x64-installer-bytes"],
+    ["bframe-studio_0.1.0_x64-setup.exe.sig", WINDOWS_SIGNATURE]
   ],
-  "tauri-base-windows-arm64": [
-    ["tauri-base_0.1.0_arm64-setup.exe", "windows-arm64-installer-bytes"],
-    ["tauri-base_0.1.0_arm64-setup.exe.sig", "windows-arm-signature"]
+  "bframe-studio-windows-arm64": [
+    ["bframe-studio_0.1.0_arm64-setup.exe", "windows-arm64-installer-bytes"],
+    ["bframe-studio_0.1.0_arm64-setup.exe.sig", "windows-arm-signature"]
   ],
-  "tauri-base-macos-x64": [
-    ["tauri-base_0.1.0_x64.dmg", "macos-x64-dmg-bytes"],
-    ["tauri-base_0.1.0_aarch64_x64.app.tar.gz", "macos-x64-updater-bytes"],
-    ["tauri-base_0.1.0_aarch64_x64.app.tar.gz.sig", MACOS_X64_SIGNATURE]
+  "bframe-studio-macos-x64": [
+    ["bframe-studio_0.1.0_x64.dmg", "macos-x64-dmg-bytes"],
+    ["bframe-studio_0.1.0_aarch64_x64.app.tar.gz", "macos-x64-updater-bytes"],
+    ["bframe-studio_0.1.0_aarch64_x64.app.tar.gz.sig", MACOS_X64_SIGNATURE]
   ],
-  "tauri-base-macos-arm64": [
-    ["tauri-base_0.1.0_arm64.dmg", "macos-arm64-dmg-bytes"],
-    ["tauri-base_0.1.0_aarch64_arm64.app.tar.gz", "macos-arm64-updater-bytes"],
-    ["tauri-base_0.1.0_aarch64_arm64.app.tar.gz.sig", MACOS_ARM_SIGNATURE]
+  "bframe-studio-macos-arm64": [
+    ["bframe-studio_0.1.0_arm64.dmg", "macos-arm64-dmg-bytes"],
+    ["bframe-studio_0.1.0_aarch64_arm64.app.tar.gz", "macos-arm64-updater-bytes"],
+    ["bframe-studio_0.1.0_aarch64_arm64.app.tar.gz.sig", MACOS_ARM_SIGNATURE]
   ],
-  "tauri-base-linux-x64": [
-    ["tauri-base_0.1.0_amd64.AppImage", "linux-appimage-bytes"],
-    ["tauri-base_0.1.0_amd64.AppImage.tar.gz", "linux-updater-bytes"],
-    ["tauri-base_0.1.0_amd64.AppImage.tar.gz.sig", LINUX_SIGNATURE],
-    ["tauri-base_0.1.0_amd64.deb", "linux-deb-bytes"]
+  "bframe-studio-linux-x64": [
+    ["bframe-studio_0.1.0_amd64.AppImage", "linux-appimage-bytes"],
+    ["bframe-studio_0.1.0_amd64.AppImage.tar.gz", "linux-updater-bytes"],
+    ["bframe-studio_0.1.0_amd64.AppImage.tar.gz.sig", LINUX_SIGNATURE],
+    ["bframe-studio_0.1.0_amd64.deb", "linux-deb-bytes"]
   ]
 };
 
@@ -71,14 +71,14 @@ function baseEnv(artifactsDir, manifestPath) {
     RELEASE_ARTIFACTS_DIR: artifactsDir,
     RELEASE_MANIFEST_PATH: manifestPath,
     RELEASE_TAG: "v0.1.0",
-    GITHUB_REPOSITORY: "example/tauri-base",
+    GITHUB_REPOSITORY: "example/bframe-studio",
     GITHUB_SHA: "0123456789abcdef0123456789abcdef01234567",
     PUBLISH_GITHUB_RELEASE: "true"
   };
 }
 
 test("emits the exact schema for a complete five-platform artifact set", () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), "tauri-base-manifest-"));
+  const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
   try {
     const artifactsDir = join(tempRoot, "release-artifacts");
     createArtifactTree(artifactsDir);
@@ -92,7 +92,7 @@ test("emits the exact schema for a complete five-platform artifact set", () => {
     assert.equal(manifest.schemaVersion, 1);
     assert.equal(manifest.version, "0.1.0");
     assert.equal(manifest.tag, "v0.1.0");
-    assert.equal(manifest.repository, "example/tauri-base");
+    assert.equal(manifest.repository, "example/bframe-studio");
     assert.equal(manifest.commitSha, "0123456789abcdef0123456789abcdef01234567");
     assert.ok(Date.parse(manifest.generatedAt) <= Date.now());
 
@@ -101,35 +101,35 @@ test("emits the exact schema for a complete five-platform artifact set", () => {
       ["windows-x86", "windows-arm", "macos-x86", "macos-arm", "linux-x86"]
     );
 
-    const releaseBase = "https://github.com/example/tauri-base/releases/download/v0.1.0";
+    const releaseBase = "https://github.com/example/bframe-studio/releases/download/v0.1.0";
     const byPlatform = Object.fromEntries(manifest.platforms.map((entry) => [entry.platform, entry]));
 
     const windowsX64 = byPlatform["windows-x86"];
-    assert.equal(windowsX64.installer.fileName, "tauri-base_0.1.0_x64-setup.exe");
+    assert.equal(windowsX64.installer.fileName, "bframe-studio_0.1.0_x64-setup.exe");
     assert.equal(windowsX64.installer.fileSize, "windows-x64-installer-bytes".length);
     assert.equal(windowsX64.installer.sha256, sha256Text("windows-x64-installer-bytes"));
-    assert.equal(windowsX64.installer.sourceUrl, `${releaseBase}/tauri-base_0.1.0_x64-setup.exe`);
-    assert.equal(windowsX64.updater.fileName, "tauri-base_0.1.0_x64-setup.exe");
-    assert.equal(windowsX64.updater.signatureFileName, "tauri-base_0.1.0_x64-setup.exe.sig");
+    assert.equal(windowsX64.installer.sourceUrl, `${releaseBase}/bframe-studio_0.1.0_x64-setup.exe`);
+    assert.equal(windowsX64.updater.fileName, "bframe-studio_0.1.0_x64-setup.exe");
+    assert.equal(windowsX64.updater.signatureFileName, "bframe-studio_0.1.0_x64-setup.exe.sig");
     assert.equal(windowsX64.updater.signature, WINDOWS_SIGNATURE);
 
     const macosX64 = byPlatform["macos-x86"];
-    assert.equal(macosX64.installer.fileName, "tauri-base_0.1.0_x64.dmg");
-    assert.equal(macosX64.updater.fileName, "tauri-base_0.1.0_aarch64_x64.app.tar.gz");
+    assert.equal(macosX64.installer.fileName, "bframe-studio_0.1.0_x64.dmg");
+    assert.equal(macosX64.updater.fileName, "bframe-studio_0.1.0_aarch64_x64.app.tar.gz");
     assert.equal(macosX64.updater.sha256, sha256Text("macos-x64-updater-bytes"));
-    assert.equal(macosX64.updater.sourceUrl, `${releaseBase}/tauri-base_0.1.0_aarch64_x64.app.tar.gz`);
-    assert.equal(macosX64.updater.signatureFileName, "tauri-base_0.1.0_aarch64_x64.app.tar.gz.sig");
+    assert.equal(macosX64.updater.sourceUrl, `${releaseBase}/bframe-studio_0.1.0_aarch64_x64.app.tar.gz`);
+    assert.equal(macosX64.updater.signatureFileName, "bframe-studio_0.1.0_aarch64_x64.app.tar.gz.sig");
     assert.equal(macosX64.updater.signature, MACOS_X64_SIGNATURE);
 
     const macosArm = byPlatform["macos-arm"];
-    assert.equal(macosArm.installer.fileName, "tauri-base_0.1.0_arm64.dmg");
-    assert.equal(macosArm.updater.fileName, "tauri-base_0.1.0_aarch64_arm64.app.tar.gz");
+    assert.equal(macosArm.installer.fileName, "bframe-studio_0.1.0_arm64.dmg");
+    assert.equal(macosArm.updater.fileName, "bframe-studio_0.1.0_aarch64_arm64.app.tar.gz");
     assert.equal(macosArm.updater.signature, MACOS_ARM_SIGNATURE);
-    assert.equal(macosArm.updater.sourceUrl, `${releaseBase}/tauri-base_0.1.0_aarch64_arm64.app.tar.gz`);
+    assert.equal(macosArm.updater.sourceUrl, `${releaseBase}/bframe-studio_0.1.0_aarch64_arm64.app.tar.gz`);
 
     const linuxX64 = byPlatform["linux-x86"];
-    assert.equal(linuxX64.installer.fileName, "tauri-base_0.1.0_amd64.AppImage");
-    assert.equal(linuxX64.updater.fileName, "tauri-base_0.1.0_amd64.AppImage.tar.gz");
+    assert.equal(linuxX64.installer.fileName, "bframe-studio_0.1.0_amd64.AppImage");
+    assert.equal(linuxX64.updater.fileName, "bframe-studio_0.1.0_amd64.AppImage.tar.gz");
     assert.equal(linuxX64.updater.signature, LINUX_SIGNATURE);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
@@ -137,7 +137,7 @@ test("emits the exact schema for a complete five-platform artifact set", () => {
 });
 
 test("manual builds (no GitHub release) get null source URLs", () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), "tauri-base-manifest-"));
+  const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
   try {
     const artifactsDir = join(tempRoot, "release-artifacts");
     createArtifactTree(artifactsDir);
@@ -160,11 +160,11 @@ test("manual builds (no GitHub release) get null source URLs", () => {
 });
 
 test("fails before emitting a manifest for missing platform artifacts", () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), "tauri-base-manifest-"));
+  const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
   try {
     const artifactsDir = join(tempRoot, "release-artifacts");
     createArtifactTree(artifactsDir);
-    rmSync(join(artifactsDir, "tauri-base-windows-arm64"), { recursive: true, force: true });
+    rmSync(join(artifactsDir, "bframe-studio-windows-arm64"), { recursive: true, force: true });
     const manifestPath = join(tempRoot, "desktop-release-manifest.json");
 
     const { status, stderr } = runScript(baseEnv(artifactsDir, manifestPath));
@@ -177,11 +177,11 @@ test("fails before emitting a manifest for missing platform artifacts", () => {
 });
 
 test("fails before emitting a manifest when a signature is missing", () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), "tauri-base-manifest-"));
+  const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
   try {
     const artifactsDir = join(tempRoot, "release-artifacts");
     createArtifactTree(artifactsDir);
-    rmSync(join(artifactsDir, "tauri-base-windows-x64", "tauri-base_0.1.0_x64-setup.exe.sig"));
+    rmSync(join(artifactsDir, "bframe-studio-windows-x64", "bframe-studio_0.1.0_x64-setup.exe.sig"));
     const manifestPath = join(tempRoot, "desktop-release-manifest.json");
 
     const { status, stderr } = runScript(baseEnv(artifactsDir, manifestPath));
@@ -194,11 +194,11 @@ test("fails before emitting a manifest when a signature is missing", () => {
 });
 
 test("fails before emitting a manifest when a signature is empty", () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), "tauri-base-manifest-"));
+  const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
   try {
     const artifactsDir = join(tempRoot, "release-artifacts");
     createArtifactTree(artifactsDir);
-    writeFileSync(join(artifactsDir, "tauri-base-macos-arm64", "tauri-base_0.1.0_aarch64_arm64.app.tar.gz.sig"), "\n  \n");
+    writeFileSync(join(artifactsDir, "bframe-studio-macos-arm64", "bframe-studio_0.1.0_aarch64_arm64.app.tar.gz.sig"), "\n  \n");
     const manifestPath = join(tempRoot, "desktop-release-manifest.json");
 
     const { status, stderr } = runScript(baseEnv(artifactsDir, manifestPath));
@@ -211,12 +211,12 @@ test("fails before emitting a manifest when a signature is empty", () => {
 });
 
 test("fails before emitting a manifest when a macOS updater lacks the architecture suffix", () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), "tauri-base-manifest-"));
+  const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
   try {
     const artifactsDir = join(tempRoot, "release-artifacts");
     createArtifactTree(artifactsDir);
-    rmSync(join(artifactsDir, "tauri-base-macos-x64", "tauri-base_0.1.0_aarch64_x64.app.tar.gz"));
-    writeFileSync(join(artifactsDir, "tauri-base-macos-x64", "tauri-base_0.1.0_aarch64.app.tar.gz"), "bytes");
+    rmSync(join(artifactsDir, "bframe-studio-macos-x64", "bframe-studio_0.1.0_aarch64_x64.app.tar.gz"));
+    writeFileSync(join(artifactsDir, "bframe-studio-macos-x64", "bframe-studio_0.1.0_aarch64.app.tar.gz"), "bytes");
     const manifestPath = join(tempRoot, "desktop-release-manifest.json");
 
     const { status, stderr } = runScript(baseEnv(artifactsDir, manifestPath));
@@ -229,15 +229,15 @@ test("fails before emitting a manifest when a macOS updater lacks the architectu
 });
 
 test("fails before emitting a manifest for duplicate GitHub Release asset names", () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), "tauri-base-manifest-"));
+  const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
   try {
     const artifactsDir = join(tempRoot, "release-artifacts");
     createArtifactTree(artifactsDir);
     // windows-arm64 目录中唯一的安装包与 windows-x86 同名：作为 Release 资产上传时会冲突。
-    rmSync(join(artifactsDir, "tauri-base-windows-arm64", "tauri-base_0.1.0_arm64-setup.exe"));
-    rmSync(join(artifactsDir, "tauri-base-windows-arm64", "tauri-base_0.1.0_arm64-setup.exe.sig"));
-    writeFileSync(join(artifactsDir, "tauri-base-windows-arm64", "tauri-base_0.1.0_x64-setup.exe"), "dup");
-    writeFileSync(join(artifactsDir, "tauri-base-windows-arm64", "tauri-base_0.1.0_x64-setup.exe.sig"), "dup-sig");
+    rmSync(join(artifactsDir, "bframe-studio-windows-arm64", "bframe-studio_0.1.0_arm64-setup.exe"));
+    rmSync(join(artifactsDir, "bframe-studio-windows-arm64", "bframe-studio_0.1.0_arm64-setup.exe.sig"));
+    writeFileSync(join(artifactsDir, "bframe-studio-windows-arm64", "bframe-studio_0.1.0_x64-setup.exe"), "dup");
+    writeFileSync(join(artifactsDir, "bframe-studio-windows-arm64", "bframe-studio_0.1.0_x64-setup.exe.sig"), "dup-sig");
     const manifestPath = join(tempRoot, "desktop-release-manifest.json");
 
     const { status, stderr } = runScript(baseEnv(artifactsDir, manifestPath));
@@ -250,7 +250,7 @@ test("fails before emitting a manifest for duplicate GitHub Release asset names"
 });
 
 test("rejects a release tag that does not match the version", () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), "tauri-base-manifest-"));
+  const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
   try {
     const artifactsDir = join(tempRoot, "release-artifacts");
     createArtifactTree(artifactsDir);

@@ -31,3 +31,24 @@ test("prepares the signed Linux updater before uploading artifacts", () => {
 
   assert.ok(workflow.indexOf("- name: Prepare Linux updater") < workflow.indexOf("- name: Upload desktop bundles"));
 });
+
+test("wires the license server URL into the updater config and every release build", () => {
+  // 端点域名不再单独配置：写进 YAML 却不被引用的变量不会进入构建环境，等于静默失效。
+  assert.doesNotMatch(workflow, /TAURI_UPDATER_ENDPOINT/u);
+
+  const configStep = workflow.match(/- name: Prepare signed updater configuration[\s\S]*?(?=\n\s+- name:)/u)?.[0];
+  assert.ok(configStep);
+  assert.match(configStep, /VITE_ENABLE_UPDATER: \$\{\{ vars\.VITE_ENABLE_UPDATER == 'true' && 'true' \|\| 'false' \}\}/u);
+  assert.match(configStep, /VITE_LICENSE_SERVER_URL: \$\{\{ vars\.VITE_LICENSE_SERVER_URL \}\}/u);
+
+  const buildSteps = workflow.match(/- name: Build [^\n]*bundles[\s\S]*?run: npm run tauri -- build[^\n]*/gu) ?? [];
+  assert.equal(buildSteps.length, 3);
+  for (const step of buildSteps) {
+    assert.match(step, /VITE_ENABLE_UPDATER: \$\{\{ vars\.VITE_ENABLE_UPDATER/u);
+    assert.match(step, /VITE_LICENSE_SERVER_URL: \$\{\{ vars\.VITE_LICENSE_SERVER_URL \}\}/u);
+    assert.match(
+      step,
+      /VITE_LICENSE_RESPONSE_KEY: \$\{\{ vars\.VITE_LICENSE_RESPONSE_KEY \|\| secrets\.VITE_LICENSE_RESPONSE_KEY \}\}/u
+    );
+  }
+});

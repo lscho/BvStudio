@@ -129,7 +129,7 @@ describe("license service", () => {
       saveCachedVipStatus(sample);
       expect(readCachedVipStatus()).toEqual({ ...sample, cachedAt: expect.any(Number) });
 
-      localStorage.removeItem("bvideo:vip-status");
+      localStorage.removeItem("bframe-studio:vip-status");
       expect(readCachedVipStatus()).toEqual(DEFAULT_VIP_STATUS);
     });
 
@@ -183,7 +183,7 @@ describe("license service", () => {
 
     function canonical(status: VipStatus, ts: number): string {
       return [
-        "bvideo-license-v1",
+        "bframe-license-v1",
         String(ts),
         String(status.isVip),
         status.planName ?? "",
@@ -251,7 +251,7 @@ describe("license service", () => {
       vi.stubEnv("VITE_LICENSE_SERVER_URL", SERVER_URL);
       vi.stubEnv("VITE_LICENSE_RESPONSE_KEY", RESPONSE_KEY);
       const stale = { ...vipStatus(), cachedAt: Date.now() - 4 * 24 * 60 * 60 * 1000 };
-      localStorage.setItem("bvideo:vip-status", JSON.stringify(stale));
+      localStorage.setItem("bframe-studio:vip-status", JSON.stringify(stale));
       vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network down")));
 
       const status = await verifyVipStatus(DEVICE_ID);

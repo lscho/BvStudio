@@ -8,7 +8,7 @@ import { generateShotcraftPlan } from "@/services/ai/shotcraft";
 import { analyseMusicAsset } from "@/services/musicBeats";
 import { hasApiKey } from "@/services/ai/provider";
 
-vi.mock("@/services/ai/shotcraft", () => ({ generateShotcraftPlan: vi.fn() }));
+vi.mock("@/services/ai/shotcraft", () => ({ generateShotcraftPlan: vi.fn(), shotcraftPlanAccessIssue: vi.fn(() => undefined) }));
 vi.mock("@/services/ai/provider", () => ({ hasApiKey: vi.fn(async () => true) }));
 vi.mock("@/services/musicBeats", () => ({ analyseMusicAsset: vi.fn() }));
 const settings = { ...DEFAULT_SETTINGS, aiProvider: { ...DEFAULT_SETTINGS.aiProvider, model: "test" } };
@@ -17,6 +17,17 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(hasApiKey).mockResolvedValue(true);
   useEditorStore.setState({ project: createEmptyProject(), past: [], future: [], selectedClipId: null, selectedClipIds: [], playheadUs: 0 });
+});
+it("Free 用户不会发起镜头请求，并可进入会员授权", async () => {
+  const onNeedLicense = vi.fn();
+  render(<ShotcraftPlannerDialog open settings={settings} onOpenChange={vi.fn()} onNeedSettings={vi.fn()} onNeedLicense={onNeedLicense} />);
+  fireEvent.change(screen.getByRole("textbox", { name: "视频内容与镜头要求" }), { target: { value: "介绍产品" } });
+  fireEvent.click(screen.getByRole("button", { name: "生成分镜" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("需要 Pro 会员");
+  expect(generateShotcraftPlan).not.toHaveBeenCalled();
+  expect(hasApiKey).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "打开会员与授权" }));
+  expect(onNeedLicense).toHaveBeenCalledOnce();
 });
 it("未配置云端 AI 也能单独分析音乐，失败可重试且不改变工程", async () => {
   vi.mocked(hasApiKey).mockResolvedValue(false);
@@ -35,7 +46,7 @@ it("未配置云端 AI 也能单独分析音乐，失败可重试且不改变工
 });
 it("显示实际编排后，用户加入才提交，并支持撤销", async () => {
   vi.mocked(generateShotcraftPlan).mockResolvedValue({ data: plan, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostUsd: 0 } });
-  render(<ShotcraftPlannerDialog open settings={settings} onOpenChange={vi.fn()} onNeedSettings={vi.fn()} />);
+  render(<ShotcraftPlannerDialog open settings={settings} isPro onOpenChange={vi.fn()} onNeedSettings={vi.fn()} />);
   fireEvent.change(screen.getByRole("textbox", { name: "视频内容与镜头要求" }), { target: { value: "介绍产品" } });
   fireEvent.click(screen.getByRole("button", { name: "生成分镜" }));
   expect(await screen.findByText("产品标题 · 4.00 秒")).toBeVisible();
@@ -48,14 +59,14 @@ it("显示实际编排后，用户加入才提交，并支持撤销", async () =
 it("关闭时取消请求，过期响应不能恢复旧计划", async () => {
   let resolve: ((value: Awaited<ReturnType<typeof generateShotcraftPlan>>) => void) | undefined;
   vi.mocked(generateShotcraftPlan).mockImplementation(() => new Promise((done) => { resolve = done; }));
-  const view = render(<ShotcraftPlannerDialog open settings={settings} onOpenChange={vi.fn()} onNeedSettings={vi.fn()} />);
+  const view = render(<ShotcraftPlannerDialog open settings={settings} isPro onOpenChange={vi.fn()} onNeedSettings={vi.fn()} />);
   fireEvent.change(screen.getByRole("textbox", { name: "视频内容与镜头要求" }), { target: { value: "内容" } });
   fireEvent.click(screen.getByRole("button", { name: "生成分镜" }));
   await waitFor(() => expect(generateShotcraftPlan).toHaveBeenCalledTimes(1));
   const signal = vi.mocked(generateShotcraftPlan).mock.calls[0][2];
-  view.rerender(<ShotcraftPlannerDialog open={false} settings={settings} onOpenChange={vi.fn()} onNeedSettings={vi.fn()} />);
+  view.rerender(<ShotcraftPlannerDialog open={false} settings={settings} isPro onOpenChange={vi.fn()} onNeedSettings={vi.fn()} />);
   expect(signal?.aborted).toBe(true);
   await act(async () => { resolve?.({ data: plan, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostUsd: 0 } }); });
-  view.rerender(<ShotcraftPlannerDialog open settings={settings} onOpenChange={vi.fn()} onNeedSettings={vi.fn()} />);
+  view.rerender(<ShotcraftPlannerDialog open settings={settings} isPro onOpenChange={vi.fn()} onNeedSettings={vi.fn()} />);
   expect(screen.getByRole("button", { name: "加入时间线" })).toBeDisabled();
 });

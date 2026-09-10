@@ -17,13 +17,19 @@
 
 3. **服务已部署**：`edge/` 代码已通过 `npm run esa:commit && npm run esa:deploy` 上线。
 
-4. **GitHub 仓库变量**：`TAURI_UPDATER_ENDPOINT` 指向 ESA 域名并带 `{{target}}` 占位符：
+4. **GitHub 仓库变量**（发布构建用，均为 Variable，除备注外）：
 
-   ```
-   https://<你的 ESA 域名>/api/desktop-updates/latest?platform={{target}}
-   ```
+   | 变量 | 值 |
+   | --- | --- |
+   | `VITE_LICENSE_SERVER_URL` | ESA 边缘函数域名，**只填 origin**，例如 `https://license.atmomo.cn` |
+   | `VITE_LICENSE_RESPONSE_KEY` | 授权响应 HMAC 密钥，与 `edge/config.js` 的 `HMAC_SECRET` 一致 |
+   | `VITE_ENABLE_UPDATER` | 设为 `true` 才启用客户端更新检查 |
 
-   该变量只在**发布构建**时经 `scripts/write-tauri-release-config.mjs` 注入临时配置，不会改写仓库里的 `src-tauri/tauri.conf.json`。未配置时客户端编译期即关闭更新检查，不会发起任何请求。
+   更新端点不用单独配置：`scripts/write-tauri-release-config.mjs` 从 `VITE_LICENSE_SERVER_URL` 取出 origin，自动拼成 `{origin}/api/desktop-updates/latest?platform={{target}}`。因此该变量**不能带路径或结尾斜杠**，脚本会直接报错。
+
+   前两项只在**发布构建**时经环境变量注入，不会改写仓库里的 `src-tauri/tauri.conf.json`。`VITE_ENABLE_UPDATER` 不是 `true` 时更新端点为 `[]`，客户端编译期即关闭更新检查，不会发起任何请求。
+
+   > 提醒：变量仅在 workflow 的 `env:` 里被引用后才会进入构建环境，只在仓库设置里创建一个同名变量没有任何效果。`scripts/build-desktop-workflow.test.mjs` 会守住这条接线。
 
 ---
 
@@ -34,7 +40,7 @@
 git tag v0.4.0 && git push origin v0.4.0
 
 # 2. 从 Release 资产或 workflow artifact 取回 desktop-release-manifest.json
-#    （artifact 名 tauri-base-desktop-release-manifest，内部路径 release-manifest/desktop-release-manifest.json）
+#    （artifact 名 bframe-studio-desktop-release-manifest，内部路径 release-manifest/desktop-release-manifest.json）
 
 # 3. 先空跑，确认五个平台的地址与版本无误
 npm run esa:import-release -- --manifest ./desktop-release-manifest.json --notes "修复导出偶发失败" --dry-run
@@ -43,7 +49,7 @@ npm run esa:import-release -- --manifest ./desktop-release-manifest.json --notes
 npm run esa:import-release -- --manifest ./desktop-release-manifest.json --notes "修复导出偶发失败"
 
 # 5. 核对线上响应
-curl -i 'https://<你的 ESA 域名>/api/desktop-updates/latest?platform=macos-arm'
+curl -i 'https://license.atmomo.cn/api/desktop-updates/latest?platform=macos-arm'
 ```
 
 第 3 步的 `--dry-run` 输出就是将要写入 EdgeKV 的完整记录（含每个平台的更新包地址），先看一遍能拦住绝大多数发布事故。
@@ -125,11 +131,22 @@ curl -i 'http://localhost:<port>/api/desktop-updates/latest?platform=macos-arm'
 
 本地 `esa:dev` 里手工构造一条 `release:latest:macos-arm` 记录，就能在不碰线上的前提下验证响应字段。
 
+只想确认「域名 → 更新端点」拼对了、不真正构建时：
+
+```bash
+set -a && . ./.env.production && set +a
+export RELEASE_VERSION=0.4.0 TAURI_SIGNING_PUBLIC_KEY=<任意非空值> RUNNER_TEMP="$(mktemp -d)"
+npm run release:config
+cat "$RUNNER_TEMP/bframe-studio-release/tauri.release.conf.json"   # 看 plugins.updater.endpoints
+```
+
 ## 常见问题
 
 | 现象 | 原因与处理 |
 | --- | --- |
-| 客户端不提示更新 | 先 `curl` 端点确认不是 204；再确认发布构建时 `TAURI_UPDATER_ENDPOINT` 已配置（未配置则客户端根本不会请求） |
+| 客户端不提示更新 | 先 `curl` 端点确认不是 204；再确认发布构建时 `VITE_ENABLE_UPDATER=true` 且 `VITE_LICENSE_SERVER_URL` 已配置（任一缺失，客户端根本不会请求） |
+| 构建报 `VITE_ENABLE_UPDATER is true but VITE_LICENSE_SERVER_URL is not set` | 开了更新开关但没配域名。补上 `VITE_LICENSE_SERVER_URL`，或把开关设为非 `true` |
+| 构建报 `must contain only the origin` | `VITE_LICENSE_SERVER_URL` 带了路径、查询串或结尾斜杠；只填 `https://域名` |
 | `platform 参数缺失或不受支持` | 端点模板里的 `{{target}}` 占位符丢失，或被写成了 `darwin-aarch64` 之类的 Tauri 默认目标名 |
 | `更新包元数据不完整`（503） | 该平台记录缺 URL/签名/文件大小，通常是手工改过 KV。重新跑 `esa:import-release` 覆盖 |
 | 导入报 `已发布版本 x 高于待导入的 y` | 保护机制命中。确认确实要回滚时加 `--allow-downgrade` |
@@ -137,6 +154,7 @@ curl -i 'http://localhost:<port>/api/desktop-updates/latest?platform=macos-arm'
 | `Throttling.Api: Request was denied due to user flow control` | ESA OpenAPI 限流。脚本自动退避重试 5 次；只有 5 条记录，重跑即可 |
 | 导入成功但客户端仍收不到 | EdgeKV 最终一致，全球同步需数秒到几十秒，稍后重试 |
 | 升级后客户端报签名校验失败 | 产物在签名后被重新打包，哈希已变。必须发布未重新压缩的原始产物 |
+| Windows 用户升级后需要手动退出应用 | 可执行文件名由 `tauri-base` 改为 `bframe-studio`，NSIS 的「应用是否在运行」检查按新名匹配，匹配不到旧进程名。属一次性的历史遗留问题，之后版本不再出现；旧 `tauri-base.exe` 可能残留在安装目录，手动删除即可 |
 
 ## 测试
 

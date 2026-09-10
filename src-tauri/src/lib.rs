@@ -79,7 +79,7 @@ pub fn run() {
             license::get_device_info
         ])
         .run(tauri::generate_context!())
-        .expect("error while running BVideo Studio");
+        .expect("error while running BFrame Studio");
 }
 
 // 开发模式下打开/关闭调试控制台（DevTools）。

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "BVideo Studio",
+  "productName": "BFrame Studio",
   "version": "0.3.0",
-  "identifier": "com.bvideo.studio",
+  "identifier": "com.bframe.studio",
   "build": {
     "beforeDevCommand": "npm run prepare:media-sidecars -- --allow-existing && npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "BVideo Studio",
+        "title": "BFrame Studio",
         "width": 1200,
         "height": 800,
         "minWidth": 960,

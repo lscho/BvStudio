@@ -55,6 +55,8 @@ export interface GeneratePlanInput {
   durationSeconds: number;
   style: string;
   materials: AiMaterialCandidate[];
+  /** 当前用户是否拥有 Pro 权限；缺省按 Free 处理。 */
+  isPro?: boolean;
 }
 
 export interface AiMaterialCandidate {
@@ -126,6 +128,24 @@ export interface MatchedTimelineMotion {
   matches: NonNullable<AiVideoPlan["matches"]>;
   selection: AiMotionSelection;
   usage: AiTokenUsage;
+}
+
+export function motionMatchesAccessIssue(matches: readonly AiMotionMatch[], isPro: boolean): string | undefined {
+  const effects = new Map(allCompositions().map((effect) => [effect.id, effect]));
+  const effectTiers = effectTierMap(BUILTIN_EFFECTS);
+  const soundTiers = soundTierMap(audioCatalog);
+  for (const match of matches) {
+    for (const effectId of [match.primaryEffectId, match.secondaryEffectId]) {
+      if (!effectId) continue;
+      const effect = effects.get(effectId);
+      if (!effect || !canUseEffect(effectTier(effect, effectTiers), isPro)) return `当前会员无权使用动效 ${effectId}`;
+    }
+    for (const sound of match.shotcraftSounds ?? []) {
+      const definition = audioCatalog.find((item) => item.id === sound.soundId && item.kind === "sound" && item.autoEligible);
+      if (!definition || !canUseSound(soundTier(definition, soundTiers), isPro)) return `当前会员无权使用镜头音效 ${sound.soundId}`;
+    }
+  }
+  return undefined;
 }
 
 export interface ProviderModelResult {
@@ -1669,10 +1689,6 @@ export async function matchTimelineMotion(
   }));
   const user = `主题或来源：${input.topic}\n表达风格：${input.style}\n内容语义参考：${input.article ?? "无"}\n视频总时长：${input.timelineDurationSeconds} 秒\n最终时间字幕：${JSON.stringify(timedCaptions)}\n随请求图片顺序：${JSON.stringify(visionSummary)}\n请严格按照第一阶段的语义段和选型，完成素材、文案、卡内节奏锚点与时间线规划。`;
   const matchesSchema = createAiMotionMatchesSchema(candidates.map((effect) => effect.id), mediaIds, imageIds);
-  const soundTiers = soundTierMap(audioCatalog);
-  const allowedShotcraftSoundIds = new Set(audioCatalog
-    .filter((sound) => sound.kind === "sound" && sound.autoEligible && canUseSound(soundTier(sound, soundTiers), input.isPro === true))
-    .map((sound) => sound.id));
   const planned = await requestValidatedStructured({
     config,
     system: motionSystemPrompt(candidates, input.materials, selection, input.motionPreferences, Boolean(input.storyboard), Boolean(input.soundEnabled), input.isPro === true) + storyboardPrompt(input),
@@ -1681,8 +1697,8 @@ export async function matchTimelineMotion(
     name: "match_timeline_motion",
     parse: (value) => {
       const parsed = matchesSchema.parse(value).matches;
-      const inaccessibleSound = parsed.flatMap((match) => match.shotcraftSounds ?? []).find((sound) => !allowedShotcraftSoundIds.has(sound.soundId));
-      if (inaccessibleSound) throw new ZodError([{ code: "custom", path: ["matches", "shotcraftSounds"], message: "当前会员无权使用所选镜头音效" }]);
+      const accessIssue = motionMatchesAccessIssue(parsed, input.isPro === true);
+      if (accessIssue) throw new ZodError([{ code: "custom", path: ["matches"], message: accessIssue }]);
       assertMotionMatchPlan(parsed, selection, input.captions);
       assertMotionMatchChartEvidence(parsed, selection, input.captions);
       assertStoryboardMatches(normalizeMotionMatches(groundMotionMatchesToSelection(parsed, selection, input.captions), input.captions, input.timelineDurationSeconds, input.materials, true), selection, input);
@@ -1749,7 +1765,8 @@ export async function generateVideoPlan(
     article: script.article,
     captions: script.captions,
     timelineDurationSeconds: input.durationSeconds,
-    materials: input.materials
+    materials: input.materials,
+    isPro: input.isPro === true
   }, browserApiKey, signal, onProgress);
   const matches = matched.matches ?? [];
   const matchByCaption = new Map(matches.map((match) => [match.captionIndex, match]));
@@ -1841,14 +1858,14 @@ export async function saveApiKey(apiKey: string): Promise<void> {
     await invoke("save_ai_api_key", { apiKey });
     return;
   }
-  sessionStorage.setItem("bvideo:ai-api-key", apiKey);
+  sessionStorage.setItem("bframe-studio:ai-api-key", apiKey);
 }
 
 export async function hasApiKey(): Promise<boolean> {
   if (isDesktopRuntime()) return await invoke<boolean>("has_ai_api_key");
-  return Boolean(sessionStorage.getItem("bvideo:ai-api-key"));
+  return Boolean(sessionStorage.getItem("bframe-studio:ai-api-key"));
 }
 
 export function browserApiKey(): string | undefined {
-  return isDesktopRuntime() ? undefined : sessionStorage.getItem("bvideo:ai-api-key") ?? undefined;
+  return isDesktopRuntime() ? undefined : sessionStorage.getItem("bframe-studio:ai-api-key") ?? undefined;
 }

@@ -1,10 +1,10 @@
 {
   "schemaVersion": 6,
   "manifest": {
-    "id": "bvideo-starter",
-    "name": "BVideo Starter Effects",
+    "id": "bframe-starter",
+    "name": "BFrame Starter Effects",
     "version": "3.0.0",
-    "author": "BVideo Studio",
+    "author": "BFrame Studio",
     "description": "An unsigned example package with deterministic procedural sound effects."
   },
   "sounds": [

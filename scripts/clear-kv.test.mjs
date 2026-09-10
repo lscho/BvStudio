@@ -7,7 +7,7 @@ test("deletes all keys page by page until listing is empty", async () => {
   const remaining = ["card:a", "device:b", "card:c", "fail:d"];
   const deleted = [];
   const { deleted: count, failures } = await clearNamespace({
-    namespace: "bv_studio",
+    namespace: "bframe_studio",
     listKeys: async () => remaining.splice(0, 2),
     deleteKey: async (_ns, key) => {
       deleted.push(key);

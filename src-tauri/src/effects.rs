@@ -962,13 +962,13 @@ mod tests {
         let contents = include_str!("../../examples/effects/starter-pack.bveffect");
         let info = inspect_contents(contents, Path::new("starter-pack.bveffect")).unwrap();
         assert_eq!(info.schema_version, 6);
-        assert_eq!(info.manifest.id, "bvideo-starter");
+        assert_eq!(info.manifest.id, "bframe-starter");
         assert_eq!(info.sound_count, 4);
         assert_eq!(info.effects.len(), 4);
-        assert_eq!(info.effects[0].id, "bvideo-starter:chapter-card");
+        assert_eq!(info.effects[0].id, "bframe-starter:chapter-card");
         assert_eq!(
             info.effects[0].sound_cues[0].sound_id,
-            "bvideo-starter:whoosh-short"
+            "bframe-starter:whoosh-short"
         );
         assert_eq!(info.effects[0].sound_cues[0].duration_us, 700_000);
         let wav = synthesize_wav(&info.sounds[0]);

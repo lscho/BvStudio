@@ -11,11 +11,11 @@ import {
 } from "./import-desktop-release.mjs";
 
 const UPDATER_FILE_NAMES = {
-  "windows-x86": "tauri-base_0.4.0_x64-setup.exe",
-  "windows-arm": "tauri-base_0.4.0_arm64-setup.exe",
-  "macos-x86": "tauri-base_0.4.0_aarch64_x64.app.tar.gz",
-  "macos-arm": "tauri-base_0.4.0_aarch64_arm64.app.tar.gz",
-  "linux-x86": "tauri-base_0.4.0_amd64.AppImage.tar.gz"
+  "windows-x86": "bframe-studio_0.4.0_x64-setup.exe",
+  "windows-arm": "bframe-studio_0.4.0_arm64-setup.exe",
+  "macos-x86": "bframe-studio_0.4.0_aarch64_x64.app.tar.gz",
+  "macos-arm": "bframe-studio_0.4.0_aarch64_arm64.app.tar.gz",
+  "linux-x86": "bframe-studio_0.4.0_amd64.AppImage.tar.gz"
 };
 
 function validManifest(overrides = {}) {
@@ -24,7 +24,7 @@ function validManifest(overrides = {}) {
     version: "0.4.0",
     tag: "v0.4.0",
     generatedAt: "2026-01-15T08:00:00.000Z",
-    repository: "example/tauri-base",
+    repository: "example/bframe-studio",
     commitSha: "abc123",
     platforms: Object.entries(UPDATER_FILE_NAMES).map(([platform, fileName]) => ({
       platform,
@@ -33,7 +33,7 @@ function validManifest(overrides = {}) {
         fileName,
         fileSize: 42354176,
         sha256: "1".repeat(64),
-        sourceUrl: `https://github.com/example/tauri-base/releases/download/v0.4.0/${fileName}`,
+        sourceUrl: `https://github.com/example/bframe-studio/releases/download/v0.4.0/${fileName}`,
         signatureFileName: `${fileName}.sig`,
         signature: "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZQ=="
       }
@@ -86,7 +86,7 @@ describe("deriveUpdaterUrl", () => {
     const manifest = validManifest();
     assert.equal(
       deriveUpdaterUrl(manifest, { ...manifest.platforms[0].updater, sourceUrl: null }),
-      `https://github.com/example/tauri-base/releases/download/v0.4.0/${UPDATER_FILE_NAMES["windows-x86"]}`
+      `https://github.com/example/bframe-studio/releases/download/v0.4.0/${UPDATER_FILE_NAMES["windows-x86"]}`
     );
   });
 
@@ -113,7 +113,7 @@ describe("buildReleaseRecords", () => {
     assert.deepEqual(macosArm, {
       platform: "macos-arm",
       version: "0.4.0",
-      url: `https://github.com/example/tauri-base/releases/download/v0.4.0/${UPDATER_FILE_NAMES["macos-arm"]}`,
+      url: `https://github.com/example/bframe-studio/releases/download/v0.4.0/${UPDATER_FILE_NAMES["macos-arm"]}`,
       signature: "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZQ==",
       fileName: UPDATER_FILE_NAMES["macos-arm"],
       fileSize: 42354176,
@@ -121,7 +121,7 @@ describe("buildReleaseRecords", () => {
       pub_date: "2026-01-15T08:00:00.000Z",
       isForceUpdate: false,
       tag: "v0.4.0",
-      repository: "example/tauri-base",
+      repository: "example/bframe-studio",
       commitSha: "abc123",
       importedAt: macosArm.importedAt
     });
@@ -182,7 +182,7 @@ describe("buildReleaseRecords", () => {
     for (const entry of derived.platforms) entry.updater.sourceUrl = null;
     const { records, problems } = buildReleaseRecords(derived);
     assert.deepEqual(problems, []);
-    assert.match(records[0].url, /^https:\/\/github\.com\/example\/tauri-base\/releases\/download\/v0\.4\.0\//);
+    assert.match(records[0].url, /^https:\/\/github\.com\/example\/bframe-studio\/releases\/download\/v0\.4\.0\//);
   });
 
   it("version 非法、含未知平台时报告问题", () => {
@@ -227,7 +227,7 @@ describe("importReleaseRecords", () => {
 
   it("逐平台写入发布记录键", async () => {
     const kv = createFakeKv();
-    const { failures, skipped } = await importReleaseRecords({ records, namespace: "bv_studio", kv });
+    const { failures, skipped } = await importReleaseRecords({ records, namespace: "bframe_studio", kv });
     assert.deepEqual(failures, []);
     assert.deepEqual(skipped, []);
     assert.deepEqual([...kv.store.keys()].sort(), records.map((record) => releaseKeyFor(record.platform)).sort());
@@ -236,7 +236,7 @@ describe("importReleaseRecords", () => {
 
   it("已发布版本更高时跳过该平台且不覆盖", async () => {
     const kv = createFakeKv({ "release:latest:macos-arm": JSON.stringify({ version: "9.9.9" }) });
-    const { skipped, failures } = await importReleaseRecords({ records, namespace: "bv_studio", kv });
+    const { skipped, failures } = await importReleaseRecords({ records, namespace: "bframe_studio", kv });
     assert.deepEqual(failures, []);
     assert.deepEqual(skipped, [{ platform: "macos-arm", reason: "已发布版本 9.9.9 高于待导入的 0.4.0" }]);
     assert.equal(JSON.parse(kv.store.get("release:latest:macos-arm")).version, "9.9.9");
@@ -253,7 +253,7 @@ describe("importReleaseRecords", () => {
         return kv.put(namespace, key, value);
       }
     };
-    const { failures, skipped } = await importReleaseRecords({ records, namespace: "bv_studio", kv: failing });
+    const { failures, skipped } = await importReleaseRecords({ records, namespace: "bframe_studio", kv: failing });
     assert.equal(failures.length, 1);
     assert.deepEqual(skipped, []);
     assert.equal(failures[0].platform, "linux-x86");
@@ -263,7 +263,7 @@ describe("importReleaseRecords", () => {
   it("既有记录不是合法 JSON 时告警并覆盖", async () => {
     const kv = createFakeKv({ "release:latest:windows-x86": "not-json" });
     const events = [];
-    await importReleaseRecords({ records, namespace: "bv_studio", kv, onEvent: (event) => events.push(event) });
+    await importReleaseRecords({ records, namespace: "bframe_studio", kv, onEvent: (event) => events.push(event) });
     assert.match(events.find((event) => event.type === "warning").message, /不是合法 JSON/);
     assert.equal(JSON.parse(kv.store.get("release:latest:windows-x86")).version, "0.4.0");
   });
@@ -285,7 +285,7 @@ describe("导入产物与边缘响应的契约", () => {
 
   it("写入 KV 后经边缘处理层返回客户端所需字段", async () => {
     const kv = createFakeKv();
-    await importReleaseRecords({ records, namespace: "bv_studio", kv });
+    await importReleaseRecords({ records, namespace: "bframe_studio", kv });
     const response = await handleUpdateRequest(
       new Request("https://license.example.com/api/desktop-updates/latest?platform=macos-arm"),
       {
@@ -301,7 +301,7 @@ describe("导入产物与边缘响应的契约", () => {
     assert.deepEqual(await response.json(), {
       platform: "macos-arm",
       version: "0.4.0",
-      url: `https://github.com/example/tauri-base/releases/download/v0.4.0/${UPDATER_FILE_NAMES["macos-arm"]}`,
+      url: `https://github.com/example/bframe-studio/releases/download/v0.4.0/${UPDATER_FILE_NAMES["macos-arm"]}`,
       signature: "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZQ==",
       fileName: UPDATER_FILE_NAMES["macos-arm"],
       fileSize: 42354176,

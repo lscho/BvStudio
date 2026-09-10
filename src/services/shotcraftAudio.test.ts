@@ -1,8 +1,15 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { loadShotcraftAudio, previewShotcraftAudio, stopShotcraftAudioPreview } from "@/services/shotcraftAudio";
+import { canUseShotcraftAudio, loadShotcraftAudio, previewShotcraftAudio, shotcraftAudioForAccess, stopShotcraftAudioPreview } from "@/services/shotcraftAudio";
 import catalog from "@/domain/shotcraftLibrary/audioCatalog.json";
 
 afterEach(() => { stopShotcraftAudioPreview(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it("按 Free 和 Pro 身份返回可用音频", () => {
+  expect(canUseShotcraftAudio("shotcraft-audio:sfx-camera-camera-autofocus", false)).toBe(true);
+  expect(canUseShotcraftAudio("shotcraft-audio:sfx-camera-ui-zoom-in", false)).toBe(false);
+  expect(canUseShotcraftAudio("shotcraft-audio:sfx-camera-ui-zoom-in", true)).toBe(true);
+  expect(shotcraftAudioForAccess(false).length).toBeLessThan(shotcraftAudioForAccess(true).length);
+});
 
 it("拒绝缺失或校验不一致的音频素材", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(null, { status: 404 })).mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]))));

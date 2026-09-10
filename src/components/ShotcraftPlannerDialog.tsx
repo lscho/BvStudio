@@ -6,15 +6,17 @@ import type { MediaAsset } from "@/domain/project";
 import type { MusicAnalysis } from "@/domain/musicBeats";
 import { compileShotcraftSequence, type ShotcraftPlan } from "@/domain/shotcraftPlan";
 import { shotcraftShot } from "@/domain/shotcraft";
-import { generateShotcraftPlan } from "@/services/ai/shotcraft";
+import { generateShotcraftPlan, shotcraftPlanAccessIssue } from "@/services/ai/shotcraft";
 import { hasApiKey } from "@/services/ai/provider";
 import { analyseMusicAsset } from "@/services/musicBeats";
-import { loadShotcraftAudio, SHOTCRAFT_AUDIO } from "@/services/shotcraftAudio";
+import { canUseShotcraftAudio, loadShotcraftAudio, shotcraftAudioForAccess } from "@/services/shotcraftAudio";
 import type { PersistedSettings } from "@/services/storage";
 import { useEditorStore } from "@/stores/editorStore";
+import { useLicenseStore } from "@/stores/licenseStore";
+import { isVipActive } from "@/services/license";
 
-interface Props { open: boolean; settings: PersistedSettings; onOpenChange: (open: boolean) => void; onNeedSettings: () => void; onSubtitleStoryboard?: () => void }
-export function ShotcraftPlannerDialog({ open, settings, onOpenChange, onNeedSettings, onSubtitleStoryboard }: Props) {
+interface Props { open: boolean; settings: PersistedSettings; isPro?: boolean; onOpenChange: (open: boolean) => void; onNeedSettings: () => void; onNeedLicense?: () => void; onSubtitleStoryboard?: () => void }
+export function ShotcraftPlannerDialog({ open, settings, isPro = false, onOpenChange, onNeedSettings, onNeedLicense, onSubtitleStoryboard }: Props) {
   const assets = useEditorStore((state) => state.project.assets);
   const playheadUs = useEditorStore((state) => state.playheadUs);
   const addSequence = useEditorStore((state) => state.addShotcraftSequence);
@@ -38,16 +40,17 @@ export function ShotcraftPlannerDialog({ open, settings, onOpenChange, onNeedSet
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; controller.current?.abort(); }; }, []);
   useEffect(() => { if (!open) { controller.current?.abort(); controller.current = null; setWorking(false); } }, [open]);
-  useEffect(() => { setPlan(undefined); setCompiled(undefined); setPreparedAssets([]); setError(""); }, [brief, duration, selectedImages, musicId, musicOffset, beatSync, soundEnabled, useVision, assets]);
+  useEffect(() => { setPlan(undefined); setCompiled(undefined); setPreparedAssets([]); setError(""); }, [brief, duration, selectedImages, musicId, musicOffset, beatSync, soundEnabled, useVision, assets, isPro]);
   useEffect(() => { setAnalysis(undefined); }, [musicId]);
   const images = assets.filter((asset) => asset.kind === "image" && !asset.missing);
-  const musicOptions = [{ value: "none", label: "不使用音乐" }, ...assets.filter((asset) => asset.kind === "audio" && !asset.missing).map((asset) => ({ value: asset.id, label: asset.name })), ...SHOTCRAFT_AUDIO.filter((asset) => asset.kind === "music" && !assets.some((item) => item.id === asset.id)).map((asset) => ({ value: asset.id, label: asset.name }))];
+  const musicOptions = [{ value: "none", label: "不使用音乐" }, ...assets.filter((asset) => asset.kind === "audio" && !asset.missing && (!asset.id.startsWith("shotcraft-audio:") || canUseShotcraftAudio(asset.id, isPro))).map((asset) => ({ value: asset.id, label: asset.name })), ...shotcraftAudioForAccess(isPro).filter((asset) => asset.kind === "music" && !assets.some((item) => item.id === asset.id)).map((asset) => ({ value: asset.id, label: asset.name }))];
   const options = { startUs: playheadUs, musicAssetId: musicId === "none" ? undefined : musicId, musicSourceInUs: Math.round(musicOffset * 1_000_000), musicVolume, beatSync: beatSync && musicId !== "none", analysis, soundEnabled };
   async function analyse() {
     if (controller.current || musicId === "none") return;
     const request = new AbortController(); controller.current = request;
     setWorking(true); setError(""); setAnalysis(undefined); setPlan(undefined); setCompiled(undefined); setStatus("正在本地分析音乐拍点与能量");
     try {
+      if (musicId.startsWith("shotcraft-audio:") && !canUseShotcraftAudio(musicId, isPro)) throw new Error("当前会员无权使用所选音乐，请更换音乐或升级 Pro");
       const music = assets.find((asset) => asset.id === musicId && !asset.missing) ?? await loadShotcraftAudio(musicId, request.signal);
       const measured = await analyseMusicAsset(music, request.signal);
       request.signal.throwIfAborted();
@@ -65,9 +68,11 @@ export function ShotcraftPlannerDialog({ open, settings, onOpenChange, onNeedSet
     setWorking(true); setError(""); setPlan(undefined); setStatus("正在准备素材");
     try {
       if (!brief.trim()) throw new Error("请填写视频内容与镜头要求");
+      if (!isPro) throw new Error("AI 镜头编排需要 Pro 会员");
       if (!settings.aiProvider.model || !(await hasApiKey())) throw new Error("请先配置模型与 API Key");
       if (!Number.isFinite(duration) || duration < 3 || duration > 600 || !Number.isFinite(musicOffset) || musicOffset < 0) throw new Error("目标时长应为 3–600 秒，音乐起点不得为负数");
       const prepared: MediaAsset[] = [];
+      if (musicId.startsWith("shotcraft-audio:") && !canUseShotcraftAudio(musicId, isPro)) throw new Error("当前会员无权使用所选音乐，请更换音乐或升级 Pro");
       const music = musicId === "none" ? undefined : assets.find((asset) => asset.id === musicId && !asset.missing) ?? await loadShotcraftAudio(musicId, request.signal);
       let measured = analysis;
       if (music) {
@@ -76,7 +81,7 @@ export function ShotcraftPlannerDialog({ open, settings, onOpenChange, onNeedSet
         if (beatSync && !measured) { setStatus("正在本地分析音乐拍点与能量"); measured = await analyseMusicAsset(music, request.signal); request.signal.throwIfAborted(); setAnalysis(measured); }
       }
       const selected = images.filter((asset) => selectedImages.includes(asset.id));
-      const result = await generateShotcraftPlan(settings.aiProvider, { brief: brief.trim(), durationSeconds: duration, assets: selected, analysis: music && beatSync ? measured : undefined, musicSourceInUs: options.musicSourceInUs, useVision, soundEnabled }, request.signal, (progress) => { if (mounted.current && !request.signal.aborted) setStatus(progress.message); });
+      const result = await generateShotcraftPlan(settings.aiProvider, { brief: brief.trim(), durationSeconds: duration, assets: selected, analysis: music && beatSync ? measured : undefined, musicSourceInUs: options.musicSourceInUs, useVision, soundEnabled, isPro }, request.signal, (progress) => { if (mounted.current && !request.signal.aborted) setStatus(progress.message); });
       if (soundEnabled) {
         const soundIds = [...new Set(result.data.scenes.flatMap((scene) => scene.sounds.map((sound) => sound.soundId)))];
         for (const id of soundIds) { setStatus(`正在准备动作音效 ${prepared.length}/${soundIds.length}`); prepared.push(assets.find((asset) => asset.id === id && !asset.missing) ?? await loadShotcraftAudio(id, request.signal)); }
@@ -90,7 +95,13 @@ export function ShotcraftPlannerDialog({ open, settings, onOpenChange, onNeedSet
   }
   function apply() {
     if (!plan) return;
-    try { addSequence(plan, preparedAssets, options); onOpenChange(false); }
+    try {
+      const currentIsPro = isVipActive(useLicenseStore.getState().status);
+      const accessIssue = shotcraftPlanAccessIssue(plan, currentIsPro);
+      if (accessIssue) throw new Error(`${accessIssue}，请重新生成或升级 Pro`);
+      if (options.musicAssetId?.startsWith("shotcraft-audio:") && !canUseShotcraftAudio(options.musicAssetId, currentIsPro)) throw new Error("当前会员无权使用所选音乐，请更换音乐或升级 Pro");
+      addSequence(plan, preparedAssets, options); onOpenChange(false);
+    }
     catch (exception) { setError(exception instanceof Error ? exception.message : "加入时间线失败，请重新生成"); }
   }
   return <Dialog.Root open={open} onOpenChange={(next) => { if (!next) controller.current?.abort(); onOpenChange(next); }}><Dialog.Portal>
@@ -112,7 +123,7 @@ export function ShotcraftPlannerDialog({ open, settings, onOpenChange, onNeedSet
         {musicId !== "none" && <button type="button" className="button secondary" disabled={working} onClick={analyse}><AudioLines size={16} />分析拍点</button>}
         {analysis && musicId !== "none" && <p role="status">{analysis.bpm.toFixed(2)} BPM · {analysis.reliableGrid ? "节拍网格通过验证" : "网格不稳定，按实际鼓点编排"} · {analysis.hits.length} 个瞬态</p>}
         {working && <p className="shotcraft-planner-status" role="status"><LoaderCircle className="spin" size={16} />{status}</p>}
-        {error && <div className="error-callout" role="alert">{error}{error.includes("配置") && <button type="button" onClick={onNeedSettings}>打开模型配置</button>}</div>}
+        {error && <div className="error-callout" role="alert">{error}{error.includes("配置") && <button type="button" onClick={onNeedSettings}>打开模型配置</button>}{error.includes("Pro 会员") && onNeedLicense && <button type="button" onClick={onNeedLicense}>打开会员与授权</button>}</div>}
         {plan && compiled && <div className="shotcraft-plan-review"><strong>{plan.title} · {(compiled.durationUs / 1_000_000).toFixed(2)} 秒</strong><ol>{plan.scenes.map((scene, index) => <li key={index}><div><b>{shotcraftShot(scene.shotId)?.name}</b><span>{((compiled.tracks[0].clips[index]?.durationUs ?? 0) / 1_000_000).toFixed(2)} 秒</span></div><p>{scene.reason}</p></li>)}</ol>{compiled.warnings.length > 0 && <p role="status">{compiled.warnings.join("；")}</p>}</div>}
         <div className="dialog-actions"><span className="muted">起点 {(playheadUs / 1_000_000).toFixed(2)} 秒 · 加入新轨道</span>{working ? <button type="button" className="button secondary" onClick={() => controller.current?.abort()}><Square size={14} />停止</button> : <button type="submit" className="button secondary"><Clapperboard size={16} />{plan ? "重新编排" : "生成分镜"}</button>}<button type="button" className="button primary" disabled={working || !plan} onClick={apply}>加入时间线</button></div>
       </form>

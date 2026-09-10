@@ -1,12 +1,12 @@
 [package]
-name = "tauri-base"
+name = "bframe-studio"
 version = "0.3.0"
-description = "Tauri Base desktop template"
-authors = ["tauri-base"]
+description = "BFrame Studio desktop video editor"
+authors = ["BFrame Studio"]
 edition = "2021"
 
 [lib]
-name = "tauri_base_lib"
+name = "bframe_studio_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

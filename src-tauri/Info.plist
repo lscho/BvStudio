@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>BVideo Studio 使用麦克风录制配音和旁白。</string>
+  <string>BFrame Studio 使用麦克风录制配音和旁白。</string>
 </dict>
 </plist>

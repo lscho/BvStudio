@@ -60,7 +60,7 @@ import {
 } from "@/services/projectSession";
 import { captionSegments } from "@/services/asr";
 import { subtitlesForMotionMatch } from "@/domain/captions";
-import { browserApiKey, hasApiKey, matchTimelineMotion, matchTimelineSounds } from "@/services/ai/provider";
+import { browserApiKey, hasApiKey, matchTimelineMotion, matchTimelineSounds, motionMatchesAccessIssue } from "@/services/ai/provider";
 import { cancelCloudSpeechRequest, hasSpeechApiKey, startCloudMediaTranscription, type CloudSpeechProgressEvent } from "@/services/cloudSpeech";
 import { useEditorStore } from "@/stores/editorStore";
 import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
@@ -71,7 +71,8 @@ import { builtinSoundAssetId, builtinSoundEffectById } from "@/domain/soundEffec
 import { createBuiltinSoundAsset } from "@/services/builtinSounds";
 import { createMotionMatchingFeedbackRecord, readConfirmedMotionPreferences, saveMotionMatchingFeedback } from "@/services/motionMatchingFeedback";
 import { mediaAssetVisionThumbnail } from "@/services/ai/shotcraft";
-import { loadShotcraftAudio } from "@/services/shotcraftAudio";
+import { canUseShotcraftAudio, loadShotcraftAudio } from "@/services/shotcraftAudio";
+import { isVipActive } from "@/services/license";
 
 function loadVideoMetadata(url: string) {
   return new Promise<{ duration: number; width: number; height: number }>((resolve, reject) => {
@@ -169,6 +170,7 @@ export default function App() {
   const srtSubtitleCount = project.tracks.filter((track) => track.kind === "subtitle" && !track.hidden).flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle" && clip.durationUs > 0 && clip.text.trim().length > 0).length;
   const loadEffectLibrary = useEffectLibraryStore((state) => state.load);
   const vipStatus = useLicenseStore((state) => state.status);
+  const isPro = isVipActive(vipStatus);
   const initializeLicense = useLicenseStore((state) => state.initialize);
 
   useEffect(() => () => compositionExportController.current?.abort(), []);
@@ -358,7 +360,7 @@ export default function App() {
     const url = URL.createObjectURL(new Blob([serializeProject(project)], { type: "application/json" }));
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${project.name}.bvideo.json`;
+    anchor.download = `${project.name}.bframe.json`;
     anchor.click();
     URL.revokeObjectURL(url);
     savedProjectRef.current = serializeProject(project);
@@ -530,6 +532,7 @@ export default function App() {
     const captionStartUs = Math.round(Math.min(...captions.map((caption) => caption.startSeconds)) * 1_000_000);
     const captionEndUs = Math.round(Math.max(...captions.map((caption) => caption.endSeconds)) * 1_000_000);
     const musicWindowDurationUs = Math.max(0, captionEndUs - captionStartUs);
+    if (request.musicAssetId?.startsWith("shotcraft-audio:") && !canUseShotcraftAudio(request.musicAssetId, isVipActive(useLicenseStore.getState().status))) throw new Error("当前会员无权使用所选音乐，请更换音乐或升级 Pro");
     const requestedMusic = request.musicAssetId
       ? sourceProject.assets.find((asset) => asset.id === request.musicAssetId && asset.kind === "audio" && !asset.missing) ?? await loadShotcraftAudio(request.musicAssetId, signal)
       : undefined;
@@ -556,7 +559,8 @@ export default function App() {
         beatCount: request.analysis.beatsUs.filter((beat) => beat >= request.musicSourceInUs && beat <= request.musicSourceInUs + musicWindowDurationUs).length,
         strongHitOffsetsUs: request.analysis.hits.filter((hit) => hit.timeUs >= request.musicSourceInUs && hit.timeUs <= request.musicSourceInUs + musicWindowDurationUs && (hit.kind === "kick" || hit.kind === "snare")).sort((left, right) => right.strength - left.strength).slice(0, 20).sort((left, right) => left.timeUs - right.timeUs).map((hit) => hit.timeUs - request.musicSourceInUs)
       } : undefined,
-      motionPreferences
+      motionPreferences,
+      isPro
     }, browserApiKey(), signal, (progress) => onProgress(progress.message));
     signal.throwIfAborted();
     if (useEditorStore.getState().project !== sourceProject) throw new Error("工程已发生变化，请重新生成分镜");
@@ -583,6 +587,10 @@ export default function App() {
   function applySubtitleStoryboard(preview: SubtitleStoryboardPreview, request: SubtitleStoryboardRequest) {
     const current = useEditorStore.getState().project;
     if (current.updatedAt !== preview.projectUpdatedAt) throw new Error("工程已发生变化，请重新生成分镜后再应用");
+    const currentIsPro = isVipActive(useLicenseStore.getState().status);
+    const accessIssue = motionMatchesAccessIssue(preview.matches, currentIsPro);
+    if (accessIssue) throw new Error(`${accessIssue}，请重新生成或升级 Pro`);
+    if (request.musicAssetId?.startsWith("shotcraft-audio:") && !canUseShotcraftAudio(request.musicAssetId, currentIsPro)) throw new Error("当前会员无权使用所选音乐，请更换音乐或升级 Pro");
     const subtitleIds = new Set(preview.subtitleIds);
     const subtitles = current.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle" && subtitleIds.has(clip.id)).sort((left, right) => left.startUs - right.startUs);
     if (subtitles.length !== preview.subtitleIds.length) throw new Error("分镜引用的字幕已经变化，请重新生成");
@@ -658,10 +666,13 @@ export default function App() {
             transcriptExcerpt: sourceSubtitles.map((subtitle) => subtitle.text).join(" ").slice(0, 500)
           };
         }),
-        motionPreferences
+        motionPreferences,
+        isPro
       }, browserApiKey(), controller.signal, (progress) => setBusyMessage(progress.message));
       if (controller.signal.aborted) throw new Error("动效匹配已取消");
       if (useEditorStore.getState().project !== project) throw new Error("工程已发生变化，请重新匹配动效");
+      const accessIssue = motionMatchesAccessIssue(result.matches ?? [], isVipActive(useLicenseStore.getState().status));
+      if (accessIssue) throw new Error(`${accessIssue}，请重新匹配或升级 Pro`);
       const applied = applyMotionMatches(subtitles.map((clip) => clip.id), result.matches ?? []);
       const lintIssues = lintMotionProject(useEditorStore.getState().project);
       const errors = lintIssues.filter((issue) => issue.severity === "error");
@@ -868,7 +879,7 @@ export default function App() {
     <Tooltip.Provider delayDuration={350}>
       <div className="app-shell" data-desktop-platform={platformLayout}>
         <header className="app-header" data-tauri-drag-region>
-          <div className="brand"><span className="brand-mark" aria-hidden="true"><svg viewBox="0 0 1024 1024" fill="none"><path fillRule="evenodd" clipRule="evenodd" d="M220 188C220 149.34 251.34 118 290 118H520C694.313 118 792 205.908 792 340C792 412.3 757.339 468.166 699.533 505.313C771.756 542.225 812 601.542 812 680C812 821.824 704.391 882 520 882H290C251.34 882 220 850.66 220 812V188ZM390 262V442L548 352L390 262ZM390 606V738H558C617.233 738 648 715.782 648 672C648 628.218 617.233 606 558 606H390Z" fill="currentColor" /></svg></span><strong>BVideo Studio</strong><span className="project-name">{project.name}</span></div>
+          <div className="brand"><span className="brand-mark" aria-hidden="true"><svg viewBox="0 0 1024 1024" fill="none"><path fillRule="evenodd" clipRule="evenodd" d="M220 188C220 149.34 251.34 118 290 118H520C694.313 118 792 205.908 792 340C792 412.3 757.339 468.166 699.533 505.313C771.756 542.225 812 601.542 812 680C812 821.824 704.391 882 520 882H290C251.34 882 220 850.66 220 812V188ZM390 262V442L548 352L390 262ZM390 606V738H558C617.233 738 648 715.782 648 672C648 628.218 617.233 606 558 606H390Z" fill="currentColor" /></svg></span><strong>BFrame Studio</strong><span className="project-name">{project.name}</span></div>
           <div className="header-tools">
             <button
               type="button"
@@ -897,8 +908,8 @@ export default function App() {
       {(busyMessage || notice) && <div className={`status-toast ${busyMessage ? "busy" : ""}`}>{busyMessage && <LoaderCircle className="spin" size={15} />}<span>{busyMessage ?? notice}{exportProgress ? <small>{Math.round(exportProgress.progress * 100)}% · {exportProgress.segmentIndex}/{exportProgress.segmentCount || "-"}</small> : proxyProgress ? <small>{Math.round(proxyProgress.progress * 100)}%</small> : asrProgress ? <small>{Math.round(asrProgress.progress * 100)}% · 云端处理</small> : null}</span>{(compositionExportController.current || aiRequestController || exportJobId || proxyJobId || audioExtractionJobId || asrJobId) && <button type="button" aria-label={aiRequestController ? "取消 AI 匹配" : (exportJobId || compositionExportController.current) ? "取消视频导出" : proxyJobId ? "取消代理生成" : audioExtractionJobId ? "取消音频分离" : "取消字幕识别"} title="取消任务" onClick={() => void cancelCurrentTask()}><Square size={12} fill="currentColor" /></button>}{notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button>}</div>}
       <AiSettingsDialog open={settingsOpen} initialSection={settingsInitialSection} settings={settings} onOpenChange={setSettingsOpen} onSave={setSettings} />
       <AiGenerateDialog open={generateOpen} settings={settings} onOpenChange={setGenerateOpen} onNeedSettings={() => { setGenerateOpen(false); setSettingsOpen(true); }} />
-      <ShotcraftPlannerDialog open={shotcraftOpen} settings={settings} onOpenChange={setShotcraftOpen} onSubtitleStoryboard={() => setSubtitleStoryboardOpen(true)} onNeedSettings={() => { setShotcraftOpen(false); setSettingsOpen(true); }} />
-      <SubtitleStoryboardDialog open={subtitleStoryboardOpen} assets={project.assets} onOpenChange={setSubtitleStoryboardOpen} onGenerate={generateSubtitleStoryboard} onApply={applySubtitleStoryboard} onNeedSettings={() => { setSubtitleStoryboardOpen(false); setSettingsOpen(true); }} subtitleCount={subtitlesForMotionMatch(project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle"), useEditorStore.getState().selectedClipIds).length} durationSeconds={project.durationUs / 1_000_000} />
+      <ShotcraftPlannerDialog open={shotcraftOpen} settings={settings} isPro={isPro} onOpenChange={setShotcraftOpen} onSubtitleStoryboard={() => setSubtitleStoryboardOpen(true)} onNeedSettings={() => { setShotcraftOpen(false); setSettingsOpen(true); }} onNeedLicense={() => { setShotcraftOpen(false); setSettingsInitialSection("license"); setSettingsOpen(true); }} />
+      <SubtitleStoryboardDialog open={subtitleStoryboardOpen} assets={project.assets} isPro={isPro} onOpenChange={setSubtitleStoryboardOpen} onGenerate={generateSubtitleStoryboard} onApply={applySubtitleStoryboard} onNeedSettings={() => { setSubtitleStoryboardOpen(false); setSettingsOpen(true); }} subtitleCount={subtitlesForMotionMatch(project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle"), useEditorStore.getState().selectedClipIds).length} durationSeconds={project.durationUs / 1_000_000} />
       <AudioCreateDialog open={audioOpen} defaultText={audioContext?.text ?? ""} targetLabel={audioContext ? `${audioContext.block ? `脚本：${audioContext.block.label}` : audioContext.subtitles.length ? "选中字幕" : "自由配音"} · 起点 ${(audioContext.startUs / 1_000_000).toFixed(3)} 秒` : undefined} speechSegments={speechSegments} cloudSpeech={settings.cloudSpeech} onOpenChange={setAudioOpen} onCreated={(source) => addCreatedAudio(source, audioContext?.startUs, audioContext?.block?.id)} />
       <EffectLibraryDialog open={effectLibraryOpen} onOpenChange={setEffectLibraryOpen} />
       <MotionMatchingFeedbackDialog open={motionFeedbackOpen} project={project} onOpenChange={setMotionFeedbackOpen} />

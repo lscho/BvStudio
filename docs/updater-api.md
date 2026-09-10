@@ -20,6 +20,8 @@ GET /api/desktop-updates/latest?platform={{target}}
 
 客户端端点模板只包含 `{{target}}` 一个占位符，因此请求中**不含** `current_version`；版本比较在客户端 Tauri updater 内完成（`release.version > current_version`），服务端只负责返回该平台当前已发布的最新记录。
 
+端点的主机名不需要单独配置：发布构建时 `scripts/write-tauri-release-config.mjs` 从 `VITE_LICENSE_SERVER_URL`（授权服务与更新服务共用的 ESA 域名）取出 origin，自动拼成上面的完整地址，并写入 `$RUNNER_TEMP` 下的临时 Tauri 配置。`{{target}}` 由客户端在 `check({ target })` 时替换，服务端只认下表中五个值。同一变量也供前端授权服务使用，前端与 Rust 消费同一个域名。
+
 ## 响应
 
 ### 200 — 存在可发布版本
@@ -30,15 +32,17 @@ GET /api/desktop-updates/latest?platform={{target}}
 {
   "platform": "macos-arm",
   "version": "0.2.0",
-  "url": "https://github.com/example/tauri-base/releases/download/v0.2.0/tauri-base_0.2.0_aarch64_arm64.app.tar.gz",
-  "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpLWJhc2U=",
-  "fileName": "tauri-base_0.2.0_aarch64_arm64.app.tar.gz",
+  "url": "https://github.com/example/bframe-studio/releases/download/v0.2.0/BFrame%20Studio_0.2.0_aarch64_arm64.app.tar.gz",
+  "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIGJmcmFtZQ==",
+  "fileName": "BFrame Studio_0.2.0_aarch64_arm64.app.tar.gz",
   "fileSize": 42354176,
   "notes": "修复若干问题",
   "pub_date": "2026-01-15T08:00:00Z",
   "isForceUpdate": false
 }
 ```
+
+文件名来自 Tauri 依据 `productName`（`BFrame Studio`）生成的安装包/更新包，因此可能包含空格——`url` 里的文件名段必须按 URL 规则编码（发布脚本用 `encodeURIComponent`），`fileName` 则保留原始文件名。以上只是示例，实际取值以 `desktop-release-manifest.json` 记录的 `fileName` 为准。
 
 字段约束与消费位置：
 

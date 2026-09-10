@@ -11,7 +11,7 @@ use tauri::AppHandle;
 use crate::secrets::credentials_directory;
 
 const DEVICE_ID_FILE: &str = "device-id";
-const HASH_SALT: &[u8] = b"bvideo:device:v1:";
+const HASH_SALT: &[u8] = b"bframe-studio:device:v1:";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

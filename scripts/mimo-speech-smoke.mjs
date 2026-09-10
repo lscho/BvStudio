@@ -10,7 +10,7 @@ function speechApiKey() {
   }
   return execFileSync("security", [
     "find-generic-password",
-    "-s", "com.bvideo.studio.speech",
+    "-s", "com.bframe.studio.speech",
     "-a", "mimo-cloud-speech",
     "-w"
   ], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();

@@ -16,9 +16,9 @@ import {
 const VALID_RECORD = {
   platform: "macos-arm",
   version: "0.4.0",
-  url: "https://github.com/example/tauri-base/releases/download/v0.4.0/tauri-base_0.4.0_aarch64_arm64.app.tar.gz",
+  url: "https://github.com/example/bframe-studio/releases/download/v0.4.0/bframe-studio_0.4.0_aarch64_arm64.app.tar.gz",
   signature: "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZQ==",
-  fileName: "tauri-base_0.4.0_aarch64_arm64.app.tar.gz",
+  fileName: "bframe-studio_0.4.0_aarch64_arm64.app.tar.gz",
   fileSize: 42354176,
   notes: "修复若干问题",
   pub_date: "2026-01-15T08:00:00Z",
@@ -84,7 +84,7 @@ describe("字段归一化", () => {
   });
 
   it("fileNameFromUrl 取路径末段并解码，非法地址返回空串", () => {
-    expect(fileNameFromUrl(VALID_RECORD.url)).toBe("tauri-base_0.4.0_aarch64_arm64.app.tar.gz");
+    expect(fileNameFromUrl(VALID_RECORD.url)).toBe("bframe-studio_0.4.0_aarch64_arm64.app.tar.gz");
     expect(fileNameFromUrl("https://example.com/%E6%9B%B4%E6%96%B0%E5%8C%85.tar.gz")).toBe("更新包.tar.gz");
     expect(fileNameFromUrl("not-a-url")).toBe("");
   });
@@ -138,7 +138,7 @@ describe("decideUpdateResponse", () => {
 
   it("fileName 缺省时从 url 推导", () => {
     const record = { ...VALID_RECORD, fileName: "" };
-    expect(decideUpdateResponse(record, "macos-arm").payload.fileName).toBe("tauri-base_0.4.0_aarch64_arm64.app.tar.gz");
+    expect(decideUpdateResponse(record, "macos-arm").payload.fileName).toBe("bframe-studio_0.4.0_aarch64_arm64.app.tar.gz");
   });
 
   it("isForceUpdate 只在严格布尔 true 时生效", () => {

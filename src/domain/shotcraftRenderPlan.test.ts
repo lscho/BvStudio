@@ -10,7 +10,7 @@ describe("Shotcraft rendering contract", () => {
     const project = createEmptyProject();
     project.assets = [{ id: "logo", name: "品牌标识", kind: "image", durationUs: 0, sourcePath: "/logo.png", objectUrl: "blob:logo", width: 256, height: 256 }];
     const track = project.tracks.find((item) => item.kind === "composition")!;
-    const clip = { ...createEffectPreviewClip("shotcraft-logo-shrink-wordmark-lockup", project.motionTheme, project.assets), trackId: track.id, params: { copy0: "AI 给初稿，你来掌控", copy1: "BVideo Studio", surface: "#111316" }, text: "可编辑的结果", bindings: [{ slotId: "logo", assetIds: ["logo"] }] };
+    const clip = { ...createEffectPreviewClip("shotcraft-logo-shrink-wordmark-lockup", project.motionTheme, project.assets), trackId: track.id, params: { copy0: "AI 给初稿，你来掌控", copy1: "BFrame Studio", surface: "#111316" }, text: "可编辑的结果", bindings: [{ slotId: "logo", assetIds: ["logo"] }] };
     track.clips = [clip];
     const serialized = serializeProject(project);
     expect(serialized).not.toContain("blob:logo");

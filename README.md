@@ -1,4 +1,4 @@
-# BVideo Studio
+# BFrame Studio
 
 基于 Tauri 2、React 19 和 TypeScript 的 AI 视频创作客户端。使用同一个时间线同时处理已有视频和纯 AI 生成内容。
 
@@ -25,7 +25,7 @@
 - 时间线支持入点/出点选区，AI 内容可在选区起点插入，或精确替换、叠加整个选区；
 - 动效统一为独立的 Composition 片段，不再向视频或贴图附加 Effect。内置 Overlay Studio 的全部 102 个动效，另有 6 个素材展示和 4 个独立背景。除章节导航条与双语字幕轨保持手动添加外，其余动效（包括人物聚焦卡和素材动效）全部进入 AI 自动匹配目录；旧版文字、图表和组合场景定义仅在打开已有工程时兼容解析；
 - 独立 `.bveffect` 扩展包支持签名校验、安装、升级和卸载；v6 可用纯 JSON 合成短提示音并绑定动效触发点，安装后生成哈希缓存 WAV，预览和 FFmpeg 导出共用同一份触发快照；格式与示例见 `docs/effect-package-format.md`；
-- 动效按分类控制可用范围：常规分类内前 10 个动效免费，「展示」分类只保留这 10 个免费动效、其余整体并入「高级」分类，布局与数据的第 11 个起留在原分类但需要 Pro；「高级」分类收录 3D 空间、复杂运镜与展示类进阶动效，全部需要 Pro。需要 Pro 的动效仍可在画布中预览，条目右侧加号变成锁定的 `PRO` 按钮，点击进入「会员与授权」；规则与维护约定见 [`docs/effect-access.md`](docs/effect-access.md)；
+- 动效按分类控制可用范围：常规分类内前 10 个动效免费，「展示」分类只保留这 10 个免费动效、其余整体并入「高级」分类，布局与数据的第 11 个起留在原分类但需要 Pro；「高级」分类收录 3D 空间、复杂运镜与展示类进阶动效，全部需要 Pro。需要 Pro 的动效仍可在画布中预览，条目右侧加号变成锁定的 `PRO` 按钮，点击进入「会员与授权」；AI 动效与镜头编排只向模型提供当前身份可用的候选，并在应用预览前再次校验授权；规则与维护约定见 [`docs/effect-access.md`](docs/effect-access.md)；
 - 动效元数据集中在 `src/domain/effects.ts`，React 卡片注册与参数控件集中在 `src/compositions/registry.tsx`；预览和导出复用同一组件树，并由整数微秒播放头计算确定性帧。102 个 Overlay Studio 动效中，20 个沿用 BVideo 原有专属实现，另外 82 个通过参考组件适配层接入；各组件的专属参数随工程文件保存。结构化内容使用 `｜`、`|` 或换行分隔，模板按播放头逐项显现并保持在场。点击动效条目会在中央画布播放临时预览，重复点击可重新播放，只有条目右侧加号会把动效添加到播放头；需要素材的动效会优先使用项目素材，数量不足时补充半透明素材占位，预览不写入工程或撤销栈。“动效”Tab 顶部的 6 个色块是统一主题色入口，后续手动添加和 AI 匹配的动效采用该颜色；画布设置仅保留成片规格，旧工程的主题样式继续保留。字幕颜色统一在全局字幕样式中设置，文字、关键词、背景和描边均从固定色值中选择，并应用到全部未锁定字幕及后续生成、识别的字幕，支持撤销/重做。动效匹配只更新高亮词，不覆盖字幕配色；单个动效仍可设置独立颜色；
 - Overlay Studio 动效沿用参考项目的卡片材质、图表几何、文字层级、入场距离和缓动曲线，统一按参考像素缩放到横屏、竖屏与方形预览及输出画布。82 个参考组件保持完整舞台固定居中，AI 和手动编辑都通过卡片内部的参考落位、偏移与缩放调整实际内容，选择框按卡片真实边界显示，不会再把完整舞台二次移动到画布外。排版重组连续插值、钉板回弹、终端打字、光标闪烁和卡内视频均跟随播放头，支持暂停及向前或向后定位；导出会等待卡内视频目标帧解码，并覆盖延迟出现的条目、连续背景和完整动画末帧。字体仍采用工程主题与系统可用字体，细边框在缩小预览时由浏览器取整；内部透明帧只包含动效自身，毛玻璃不会将底层视频的背景模糊烘焙进成片；
 - 桌面端本地视频导入、FFprobe 媒体探测、缩略图和音频波形缓存；
@@ -40,7 +40,7 @@
 - Shotcraft 自动修复会反馈具体镜头、文案字段、区域和动作事件，并校验重复选型；约 50 秒的真实云端实测记录与内容审查边界见 [Shotcraft 验证](docs/shotcraft.md#本轮验证)。
 - 桌面端 API Key 写入应用数据目录下权限受限的凭证文件，模型返回结果通过本地 JSON Schema 校验；
 - MiMo 云端语音：`mimo-v2.5-tts` / `mimo-v2.5-tts-voicedesign` 生成配音，`mimo-v2.5-asr` 提取字幕；TTS 与 ASR 共用独立 API Key，桌面端写入应用数据目录；AI 配音以时间字幕作为唯一文本源逐段生成，每段使用实际 WAV 时长回写字幕、动效和视频图层，再由本地 FFmpeg 合并为一条连续音轨。新配音默认使用 `1.5×` 导出增益；预览使用原生多轨播放并将单轨音量限制为 `1×`，确保配音、音乐和音效可同时播放。导出时先统一人声响度再应用片段音量；客户端会校验合并音频时长与全部逐句音频之和，异常时停止写入，避免文案分叉、句间错位、语音缺失和片段切换卡顿；
-- 设置持久化：桌面运行时走 `@tauri-apps/plugin-store`（`settings.json` / `preferences`），浏览器预览走 `tauri-base:` 命名空间 `localStorage`，损坏数据回退默认值；
+- 设置持久化：桌面运行时走 `@tauri-apps/plugin-store`（`settings.json` / `preferences`），浏览器预览走 `bframe-studio:` 命名空间 `localStorage`，损坏数据回退默认值；
 - 原生窗口集成：仅 Windows 显示最小化/最大化/关闭按钮，macOS 保留原生红绿灯；标题栏可拖拽（`data-tauri-drag-region`）；debug 构建支持 F12 / Cmd-or-Ctrl+Shift+I 切换 DevTools；
 - 签名应用内更新：`@tauri-apps/plugin-updater`，普通更新显示入口，`isForceUpdate` 启动即强制覆盖；
 - 发布：`.github/workflows/build-desktop.yml` 构建五个平台（Windows x64/ARM64、macOS Intel/Apple Silicon、Linux x64）的签名安装包与更新包，并把 `desktop-release-manifest.json` 上传到 GitHub Release；更新服务由 `edge/` 的 ESA 边缘函数提供，清单经 `npm run esa:import-release` 校验导入。
@@ -79,32 +79,35 @@ MiMo ASR 目前只接收 WAV/MP3，且单次 Base64 数据上限为 10MB。客�
 构建带签名与更新端点的本地发布包：
 
 ```bash
-export RELEASE_VERSION=0.1.0 VITE_ENABLE_UPDATER=true
+set -a && . ./.env.production && set +a   # 载入 VITE_ENABLE_UPDATER / VITE_LICENSE_SERVER_URL / VITE_LICENSE_RESPONSE_KEY
+export RELEASE_VERSION=0.1.0
 export TAURI_SIGNING_PUBLIC_KEY='<公钥>'
 export TAURI_SIGNING_PRIVATE_KEY='<私钥>'
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD='<可选密码>'
-export TAURI_UPDATER_ENDPOINT='https://<你的 ESA 域名>/api/desktop-updates/latest?platform={{target}}'
 export RUNNER_TEMP="$(mktemp -d)"
 npm run release:config
-npm run tauri -- build --config "$RUNNER_TEMP/tauri-base-release/tauri.release.conf.json"
+npm run tauri -- build --config "$RUNNER_TEMP/bframe-studio-release/tauri.release.conf.json"
 ```
 
-`release:config` 只把版本与更新器设置写入 `$RUNNER_TEMP/tauri-base-release/tauri.release.conf.json` 临时覆盖文件，**不会**修改提交的 `src-tauri/tauri.conf.json`。`TAURI_UPDATER_ENDPOINT` 可以留空；GitHub Actions 会继续生成签名发布产物，但编译时关闭客户端更新检查，不会发起更新请求。
+`release:config` 只把版本与更新器设置写入 `$RUNNER_TEMP/bframe-studio-release/tauri.release.conf.json` 临时覆盖文件，**不会**修改提交的 `src-tauri/tauri.conf.json`。
+
+更新端点不需要单独配置：脚本从 `VITE_LICENSE_SERVER_URL` 取出 origin，自动拼成 `{origin}/api/desktop-updates/latest?platform={{target}}`（同样的域名也供前端授权服务使用）。因此它要求该变量只填 origin，带路径会直接报错。`VITE_ENABLE_UPDATER` 严格等于 `"true"` 时才写入端点，否则端点为 `[]`——这与客户端 `src/services/updater.ts` 的判定一致，避免出现「端点已配置但被前端挡住」的死配置。两者都未配置时 GitHub Actions 仍会生成签名发布产物，只是客户端不会发起更新请求。
 
 ## 环境变量
 
 | 变量 | 位置 | 说明 |
 | --- | --- | --- |
-| `VITE_ENABLE_UPDATER` | `.env`（示例见 `.env.example` / `.env.production.example`） | `"true"` 才允许客户端发起更新检查；浏览器预览与默认构建保持关闭 |
-| `TAURI_UPDATER_ENDPOINT` | GitHub 仓库变量（可选） | 含 `{{target}}` 占位符的公共 HTTPS 端点模板，指向 `edge/` 部署的 ESA 边缘函数；未配置时发布构建不启用客户端更新检查 |
-| `VITE_LICENSE_SERVER_URL` | 发布构建环境变量（可选） | ESA 边缘函数授权服务域名；未配置时会员状态仅使用本地缓存（开发预览模式） |
-| `VITE_LICENSE_RESPONSE_KEY` | 发布构建环境变量（可选） | 授权响应 HMAC 验签密钥，与 `edge/config.js` 的 `HMAC_SECRET` 一致 |
+| `VITE_ENABLE_UPDATER` | `.env` / GitHub 仓库变量（示例见 `.env.example` / `.env.production.example`） | 严格 `"true"` 才允许客户端发起更新检查，同时决定发布配置是否写入更新端点；浏览器预览与默认构建保持关闭 |
+| `VITE_LICENSE_SERVER_URL` | 发布构建环境变量 / GitHub 仓库变量 | ESA 边缘函数域名，**只填 origin**。同时驱动会员授权接口与桌面更新端点；未配置时更新端点为 `[]`、会员状态退回本地缓存模式 |
+| `VITE_LICENSE_RESPONSE_KEY` | 发布构建环境变量 / GitHub Secret | 授权响应 HMAC 验签密钥，与 `edge/config.js` 的 `HMAC_SECRET` 一致；与上一条必须同时配置 |
 
 ## GitHub 变量 / Secrets
 
 | 名称 | 类型 | 用途 |
 | --- | --- | --- |
-| `TAURI_UPDATER_ENDPOINT` | Variable（可选） | 更新端点模板（见上）；未配置时不检查更新 |
+| `VITE_ENABLE_UPDATER` | Variable（可选） | 设为 `true` 才启用客户端更新检查；未设置时构建出的客户端不检查更新 |
+| `VITE_LICENSE_SERVER_URL` | Variable | ESA 边缘函数域名（只填 origin），同时供会员授权与桌面更新端点使用 |
+| `VITE_LICENSE_RESPONSE_KEY` | Variable 或 Secret | 授权响应 HMAC 验签密钥，与 `edge/config.js` 的 `HMAC_SECRET` 一致 |
 | `TAURI_SIGNING_PUBLIC_KEY` | Variable 或 Secret | 客户端内置的更新公钥 |
 | `TAURI_SIGNING_PRIVATE_KEY` | Secret | 签名更新包的私钥 |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret（可选） | 私钥密码 |
@@ -123,19 +126,31 @@ npm run tauri -- build --config "$RUNNER_TEMP/tauri-base-release/tauri.release.c
 
 生成的安装包 / 更新包对：
 
-| 平台 | 安装包 | 更新包 |
+| 平台 | 安装包 | 更新包（Release 资产） |
 | --- | --- | --- |
-| `windows-x86` | `tauri-base_{version}_x64-setup.exe`（NSIS，签名） | 同一个 `.exe`（NSIS 被动安装） |
-| `windows-arm` | `tauri-base_{version}_arm64-setup.exe`（NSIS，签名） | 同一个 `.exe` |
-| `macos-x86` | `tauri-base_{version}_x64.dmg` | `tauri-base_{version}_aarch64_x64.app.tar.gz` + `.sig` |
-| `macos-arm` | `tauri-base_{version}_arm64.dmg` | `tauri-base_{version}_aarch64_arm64.app.tar.gz` + `.sig` |
-| `linux-x86` | `tauri-base_{version}_amd64.AppImage`（同时发布 `.deb`） | `tauri-base_{version}_amd64.AppImage.tar.gz` + `.sig` |
+| `windows-x86` | NSIS 签名 `.exe` | 同一个 `.exe`（NSIS 被动安装） |
+| `windows-arm` | NSIS 签名 `.exe` | 同一个 `.exe` |
+| `macos-x86` | `.dmg` | `BFrame Studio_x64.app.tar.gz` + `.sig` |
+| `macos-arm` | `.dmg` | `BFrame Studio_arm64.app.tar.gz` + `.sig` |
+| `linux-x86` | `.AppImage`（同时发布 `.deb`） | `{AppImage 文件名}.tar.gz` + `.sig` |
 
-内部构建产物暂时继续沿用脚手架的 `tauri-base` 文件名前缀，以保持现有签名更新脚本兼容；应用显示名和 bundle identifier 已切换为 BVideo Studio。
+命名口径分三层，不要混淆（macOS 部分已由真实打包确认）：
+
+- **`.app` 目录名与安装包名**取 `tauri.conf.json` 的 `productName`（`BFrame Studio`）。Tauri 生成 `BFrame Studio.app.tar.gz`，CI 再追加架构后缀得到 `BFrame Studio_arm64.app.tar.gz`。
+- **可执行文件名**取 Cargo 包名（`bframe-studio`），即 `BFrame Studio.app/Contents/MacOS/bframe-studio`；Windows 安装后同样是 `bframe-studio.exe`。
+- **CI 产物目录前缀**是 `bframe-studio-`（如 `bframe-studio-macos-arm64`）。`.github/workflows/build-desktop.yml` 的 matrix `artifact` 与 `scripts/build-desktop-release-manifest.mjs` 的 `artifactDirectory` 必须严格一致，否则 `prepare-release` 直接失败。
+
+各平台最终文件名以 `desktop-release-manifest.json` 的 `fileName` 为唯一权威，`npm run esa:import-release` 按它写入 EdgeKV。
+
+体积参考（macOS arm64 实测）：更新包约 67MB，解压后 App 约 104MB，其中 ffmpeg/ffprobe 两个 sidecar 合计 60MB。Tauri updater 是全量替换、无差分更新，所以每次发版这部分都要重下。
+
+bundle identifier 为 `com.bframe.studio`。它决定 macOS 的签名/公证身份与 Windows 的卸载注册表项，**一旦有用户安装后就不可再改**——改动会被操作系统视为另一个应用，导致已安装用户无法升级、卸载记录无法匹配。当前尚无安装用户，因此与品牌相关的命名（存储键前缀 `bframe-studio:`、工程扩展名 `.bframe.json`、签名上下文 `bframe-license-v1`）已一次性统一到 BFrame。
 
 ## 更新服务协议
 
 客户端与更新服务的精确契约见 [`docs/updater-api.md`](docs/updater-api.md)：`GET /api/desktop-updates/latest?platform={{target}}`，`204` 是无更新的正常结果。服务端与会员授权共用同一个 ESA 边缘函数（`edge/`）与 EdgeKV 命名空间，每个平台一条 `release:latest:{platform}` 记录；发布记录由 `npm run esa:import-release` 从发布清单导入，操作步骤见 [`docs/desktop-release-operations.md`](docs/desktop-release-operations.md)。
+
+更新端点地址不需要单独配置：发布构建时由 `scripts/write-tauri-release-config.mjs` 从 `VITE_LICENSE_SERVER_URL` 推导，前端授权服务与 Rust 更新器消费同一个域名变量。
 
 ## 会员授权
 

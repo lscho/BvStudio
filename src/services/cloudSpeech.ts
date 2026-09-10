@@ -45,7 +45,7 @@ export interface CloudSpeechTrackResult {
   segmentDurationsUs: number[];
 }
 
-const browserKeyName = "bvideo:speech-api-key";
+const browserKeyName = "bframe-studio:speech-api-key";
 
 function providerRoot(value: string) {
   const base = value.trim().replace(/\/+$/u, "");

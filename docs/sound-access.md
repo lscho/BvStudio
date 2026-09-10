@@ -45,7 +45,10 @@
 | `src/domain/shotcraftLibrary/audioCatalog.json` | 音频目录与原始分类；`id`、`file`、`sha256` 不随展示分类变化 |
 | `src/components/ShotcraftAudioLibrary.tsx` | 按展示分类分组，按档位渲染 `PRO` 按钮；锁定条目的试听保持可用 |
 | `src/components/AssetPanel.tsx` | 传入 `isPro` 与 `onNeedLicense` |
+| `src/services/shotcraftAudio.ts`、`src/services/ai/shotcraft.ts` | 过滤 AI 镜头的动作音效与内置音乐，并在生成、应用阶段校验权限 |
 | `src/stores/licenseStore.ts`、`src/services/license.ts` | Pro 状态来源与离线宽限期 |
+
+AI 镜头与字幕分镜只会收到当前身份可用的 Shotcraft 动作音效；内置音乐选择器也隐藏无权限曲目。应用已生成的预览时会再次读取授权状态，避免过期 Pro 结果继续写入工程。独立的字幕音效匹配使用另一组全部免费开放的内置合成音效，不参与本页额度计算。
 
 ## 5. 维护约定
 

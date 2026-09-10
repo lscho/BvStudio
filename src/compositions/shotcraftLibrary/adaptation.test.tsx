@@ -32,7 +32,7 @@ it("旧 104 帧时钟仍可读取，末帧已完成时间线推近", async () =>
   expect(host.innerHTML).toContain("transform:scale(1.28)");
 });
 
-it.each(["BVideo Studio", "这是一个更长的中文产品品牌"])("品牌 %s 在收尾前完成全部字母入场并保留空格", async (brand) => {
+it.each(["BFrame Studio", "这是一个更长的中文产品品牌"])("品牌 %s 在收尾前完成全部字母入场并保留空格", async (brand) => {
   const host = await shotFrame("shotcraft-logo-shrink-wordmark-lockup", 100, { copy1: brand, copy0: "AI 给初稿，你来掌控" });
   const letters = [...host.querySelectorAll("span")].filter((node) => node.style.opacity !== "");
   expect(letters.length).toBeGreaterThan(0);

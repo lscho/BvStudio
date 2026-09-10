@@ -38,7 +38,7 @@ export function adaptEffectPackage(info: NativeEffectPackageInfo): EffectPackage
 
 export async function selectEffectPackage(): Promise<string | null> {
   if (!isDesktopRuntime()) return null;
-  const selected = await open({ multiple: false, directory: false, filters: [{ name: "BVideo 动效包", extensions: ["bveffect"] }] });
+  const selected = await open({ multiple: false, directory: false, filters: [{ name: "BFrame 动效包", extensions: ["bveffect"] }] });
   return typeof selected === "string" ? selected : null;
 }
 

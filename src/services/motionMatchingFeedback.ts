@@ -6,7 +6,7 @@ import { isDesktopRuntime } from "@/services/runtime";
 
 const feedbackFile = "motion-matching-feedback.json";
 const feedbackKey = "records";
-const browserFeedbackKey = "bvideo:motion-matching-feedback";
+const browserFeedbackKey = "bframe-studio:motion-matching-feedback";
 const maximumFeedbackRecords = 50;
 let memoryValue: unknown = [];
 

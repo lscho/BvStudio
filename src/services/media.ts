@@ -247,13 +247,13 @@ export async function selectReplacementMediaPath(defaultPath?: string): Promise<
 
 export async function selectProjectToOpen(): Promise<string | null> {
   if (!isDesktopRuntime()) return null;
-  const selected = await open({ multiple: false, directory: false, filters: [{ name: "BVideo 工程", extensions: ["bvideo.json", "json"] }] });
+  const selected = await open({ multiple: false, directory: false, filters: [{ name: "BFrame 工程", extensions: ["bframe.json", "json"] }] });
   return typeof selected === "string" ? selected : null;
 }
 
 export async function selectProjectDestination(defaultName: string): Promise<string | null> {
   if (!isDesktopRuntime()) return null;
-  return save({ defaultPath: `${defaultName}.bvideo.json`, filters: [{ name: "BVideo 工程", extensions: ["bvideo.json"] }] });
+  return save({ defaultPath: `${defaultName}.bframe.json`, filters: [{ name: "BFrame 工程", extensions: ["bframe.json"] }] });
 }
 
 export async function selectVideoDestination(defaultName: string, format: ExportVideoFormat): Promise<string | null> {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, readSettings, writeSettings } from "@/services/storage";
 
-const STORAGE_KEY = "tauri-base:preferences";
+const STORAGE_KEY = "bframe-studio:preferences";
 
 // Node ≥ 26 的全局 localStorage 实验性实现会遮蔽 happy-dom 的同名属性，
 // 因此这里注入一个独立的内存 Storage 替身，专门验证命名空间键与回退逻辑。

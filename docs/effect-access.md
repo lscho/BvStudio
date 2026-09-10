@@ -54,7 +54,10 @@ shotcraft-terminal3-d
 | `src/domain/effectAccess.ts` | 免费额度、分类顺序、档位计算（`effectTierMap` / `effectTier` / `canUseEffect`） |
 | `src/domain/effects.ts` | `EffectCategory` 增加「高级」；`PROMOTED_EFFECT_CATEGORIES` 与 `PREMIUM_EFFECT_IDS` 决定分类归属 |
 | `src/components/AssetPanel.tsx` | 按档位渲染 `PRO` 按钮；锁定条目的预览保持可用，添加改为引导会员授权 |
+| `src/services/ai/provider.ts`、`src/services/ai/shotcraft.ts` | 按当前身份过滤 AI 动效与镜头候选，并校验模型结果 |
 | `src/stores/licenseStore.ts`、`src/services/license.ts` | Pro 状态来源与离线宽限期 |
+
+AI 编排采用两道检查：请求阶段只把当前身份可用的 ID 写入提示词和结构化输出范围；用户应用预览时重新读取授权状态，防止授权过期或身份切换后写入 Pro 内容。
 
 ## 6. 维护约定
 

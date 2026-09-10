@@ -1,4 +1,4 @@
-# BVideo Studio Agent 开发约束
+# BFrame Studio Agent 开发约束
 
 本文档适用于仓库根目录及其全部子目录。若后续某个子目录增加了更具体的 `AGENTS.md`，该子目录内以更具体的文档为准。
 

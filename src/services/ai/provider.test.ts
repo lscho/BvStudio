@@ -88,7 +88,7 @@ describe("provider requests", () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ segments: selection.segments.map((s) => ({ ...s, roll: "b-roll" })) }) } }] })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ matches: [matched] }) } }] })));
     vi.stubGlobal("fetch", fetchMock);
-    const result = await matchTimelineMotion(config, { topic: "痛点", style: "简洁", captions, timelineDurationSeconds: 8, materials: [{ id: "screenshot", kind: "image", name: "产品时间线", durationSeconds: 0 }], storyboard: { mode: "b-roll", prompt: "0-8秒 B-roll 用柔焦标题对比生成和改片" }, timelineVisuals: [] }, "secret");
+    const result = await matchTimelineMotion(config, { topic: "痛点", style: "简洁", captions, timelineDurationSeconds: 8, materials: [{ id: "screenshot", kind: "image", name: "产品时间线", durationSeconds: 0 }], storyboard: { mode: "b-roll", prompt: "0-8秒 B-roll 用柔焦标题对比生成和改片" }, timelineVisuals: [], isPro: true }, "secret");
     expect(result.matches[0]).toMatchObject({ primaryText: matched.primaryText, persistUntilCaptionIndex: 1, motionGroupId: "segment-1" });
     expect(result.selection.segments[0].roll).toBe("b-roll");
     for (const call of fetchMock.mock.calls) {
@@ -224,7 +224,8 @@ describe("provider requests", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ matches }) } }], usage: { prompt_tokens: 12, completion_tokens: 18, total_tokens: 30 } }), { status: 200 }));
     const result = await matchTimelineMotion(config, {
       topic: "充电桩", style: "专业", timelineDurationSeconds: 10, materials: [],
-      captions: [{ startSeconds: 0, endSeconds: 2, text: "市场份额增长达到42%。" }, { startSeconds: 8.5, endSeconds: 10, text: "最后给出明确结论。" }]
+      captions: [{ startSeconds: 0, endSeconds: 2, text: "市场份额增长达到42%。" }, { startSeconds: 8.5, endSeconds: 10, text: "最后给出明确结论。" }],
+      isPro: true
     }, "secret");
     expect(result.matches?.map((match) => match.primaryText)).toEqual(["份额增长达到42%", "明确结论"]);
     const selectionPayload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
@@ -263,6 +264,7 @@ describe("provider requests", () => {
       article: "先说明重复剪辑、素材整理和交付慢三类痛点，再给出自动化处理流程。",
       timelineDurationSeconds: 12,
       materials: [],
+      isPro: true,
       captions: [
         { startSeconds: 0, endSeconds: 4, text: "口播制作有重复剪辑和素材整理两大痛点。" },
         { startSeconds: 4, endSeconds: 8, text: "这些问题会拖慢交付。" },
@@ -271,6 +273,19 @@ describe("provider requests", () => {
     });
     const expected = allCompositions().filter((candidate) => !["chapter-bar", "caption-track"].includes(candidate.id) && !isShotcraftComposition(candidate.id));
     expect(candidates.map((candidate) => candidate.id)).toEqual(expected.map((candidate) => candidate.id));
+  });
+
+  it("only offers licensed motion effects to Free users", () => {
+    const input = {
+      topic: "产品介绍",
+      style: "专业",
+      timelineDurationSeconds: 4,
+      materials: [],
+      captions: [{ startSeconds: 0, endSeconds: 4, text: "展示产品能力。" }]
+    };
+    expect(selectMotionCandidates({ ...input, isPro: false }).map((candidate) => candidate.id)).not.toContain("poster-wall-3d");
+    expect(selectMotionCandidates({ ...input, isPro: false }).map((candidate) => candidate.id)).toContain("pain-points");
+    expect(selectMotionCandidates({ ...input, isPro: true }).map((candidate) => candidate.id)).toContain("poster-wall-3d");
   });
 
   it("splits long subtitle lists only at stable boundaries without dropping indexes", () => {

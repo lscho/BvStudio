@@ -73,7 +73,7 @@ describe("crypto helpers", () => {
     const status = { isVip: true, planName: "年度 VIP 会员", expireAt: 123, activatedAt: 456, licenseKey: "VIP-ABCD****QRST" };
     const envelope = await signLicenseStatus(SECRET, status, 789);
     const expected = createHmac("sha256", SECRET)
-      .update(["bvideo-license-v1", "789", "true", "年度 VIP 会员", "123", "456", "VIP-ABCD****QRST"].join("\n"))
+      .update(["bframe-license-v1", "789", "true", "年度 VIP 会员", "123", "456", "VIP-ABCD****QRST"].join("\n"))
       .digest("hex");
     expect(envelope.sig).toBe(expected);
   });

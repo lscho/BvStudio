@@ -279,7 +279,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        synthesize_platform("BVideo Studio", "", 220, &output, &ffmpeg).unwrap();
+        synthesize_platform("BFrame Studio", "", 220, &output, &ffmpeg).unwrap();
         if fs::metadata(&output).unwrap().len() <= 1_000 {
             let _ = fs::remove_file(output);
             return;

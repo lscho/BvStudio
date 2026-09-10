@@ -56,7 +56,7 @@ export function isColorScheme(value: unknown): value is ColorScheme {
 }
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-const browserStorageKey = "tauri-base:preferences";
+const browserStorageKey = "bframe-studio:preferences";
 const memoryStore = new Map<string, unknown>();
 const settingsFile = "settings.json";
 const settingsKey = "preferences";

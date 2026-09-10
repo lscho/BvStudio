@@ -30,8 +30,8 @@ export interface ProjectHydrationOptions {
 const sessionFile = "workspace.json";
 const recoveryKey = "recovery";
 const recentKey = "recentProjects";
-const browserRecoveryKey = "bvideo:recovery";
-const browserRecentKey = "bvideo:recent-projects";
+const browserRecoveryKey = "bframe-studio:recovery";
+const browserRecentKey = "bframe-studio:recent-projects";
 const memoryStore = new Map<string, string>();
 
 function readBrowserValue(key: string): string | null {
