@@ -2,13 +2,12 @@
 
 This icon set is generated from `../app-icon-macos26.svg`.
 
-The mark combines three product ideas in one compact silhouette:
+The mark combines two product ideas in one compact silhouette:
 
 - the `B` from BVideo Studio;
-- a play button for video creation;
-- stacked clips and a playhead for timeline editing.
+- a play-shaped counter for video creation that stays legible at small sizes.
 
-The rounded shell, layered translucent surfaces, edge highlights, and restrained depth are designed to sit naturally beside macOS 26 app icons while remaining legible at 32 px.
+The rounded shell, subtle material depth, and single continuous mark are designed to sit naturally beside macOS 26 app icons while remaining legible at 32 px. Decorative timeline and sparkle details are intentionally omitted for a calmer silhouette.
 
 Regenerate the platform files with:
 

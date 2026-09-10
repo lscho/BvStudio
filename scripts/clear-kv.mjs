@@ -7,7 +7,7 @@
  *   npm run esa:clear-kv -- --prefix device:
  *   npm run esa:clear-kv -- --dry-run   # 只列出将删除的键
  *
- * 危险操作：删除后无法恢复（卡密需重新生成导入）。
+ * 危险操作：删除后无法恢复（卡密需重新生成导入，发布记录需重新执行 esa:import-release）。
  * 凭证与命名空间解析同 esa:import（环境变量 > esa-cli 登录态；--namespace 可覆盖）。
  */
 import { existsSync } from "node:fs";

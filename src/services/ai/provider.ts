@@ -8,7 +8,9 @@ import { assertStoryboardMatches, assertStoryboardSelection, subtitleShotcraftEl
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { ZodError } from "zod";
 import { isDesktopRuntime } from "@/services/runtime";
-import { allCompositions, compositionById } from "@/domain/effects";
+import { allCompositions, BUILTIN_EFFECTS, compositionById } from "@/domain/effects";
+import { canUseEffect, effectTier, effectTierMap } from "@/domain/effectAccess";
+import { canUseSound, soundTier, soundTierMap } from "@/domain/soundAccess";
 import { aiCompositionSlots, compositionSlots } from "@/domain/compositions";
 import {
   aiChapterPlanSchema,
@@ -116,6 +118,8 @@ export interface MatchTimelineMotionInput {
   soundEnabled?: boolean;
   musicRhythm?: { bpm: number; reliableGrid: boolean; sourceInUs: number; beatCount: number; strongHitOffsetsUs: number[] };
   motionPreferences?: MotionMatchingPreference[];
+  /** 当前用户是否拥有 Pro 权限；缺省按 Free 处理。 */
+  isPro?: boolean;
 }
 
 export interface MatchedTimelineMotion {
@@ -238,7 +242,11 @@ function canUseMotionEffect(effect: CompositionDefinition, materials: readonly A
 
 /** Returns the complete automatic catalog; the first AI pass performs semantic selection. */
 export function selectMotionCandidates(input: MatchTimelineMotionInput): CompositionDefinition[] {
-  return allCompositions().filter((effect) => !manualOnlyMotionEffectIds.has(effect.id) || (input.storyboard && subtitleShotcraftEligible(effect.id)));
+  const tiers = effectTierMap(BUILTIN_EFFECTS);
+  return allCompositions().filter((effect) => (
+    canUseEffect(effectTier(effect, tiers), input.isPro === true)
+    && (!manualOnlyMotionEffectIds.has(effect.id) || (input.storyboard && subtitleShotcraftEligible(effect.id)))
+  ));
 }
 
 function motionSelectionSystemPrompt(candidates: readonly CompositionDefinition[], input: MatchTimelineMotionInput) {
@@ -384,7 +392,7 @@ function evidenceSourceEffectIds(candidates: readonly CompositionDefinition[]) {
     .map((effect) => effect.id);
 }
 
-function motionSystemPrompt(candidates: CompositionDefinition[], materials: AiMaterialCandidate[], selection: AiMotionSelection, preferences: readonly MotionMatchingPreference[] = [], storyboard = false, soundEnabled = false) {
+function motionSystemPrompt(candidates: CompositionDefinition[], materials: AiMaterialCandidate[], selection: AiMotionSelection, preferences: readonly MotionMatchingPreference[] = [], storyboard = false, soundEnabled = false, isPro = false) {
   const effects = candidates.map(({ id, name, category, description, tags, recipe, renderer }) => ({
     ...motionMatchingProfile(compositionById(id)),
     id,
@@ -409,8 +417,10 @@ function motionSystemPrompt(candidates: CompositionDefinition[], materials: AiMa
   const evidenceSourceRule = evidenceEffectIds.length
     ? `证据出处规则：本次已选动效中 ${evidenceEffectIds.join("、")} 属于证据实证，必须在文案里写明真实出处：有 source/caption/title/footEn/footZh 参数的用该参数填写，没有来源参数的（如 info-board）在 rows 或文案中加一行 note|来源：…；写不出真实出处时不要编造，改用字幕中已有的量化事实。`
     : "";
+  const soundTiers = soundTierMap(audioCatalog);
+  const availableShotcraftSounds = audioCatalog.filter((sound) => sound.kind === "sound" && sound.autoEligible && canUseSound(soundTier(sound, soundTiers), isPro));
   const soundRule = storyboard
-    ? `统一声音与转场规则：Shotcraft 镜头从 ${JSON.stringify(SHOTCRAFT_TRANSITIONS)} 中选择 shotcraftTransition；只有时间上直接相邻的两个 Shotcraft 镜头才能使用转场，首个 Shotcraft、前一段是普通动效或视频、无需转场时必须用 none。${soundEnabled ? `soundEffectId 只给非 Shotcraft 普通动效或场景切换使用，从内置声音 ${JSON.stringify(BUILTIN_SOUND_EFFECTS)} 中选，不需要时为 null，同一语义段最多一个。Shotcraft 镜头的 shotcraftSounds 只从 ${JSON.stringify(audioCatalog.filter((sound) => sound.kind === "sound" && sound.autoEligible).map(({ id, category, durationUs }) => ({ id, category, durationSeconds: durationUs / 1_000_000 })))} 中选择，event 必须来自该镜头 events，最多 4 条，音量不超过 0.6；优先给真实的落版、点击、划线、冲击动作配音，不给持续装饰动作堆声音。` : "用户已关闭动作音效，soundEffectId 必须为 null、shotcraftSounds 必须为空数组。"}普通动效必须返回 shotcraftTransition=none、shotcraftSounds=[]。`
+    ? `统一声音与转场规则：Shotcraft 镜头从 ${JSON.stringify(SHOTCRAFT_TRANSITIONS)} 中选择 shotcraftTransition；只有时间上直接相邻的两个 Shotcraft 镜头才能使用转场，首个 Shotcraft、前一段是普通动效或视频、无需转场时必须用 none。${soundEnabled ? `soundEffectId 只给非 Shotcraft 普通动效或场景切换使用，从内置声音 ${JSON.stringify(BUILTIN_SOUND_EFFECTS)} 中选，不需要时为 null，同一语义段最多一个。Shotcraft 镜头的 shotcraftSounds 只从 ${JSON.stringify(availableShotcraftSounds.map(({ id, category, durationUs }) => ({ id, category, durationSeconds: durationUs / 1_000_000 })))} 中选择，event 必须来自该镜头 events，最多 4 条，音量不超过 0.6；优先给真实的落版、点击、划线、冲击动作配音，不给持续装饰动作堆声音。` : "用户已关闭动作音效，soundEffectId 必须为 null、shotcraftSounds 必须为空数组。"}普通动效必须返回 shotcraftTransition=none、shotcraftSounds=[]。`
     : "音效由用户单独匹配，此次所有 soundEffectId 必须为 null、shotcraftTransition 必须为 none、shotcraftSounds 必须为空数组。";
   return `你是视频场景、A-roll/B-roll、多图层动效编排器。这是第二阶段。第一阶段已经完成语义分段和选型：${JSON.stringify(selection.segments)}。不要重新选其他动效，也不要改变段落范围。只能使用这些已选动效：${JSON.stringify(effects)}。可用运镜：${JSON.stringify(cameras)}。可用本地素材：${JSON.stringify(media)}。用户已确认的时长与位置偏好：${JSON.stringify(placementPreferences)}，只能作为安全区内的软建议。
 素材动效规则：带 slots 的动效只可作为 primaryEffectId。compositionBindings 按 slots 填写 slotId 和 assetIds，严格满足 minItems/maxItems，kind=image 槽只选图片，kind=video 槽只选视频，kind=visual 槽可选图片或视频；没有 slots 的动效 compositionBindings=[]。如果第一阶段选中了素材动效但没有任何兼容素材，必须返回 compositionBindings=[]、materialPlaceholder=true，使用半透明占位等待用户补素材，禁止填写示例图、虚构路径或拿不相关素材凑数；有完整素材或动效没有 slots 时 materialPlaceholder=false。素材展示动效限制为 2–10 秒，素材不要重复放入 videoLayers。proof-shot、doc-scroll、quote-cite 等证据卡必须在对应文案或 source/caption/title 参数中写明真实来源。${evidenceSourceRule}\n场景连续性规则：第一阶段同一语义段的连续字幕必须使用该段 segmentId 作为 motionGroupId，persistUntilCaptionIndex 指向该段 endCaptionIndex；单条字幕段可将两者设为 null。第一阶段选中的每个动效必须在该段恰好返回一次，禁止把同一卡拆成多个逐步累积状态；多条内容应在一张卡内部按字幕锚点逐项出现。同段最多逐步加入 2 个内容层，两个内容层必须放在不同 captionIndex，且真实进场时间至少错开 0.5 秒；第一层保持到场景结束。不要按每条字幕机械切换动效，不要清空旧层再换一套。普通过渡字幕可以不返回 match；不需要每条字幕都有动效。相邻场景不能连续使用相同 kind，并避免连续使用强冲击、3D 或有声音的动效。同一段所有返回项的 accentColor 必须完全一致。
@@ -1659,14 +1669,20 @@ export async function matchTimelineMotion(
   }));
   const user = `主题或来源：${input.topic}\n表达风格：${input.style}\n内容语义参考：${input.article ?? "无"}\n视频总时长：${input.timelineDurationSeconds} 秒\n最终时间字幕：${JSON.stringify(timedCaptions)}\n随请求图片顺序：${JSON.stringify(visionSummary)}\n请严格按照第一阶段的语义段和选型，完成素材、文案、卡内节奏锚点与时间线规划。`;
   const matchesSchema = createAiMotionMatchesSchema(candidates.map((effect) => effect.id), mediaIds, imageIds);
+  const soundTiers = soundTierMap(audioCatalog);
+  const allowedShotcraftSoundIds = new Set(audioCatalog
+    .filter((sound) => sound.kind === "sound" && sound.autoEligible && canUseSound(soundTier(sound, soundTiers), input.isPro === true))
+    .map((sound) => sound.id));
   const planned = await requestValidatedStructured({
     config,
-    system: motionSystemPrompt(candidates, input.materials, selection, input.motionPreferences, Boolean(input.storyboard), Boolean(input.soundEnabled)) + storyboardPrompt(input),
+    system: motionSystemPrompt(candidates, input.materials, selection, input.motionPreferences, Boolean(input.storyboard), Boolean(input.soundEnabled), input.isPro === true) + storyboardPrompt(input),
     user,
     jsonSchema: schema,
     name: "match_timeline_motion",
     parse: (value) => {
       const parsed = matchesSchema.parse(value).matches;
+      const inaccessibleSound = parsed.flatMap((match) => match.shotcraftSounds ?? []).find((sound) => !allowedShotcraftSoundIds.has(sound.soundId));
+      if (inaccessibleSound) throw new ZodError([{ code: "custom", path: ["matches", "shotcraftSounds"], message: "当前会员无权使用所选镜头音效" }]);
       assertMotionMatchPlan(parsed, selection, input.captions);
       assertMotionMatchChartEvidence(parsed, selection, input.captions);
       assertStoryboardMatches(normalizeMotionMatches(groundMotionMatchesToSelection(parsed, selection, input.captions), input.captions, input.timelineDurationSeconds, input.materials, true), selection, input);

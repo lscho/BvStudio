@@ -868,7 +868,7 @@ export default function App() {
     <Tooltip.Provider delayDuration={350}>
       <div className="app-shell" data-desktop-platform={platformLayout}>
         <header className="app-header" data-tauri-drag-region>
-          <div className="brand"><span className="brand-mark">B</span><strong>BVideo Studio</strong><span className="project-name">{project.name}</span></div>
+          <div className="brand"><span className="brand-mark" aria-hidden="true"><svg viewBox="0 0 1024 1024" fill="none"><path fillRule="evenodd" clipRule="evenodd" d="M220 188C220 149.34 251.34 118 290 118H520C694.313 118 792 205.908 792 340C792 412.3 757.339 468.166 699.533 505.313C771.756 542.225 812 601.542 812 680C812 821.824 704.391 882 520 882H290C251.34 882 220 850.66 220 812V188ZM390 262V442L548 352L390 262ZM390 606V738H558C617.233 738 648 715.782 648 672C648 628.218 617.233 606 558 606H390Z" fill="currentColor" /></svg></span><strong>BVideo Studio</strong><span className="project-name">{project.name}</span></div>
           <div className="header-tools">
             <button
               type="button"

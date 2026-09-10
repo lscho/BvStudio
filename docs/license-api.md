@@ -17,6 +17,8 @@ EdgeKV 命名空间
   fail:{deviceId}         兑换失败限速计数（1 小时窗口 10 次）
 ```
 
+同一个边缘函数和命名空间还承载桌面更新服务（`GET /api/desktop-updates/latest`，键 `release:latest:{platform}`），入口在 `edge/index.js` 按精确路径分发，两条业务互不影响；协议见 [`updater-api.md`](updater-api.md)。
+
 - 设备编码由客户端 Rust 侧生成（macOS IOPlatformUUID / Windows MachineGuid / Linux machine-id 加盐 SHA-256），格式 `BV-XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX`。
 - 卡密只存 SHA-256 哈希，明文仅存在于发放环节（见下文卡密生成）。
 - 到期判定在读取时即时计算（`expireAt <= now` 即降级），无需后台任务。

@@ -19,6 +19,7 @@
     "esa:commit": "esa-cli commit",
     "esa:deploy": "esa-cli deploy",
     "esa:import": "node scripts/import-license-cards.mjs",
+    "esa:import-release": "node scripts/import-desktop-release.mjs",
     "esa:clear-kv": "node scripts/clear-kv.mjs",
     "prepare:media-sidecars": "node scripts/prepare-media-sidecars.mjs",
     "tauri": "tauri",

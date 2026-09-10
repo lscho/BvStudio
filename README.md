@@ -43,7 +43,7 @@
 - 设置持久化：桌面运行时走 `@tauri-apps/plugin-store`（`settings.json` / `preferences`），浏览器预览走 `tauri-base:` 命名空间 `localStorage`，损坏数据回退默认值；
 - 原生窗口集成：仅 Windows 显示最小化/最大化/关闭按钮，macOS 保留原生红绿灯；标题栏可拖拽（`data-tauri-drag-region`）；debug 构建支持 F12 / Cmd-or-Ctrl+Shift+I 切换 DevTools；
 - 签名应用内更新：`@tauri-apps/plugin-updater`，普通更新显示入口，`isForceUpdate` 启动即强制覆盖；
-- 发布：`.github/workflows/build-desktop.yml` 构建五个平台（Windows x64/ARM64、macOS Intel/Apple Silicon、Linux x64）的签名安装包与更新包，并把 `desktop-release-manifest.json` 上传到 GitHub Release，供外部更新服务校验导入。
+- 发布：`.github/workflows/build-desktop.yml` 构建五个平台（Windows x64/ARM64、macOS Intel/Apple Silicon、Linux x64）的签名安装包与更新包，并把 `desktop-release-manifest.json` 上传到 GitHub Release；更新服务由 `edge/` 的 ESA 边缘函数提供，清单经 `npm run esa:import-release` 校验导入。
 
 ## 本地命令
 
@@ -83,7 +83,7 @@ export RELEASE_VERSION=0.1.0 VITE_ENABLE_UPDATER=true
 export TAURI_SIGNING_PUBLIC_KEY='<公钥>'
 export TAURI_SIGNING_PRIVATE_KEY='<私钥>'
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD='<可选密码>'
-export TAURI_UPDATER_ENDPOINT='https://updates.example.com/api/desktop-updates/latest?platform={{target}}'
+export TAURI_UPDATER_ENDPOINT='https://<你的 ESA 域名>/api/desktop-updates/latest?platform={{target}}'
 export RUNNER_TEMP="$(mktemp -d)"
 npm run release:config
 npm run tauri -- build --config "$RUNNER_TEMP/tauri-base-release/tauri.release.conf.json"
@@ -96,7 +96,7 @@ npm run tauri -- build --config "$RUNNER_TEMP/tauri-base-release/tauri.release.c
 | 变量 | 位置 | 说明 |
 | --- | --- | --- |
 | `VITE_ENABLE_UPDATER` | `.env`（示例见 `.env.example` / `.env.production.example`） | `"true"` 才允许客户端发起更新检查；浏览器预览与默认构建保持关闭 |
-| `TAURI_UPDATER_ENDPOINT` | GitHub 仓库变量（可选） | 含 `{{target}}` 占位符的公共 HTTPS 端点模板；未配置时发布构建不启用客户端更新检查 |
+| `TAURI_UPDATER_ENDPOINT` | GitHub 仓库变量（可选） | 含 `{{target}}` 占位符的公共 HTTPS 端点模板，指向 `edge/` 部署的 ESA 边缘函数；未配置时发布构建不启用客户端更新检查 |
 | `VITE_LICENSE_SERVER_URL` | 发布构建环境变量（可选） | ESA 边缘函数授权服务域名；未配置时会员状态仅使用本地缓存（开发预览模式） |
 | `VITE_LICENSE_RESPONSE_KEY` | 发布构建环境变量（可选） | 授权响应 HMAC 验签密钥，与 `edge/config.js` 的 `HMAC_SECRET` 一致 |
 
@@ -119,7 +119,7 @@ npm run tauri -- build --config "$RUNNER_TEMP/tauri-base-release/tauri.release.c
 1. 推送 `vX.Y.Z` 标签（严格 SemVer）或手动触发 `build-desktop` 工作流并填 `version`（手动触发只保留产物与清单，不创建 Release、不联系外部 API）；
 2. 五个矩阵任务构建并签名平台产物，`prepare-release` 汇总生成 `desktop-release-manifest.json`；
 3. 标签推送时 `release` 任务创建/更新对应的 GitHub Release，上传全部资产；
-4. 外部更新服务按 `docs/updater-api.md` 校验并导入清单后发布更新记录。
+4. 取回 `desktop-release-manifest.json`，执行 `npm run esa:import-release -- --manifest <path> --notes "<更新说明>"` 校验并导入 EdgeKV，客户端随即可查到新版本；完整步骤见 [`docs/desktop-release-operations.md`](docs/desktop-release-operations.md)。
 
 生成的安装包 / 更新包对：
 
@@ -135,7 +135,7 @@ npm run tauri -- build --config "$RUNNER_TEMP/tauri-base-release/tauri.release.c
 
 ## 更新服务协议
 
-客户端与外部更新服务的精确契约见 [`docs/updater-api.md`](docs/updater-api.md)：`GET /api/desktop-updates/latest?platform={{target}}`，`204` 是无更新的正常结果。本仓库不实现该服务。
+客户端与更新服务的精确契约见 [`docs/updater-api.md`](docs/updater-api.md)：`GET /api/desktop-updates/latest?platform={{target}}`，`204` 是无更新的正常结果。服务端与会员授权共用同一个 ESA 边缘函数（`edge/`）与 EdgeKV 命名空间，每个平台一条 `release:latest:{platform}` 记录；发布记录由 `npm run esa:import-release` 从发布清单导入，操作步骤见 [`docs/desktop-release-operations.md`](docs/desktop-release-operations.md)。
 
 ## 会员授权
 

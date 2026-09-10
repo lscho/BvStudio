@@ -26,6 +26,7 @@ license-cards*
 *~
 .zcode
 .dev/
+.workbuddy/
 
 # OS generated files
 .DS_Store

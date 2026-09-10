@@ -1,6 +1,6 @@
 # 桌面更新服务协议（Updater API Contract）
 
-本仓库只实现桌面客户端、签名产物与 `desktop-release-manifest.json` 发布清单，**不实现也不部署**外部更新服务。更新服务是独立部署的公共 HTTPS API，导入 GitHub Release 上的发布清单后对外提供动态更新元数据。
+本仓库同时实现两侧：桌面客户端（`src/services/updater.ts`）、签名产物与 `desktop-release-manifest.json` 发布清单，以及**更新服务本身**——作为阿里云 ESA 边缘函数部署在 `edge/`，与会员授权共用同一个函数入口和 EdgeKV 命名空间。发布记录由 `scripts/import-desktop-release.mjs` 从发布清单导入，操作步骤见 [`desktop-release-operations.md`](desktop-release-operations.md)。
 
 ## 端点
 
@@ -17,6 +17,8 @@ GET /api/desktop-updates/latest?platform={{target}}
 | `macos-x86` | macOS Intel（`x86_64-apple-darwin`） |
 | `macos-arm` | macOS Apple Silicon（`aarch64-apple-darwin`） |
 | `linux-x86` | Linux x64（`x86_64-unknown-linux-gnu`） |
+
+客户端端点模板只包含 `{{target}}` 一个占位符，因此请求中**不含** `current_version`；版本比较在客户端 Tauri updater 内完成（`release.version > current_version`），服务端只负责返回该平台当前已发布的最新记录。
 
 ## 响应
 
@@ -38,51 +40,87 @@ GET /api/desktop-updates/latest?platform={{target}}
 }
 ```
 
-字段约束：
+字段约束与消费位置：
 
-| 字段 | 约束 |
-| --- | --- |
-| `platform` | 必须是上述五个值之一，且与请求参数一致 |
-| `version` | 裸 SemVer（可带 `v` 前缀的标签发布时，记录内必须去掉 `v`），不得附加前缀 |
-| `url` | 公共 HTTPS 更新包地址（`macos-*` 为 `*.app.tar.gz`，`windows-*` 为签名 NSIS `.exe`，`linux-*` 为 `*.AppImage.tar.gz`） |
-| `signature` | 与更新包完全一致的 `.sig` 文件全文（非空字符串） |
-| `fileName` | 与对应平台产物文件名一致 |
-| `fileSize` | 正整数（字节数） |
-| `notes` | 发布说明文本（可为空字符串） |
-| `pub_date` | ISO 8601 时间戳，作为“最新版本”的排序依据 |
-| `isForceUpdate` | JSON 布尔值；`true` 时客户端启动即弹出不可关闭的强制更新 |
+| 字段 | 约束 | 客户端读取位置 |
+| --- | --- | --- |
+| `platform` | 必须是上述五个值之一，且与请求参数一致 | 不消费，仅服务端自校验与排障 |
+| `version` | 裸 SemVer，不得附加 `v` 前缀（Rust 侧会 trim 前导 `v`，服务端也做归一化） | Rust 版本比较 + `DesktopUpdateInfo.version` |
+| `url` | 公共 HTTPS 更新包地址（`macos-*` 为 `*.app.tar.gz`，`windows-*` 为签名 NSIS `.exe`，`linux-*` 为 `*.AppImage.tar.gz`）。必须是能被 `url::Url` 解析的绝对地址，且不含内嵌账号密码 | Rust `Update.download_url` |
+| `signature` | 与更新包完全一致的 `.sig` 文件全文（非空字符串） | Rust `Update.signature`，下载后校验签名 |
+| `fileName` | 与对应平台产物文件名一致；缺省时客户端从 `url` 路径末段推导 | `DesktopUpdateInfo.fileName` |
+| `fileSize` | JSON number 的正整数（字节数），不能是字符串 | 下载进度分母 |
+| `notes` | 发布说明文本（可为空字符串） | 更新弹窗「更新内容」 |
+| `pub_date` | **必须带时区的 RFC3339 时间戳**（`Z` 或 `+08:00`）；写成 `2026-01-15T08:00:00` 会让客户端整个响应解析失败 | `DesktopUpdateInfo.publishTime` |
+| `isForceUpdate` | JSON 布尔值，且只有严格 `true` 生效（字符串 `"true"` 无效）；`true` 时客户端启动即弹出不可关闭的强制更新 | 更新弹窗文案与可关闭性 |
+
+`version`、`url`、`signature` 三者缺失或畸形会让客户端 Rust 侧反序列化直接失败，请勿只保证「接口返回 200」。
 
 响应头必须包含 `Cache-Control: no-store`。
 
 ### 204 — 无已发布版本
 
-空响应体。这是“无更新”的**正常结果**，不是错误；客户端收到 `204` 后保持当前版本可用，不提示更新。
+空响应体。这是「无更新」的**正常结果**，不是错误；客户端收到 `204` 后保持当前版本可用，不提示更新。
 
 ### 400 — 无效或缺失的 `platform`
 
-`platform` 缺失、为空或不在四个合法值之内。
+`platform` 缺失、为空或不在五个合法值之内。
+
+### 405 — 非 GET 请求
+
+更新查询不接受 `POST`、`PUT` 等其它方法；`OPTIONS` 预检正常返回 `204`。
 
 ### 503 — 选中发布的更新元数据不完整
 
-服务已选中最新的发布记录，但该记录的更新包元数据（URL、签名、文件大小等）缺失或不完整，无法安全下发。
+服务已找到该平台的发布记录，但记录的更新包元数据（URL、签名、文件大小等）缺失或不完整，无法安全下发。**不回退到更旧的记录**，也绝不下发空签名。
 
-## 选择逻辑
+### 500 — 服务端异常
 
-服务按 `pub_date` 取**最新一条**已发布记录返回；版本号比较由客户端 Tauri updater 完成，服务不参与。若最新记录没有可用的更新包元数据，应返回 `503` 而不是回退到更旧的记录。
+EdgeKV 读取失败等运行时错误。客户端会把所有非 2xx 结果统一按「本次检查失败」处理并静默保持当前版本，因此 4xx/5xx 不会打断用户使用，但也不会提示更新。排障时请直接看边缘函数日志。
 
-## 外部发布清单导入（desktop-release-manifest.json）
+## 服务端实现
 
-发布工作流（`.github/workflows/build-desktop.yml`）把五个平台的安装包、更新包、签名与 `desktop-release-manifest.json` 一并上传到 GitHub Release。本仓库**不会**主动 POST 清单，也不提供发布数据库；外部更新服务需要：
+```
+桌面客户端
+  │  GET /api/desktop-updates/latest?platform=macos-arm
+  ▼
+ESA Edge Routine（edge/index.js）
+  │  精确路径分发 → edge/update-server.mjs
+  │  纯逻辑校验 → edge/release-core.mjs
+  ▼
+EdgeKV  release:latest:{platform}   每个平台一条「最新已发布」记录
+```
 
-1. 监听/拉取 `vX.Y.Z` 标签对应的 GitHub Release，下载 `desktop-release-manifest.json`；
-2. 校验清单与 Release 资产一致后再发布记录。发布前必须核对：
-   - `repository` 与 `tag` 与 Release 所属仓库/标签一致；
-   - `commitSha` 与标签指向的提交一致；
-   - 平台映射：`windows-x86`/`windows-arm`/`macos-x86`/`macos-arm`/`linux-x86` 五平台齐全；
-   - `installer.sourceUrl` / `updater.sourceUrl` 与 Release 资产实际 URL 一致；
-   - `fileSize`、`sha256` 与 Release 资产字节一致；
-   - 更新包扩展名正确（macOS `.app.tar.gz`、Windows `.exe`、Linux `.AppImage.tar.gz`）且 `signature` 非空、与 `.sig` 资产一致；
-   - 已签名的产物字节**不得在签名后重新打包**（重新压缩会破坏签名与哈希）。
+- 路由：`edge/index.js` 先按精确路径分发；更新端点交给 `handleUpdateRequest`，其余路径原样交给授权服务 `handleLicenseRequest`，两条业务互不影响。
+- 每个平台只保留一条指针键 `release:latest:{platform}`，读取即为下发内容。服务端**不排序、不比较版本**。
+- 发布记录除响应字段外还留存 `tag`、`repository`、`commitSha`、`importedAt` 便于审计；这些字段不会出现在响应里。
+- EdgeKV 最终一致：刚导入的记录在全球节点生效需要数秒到几十秒。
+
+## 发布清单导入
+
+发布工作流（`.github/workflows/build-desktop.yml`）把五个平台的安装包、更新包、签名与 `desktop-release-manifest.json` 一并上传到 GitHub Release。导入由本仓库脚本完成，不依赖任何外部服务：
+
+```bash
+npm run esa:import-release -- --manifest <desktop-release-manifest.json> --notes "<更新说明>"
+```
+
+脚本在写入前逐项校验，任一项不合格则**整批中止**，避免出现「只剩某个平台停在旧版本」的半发布状态：
+
+- `version` 是合法 SemVer（`v` 前缀会被去掉）；
+- 五个平台齐全、无未知平台；
+- `updater.sourceUrl` 合法，或在缺失时能按 `repository` + `tag` + `fileName` 推导出 GitHub Release 资产地址；
+- `updater.signature` 非空、与 `.sig` 资产一致；
+- `updater.fileSize` 是正整数；
+- `pub_date` 是带时区的 RFC3339。
+
+其它必须人工核对的事项：
+
+- `repository` 与 `tag` 与 Release 所属仓库/标签一致，`commitSha` 与标签指向的提交一致；
+- `fileSize`、`sha256` 与 Release 资产字节一致；
+- 更新包扩展名正确（macOS `.app.tar.gz`、Windows `.exe`、Linux `.AppImage.tar.gz`）；
+- 已签名的产物字节**不得在签名后重新打包**（重新压缩会破坏签名与哈希）。
+
+> `notes` 与 `isForceUpdate` 不在发布清单里。清单由构建流水线生成，只描述产物；这两个字段属于「这次要不要通知用户、能不能跳过」，由导入时通过 `--notes` / `--notes-file` / `--force-update` 决定，见操作手册。
 
 ## 客户端行为摘要
 
@@ -98,5 +136,7 @@ curl -i --no-buffer \
   'https://updates.example.com/api/desktop-updates/latest?platform=macos-arm'
 ```
 
-- `HTTP/1.1 200` + 上述 JSON → 有新版本，客户端显示更新入口；
-- `HTTP/1.1 204` → 无更新，客户端保持当前版本（正常结果，非错误）。
+- `HTTP/1.1 200` + `Cache-Control: no-store` + 上述 JSON → 有新版本，客户端显示更新入口；
+- `HTTP/1.1 204` → 无更新，客户端保持当前版本（正常结果，非错误）；
+- `HTTP/1.1 400` → `platform` 参数有问题；
+- `HTTP/1.1 503` → 该平台记录不完整，需要重新导入。

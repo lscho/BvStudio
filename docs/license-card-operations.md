@@ -79,11 +79,13 @@ npm run esa:clear-kv -- --dry-run     # 只列出将删除的键，不执行
 
 | 参数 | 说明 |
 | --- | --- |
-| `--prefix <前缀>` | 只清理匹配前缀（`card:` / `device:` / `fail:`） |
+| `--prefix <前缀>` | 只清理匹配前缀（`card:` / `device:` / `fail:` / `release:latest:`） |
 | `--namespace <名称>` | 覆盖默认命名空间 |
 | `--dry-run` | 只列出，不删除 |
 
 单张卡吊销不要用全量清理：在控制台 KV 页把对应 `card:*` 的 `status` 改为 `"revoked"`，绑定设备下次联网 verify 自动降级。
+
+> 命名空间同时存放桌面更新发布记录 `release:latest:{platform}`（见 [`desktop-release-operations.md`](desktop-release-operations.md)）。不带 `--prefix` 的全量清理会一并删除这些键，客户端随后收到 204 不再提示更新，需要重新执行 `npm run esa:import-release` 才能恢复。
 
 ---
 
