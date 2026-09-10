@@ -45,6 +45,44 @@ beforeEach(() => {
 });
 
 describe("editorStore", () => {
+  it("使用 copy 字段的 Shotcraft 不因外部说明留空而丢失", () => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 5_000_000 });
+    useEditorStore.getState().addSubtitles("voice", [{ startSeconds: 0, endSeconds: 5, text: "反复修改也能掌控" }]);
+    const subtitle = useEditorStore.getState().project.tracks.find((t) => t.kind === "subtitle")!.clips[0];
+    const result = useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, primaryEffectId: "shotcraft-lead-word-zoom-assemble", primaryText: "", cameraPreset: "none", primaryParams: [{ key: "copy0", value: "反复修改" }, { key: "copy1", value: "修改" }, { key: "copy2", value: "始终掌控" }] }]);
+    expect(result.effectCount).toBe(1);
+    expect(useEditorStore.getState().project.tracks.find((t) => t.kind === "composition")!.clips[0]).toMatchObject({ params: { copy0: "反复修改", copy1: "修改", copy2: "始终掌控" }, sourceSubtitleId: subtitle.id });
+  });
+  it.each(["clip", "track"])("重新匹配保留锁定的 B-roll %s 且不重复插入", (lock) => {
+    useEditorStore.getState().addVideo({ id: "source", name: "口播", kind: "video", durationUs: 8_000_000 });
+    useEditorStore.getState().addSubtitles("source", [{ startSeconds: 0, endSeconds: 8, text: "操作演示" }]);
+    const project = structuredClone(useEditorStore.getState().project);
+    project.assets.push({ id: "demo", name: "操作录屏", kind: "video", durationUs: 8_000_000 });
+    useEditorStore.setState({ project });
+    const subtitle = project.tracks.find((t) => t.kind === "subtitle")!.clips[0];
+    const match = { ...motionMatch, primaryEffectId: null, cameraPreset: "none" as const, videoLayers: [{ assetId: "demo", role: "b-roll" as const, sourceInSeconds: 0, layoutPreset: "full" as const, shapePreset: "rectangle" as const, transitionPreset: "none" as const, cameraPreset: "none" as const, volume: 0, focus: null }] };
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [match]);
+    const prepared = structuredClone(useEditorStore.getState().project);
+    const track = prepared.tracks.find((t) => t.clips.some((c) => c.kind === "video" && c.sourceSubtitleId === subtitle.id))!;
+    const broll = track.clips.find((c) => c.kind === "video" && c.sourceSubtitleId === subtitle.id)!;
+    if (lock === "clip") broll.locked = true;else track.locked = true;
+    useEditorStore.setState({ project: prepared });
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [match]);
+    expect(useEditorStore.getState().project.tracks.flatMap((t) => t.clips).filter((c) => c.kind === "video" && c.sourceSubtitleId === subtitle.id)).toEqual([broll]);
+  });
+  it("字幕关联 Shotcraft 保留整段时钟、素材与撤销重做", () => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", sourcePath: "/voice.mp4", durationUs: 8_000_000, hasAudio: true });
+    useEditorStore.getState().addSubtitles("voice", [{ startSeconds: 0, endSeconds: 4, text: "生成很快" }, { startSeconds: 4, endSeconds: 8, text: "改片很慢" }]);
+    const subtitles = useEditorStore.getState().project.tracks.find((t) => t.kind === "subtitle")!.clips;
+    const before = structuredClone(useEditorStore.getState().project);
+    useEditorStore.getState().applyMotionMatches(subtitles.map((s) => s.id), [{ ...motionMatch, primaryEffectId: "shotcraft-blur-slide", primaryText: "生成很快｜改片很慢", cameraPreset: "none", motionGroupId: "test-shot", persistUntilCaptionIndex: 1 }]);
+    const after = structuredClone(useEditorStore.getState().project);
+    const clip = after.tracks.find((t) => t.kind === "composition")!.clips[0];
+    expect(clip).toMatchObject({ durationUs: 8_000_000, sourceSubtitleId: subtitles[0].id, text: "生成很快｜改片很慢", transform: { x: 50, y: 50, scale: 1 }, shotcraft: { holdUs: 500_000, timeMap: [{ timeUs: 0, frame: 0 }, { timeUs: 7_500_000, frame: 114 }] } });
+    expect(buildRenderPlan(after, "/out.mp4").overlays.some((o) => o.kind === "composition" && o.shotcraftData?.clip.id === clip.id)).toBe(true);
+    useEditorStore.getState().undo();expect(useEditorStore.getState().project).toEqual(before);
+    useEditorStore.getState().redo();expect(useEditorStore.getState().project).toEqual(after);
+  });
   it("imports and places portrait videos without cropping on a landscape canvas", () => {
     useEditorStore.getState().addVideo({ id: "landscape", name: "landscape.mp4", sourcePath: "/landscape.mp4", kind: "video", width: 1920, height: 1080, durationUs: 20_000_000 });
     useEditorStore.getState().addVideo({ id: "portrait", name: "portrait.mp4", sourcePath: "/portrait.mp4", kind: "video", width: 1080, height: 1920, durationUs: 20_000_000 });

@@ -26,6 +26,9 @@ export const shotcraftPlanSchema = z.object({
   }).strict()).min(1).max(40)
 }).strict();
 export type ShotcraftPlan = z.infer<typeof shotcraftPlanSchema>;
+export function subtitleShotcraftScene(input: { compositionId: string; text: string; params?: readonly { key: string; value: string | number | boolean }[]; bindings?: readonly { slotId: string; assetIds: string[] }[]; durationSeconds: number }): ShotcraftPlan["scenes"][number] {
+  return { shotId: input.compositionId, durationSeconds: input.durationSeconds, text: input.text, copy: (libraryShot(input.compositionId)?.texts ?? []).map((field) => ({ key: field.key, value: String(input.params?.find((param) => param.key === field.key)?.value ?? "") })), bindings: [...(input.bindings ?? [])], regions: [], transition: "none", sounds: [], reason: "依据字幕内容编排" };
+}
 export interface ShotcraftSequenceOptions { startUs: number; musicAssetId?: string; musicSourceInUs: number; musicVolume: number; beatSync: boolean; analysis?: MusicAnalysis; soundEnabled: boolean }
 
 export function validateShotcraftPlan(value: unknown, assets: readonly MediaAsset[]): ShotcraftPlan {

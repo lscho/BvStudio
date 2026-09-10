@@ -129,6 +129,7 @@ export function createAiMotionSelectionSchema(allowedEffectIds: readonly string[
       startCaptionIndex: z.number().int().min(0).max(maxCaptionIndex),
       endCaptionIndex: z.number().int().min(0).max(maxCaptionIndex),
       title: z.string().trim().min(1).max(40),
+      roll: z.enum(["a-roll", "b-roll"]).optional(),
       intent: motionSegmentIntentSchema,
       evidenceKinds: z.array(motionEvidenceKindSchema).max(4),
       primaryEffectId: compositionId.nullable(),
@@ -158,12 +159,13 @@ export function createMotionSelectionJsonSchema(allowedEffectIds: readonly strin
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["segmentId", "startCaptionIndex", "endCaptionIndex", "title", "intent", "evidenceKinds", "primaryEffectId", "secondaryEffectId", "materialNeed", "selectionReason"],
+          required: ["segmentId", "startCaptionIndex", "endCaptionIndex", "title", "roll", "intent", "evidenceKinds", "primaryEffectId", "secondaryEffectId", "materialNeed", "selectionReason"],
           properties: {
             segmentId: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" },
             startCaptionIndex: { type: "integer", minimum: 0, maximum: maxCaptionIndex },
             endCaptionIndex: { type: "integer", minimum: 0, maximum: maxCaptionIndex },
             title: { type: "string", minLength: 1, maxLength: 40 },
+            roll: { type: "string", enum: ["a-roll", "b-roll"] },
             intent: { type: "string", enum: motionSegmentIntentSchema.options },
             evidenceKinds: { type: "array", maxItems: 4, items: { type: "string", enum: motionEvidenceKindSchema.options } },
             primaryEffectId: nullableEffect,

@@ -1,13 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, LoaderCircle, Play, Plus, Search, Square } from "lucide-react";
+import {
+  canUseSound,
+  FREE_MUSIC_TRACKS,
+  FREE_SOUNDS_PER_CATEGORY,
+  MUSIC_SOUND_CATEGORY,
+  SOUND_CATEGORY_ORDER,
+  soundCategory,
+  soundDisplayName,
+  soundTier,
+  soundTierMap
+} from "@/domain/soundAccess";
 import { loadShotcraftAudio, previewShotcraftAudio, SHOTCRAFT_AUDIO, stopShotcraftAudioPreview } from "@/services/shotcraftAudio";
 import { useEditorStore } from "@/stores/editorStore";
 
-const categoryLabels: Record<string, string> = { transition: "转场", impact: "冲击", riser: "渐强", camera: "相机", ui: "交互", text: "文字", paper: "纸张", film: "胶片", light: "光效", data: "数据", scifi: "科幻", mech: "机械", glass: "玻璃", fluid: "流体", crowd: "人群", counter: "计数", bgm: "音乐" };
-const categoryOrder = ["transition", "impact", "riser", "camera", "ui", "text", "paper", "film", "light", "data", "scifi", "mech", "glass", "fluid", "crowd", "counter", "bgm"];
-const orderedCategories = [...categoryOrder, ...new Set(SHOTCRAFT_AUDIO.map((item) => item.category).filter((category) => !categoryOrder.includes(category)))];
+// 档位只由目录顺序决定：搜索与分类筛选不会改变某个音效的免费/Pro 状态。
+const SOUND_TIERS = soundTierMap(SHOTCRAFT_AUDIO);
 
-export function ShotcraftAudioLibrary() {
+interface Props {
+  isPro: boolean;
+  onNeedLicense?: () => void;
+}
+
+export function ShotcraftAudioLibrary({ isPro, onNeedLicense }: Props) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState("");
@@ -17,10 +32,10 @@ export function ShotcraftAudioLibrary() {
   useEffect(() => () => { request.current?.abort(); request.current = null; stopShotcraftAudioPreview(); }, []);
   const groups = useMemo(() => {
     const text = query.trim().toLowerCase();
-    return orderedCategories.map((category) => ({
+    return SOUND_CATEGORY_ORDER.map((category) => ({
       category,
-      sounds: SHOTCRAFT_AUDIO.filter((item) => item.category === category
-        && (!text || `${item.name} ${categoryLabels[item.category] ?? ""}`.toLowerCase().includes(text)))
+      sounds: SHOTCRAFT_AUDIO.filter((item) => soundCategory(item.category) === category
+        && (!text || `${soundDisplayName(item)} ${category}`.toLowerCase().includes(text)))
     })).filter((group) => group.sounds.length > 0);
   }, [query]);
   async function run(id: string, mode: "preview" | "add") {
@@ -39,13 +54,18 @@ export function ShotcraftAudioLibrary() {
     {groups.length ? <div className="effect-groups">
       {groups.map((group) => (
         <details className="effect-group" key={group.category}>
-          <summary><span>{categoryLabels[group.category] ?? group.category}</span><small>{group.sounds.length}</small><ChevronDown size={14} /></summary>
+          <summary><span>{group.category}</span><small>{group.sounds.length}</small><ChevronDown size={14} /></summary>
           <div className="effect-group-items">
-            {group.sounds.map((sound) => <div className="sound-row" key={sound.id}>
-              <button type="button" aria-label={`试听 ${sound.name}`} title={playing === sound.id ? "停止试听" : "试听"} disabled={Boolean(busy)} onClick={() => { if (playing === sound.id) { stopShotcraftAudioPreview(); setPlaying(undefined); } else void run(sound.id, "preview"); }}>{busy === sound.id ? <LoaderCircle size={13} className="spin" /> : playing === sound.id ? <Square size={13} /> : <Play size={13} />}</button>
-              <span><strong>{sound.name}</strong><small>{categoryLabels[sound.category] ?? sound.category} · {(sound.durationUs / 1_000_000).toFixed(2)} 秒</small></span>
-              <button type="button" aria-label={`添加 ${sound.name}`} title="添加到播放头" disabled={Boolean(busy)} onClick={() => void run(sound.id, "add")}><Plus size={14} /></button>
-            </div>)}
+            {group.sounds.map((sound) => {
+              const displayName = soundDisplayName(sound);
+              const locked = !canUseSound(soundTier(sound, SOUND_TIERS), isPro);
+              const lockHint = group.category === MUSIC_SOUND_CATEGORY ? `音乐分类第 ${FREE_MUSIC_TRACKS + 1} 首起需要 Pro 会员` : `每个分类第 ${FREE_SOUNDS_PER_CATEGORY + 1} 个起需要 Pro 会员`;
+              return <div className={`sound-row ${locked ? "locked" : ""}`} key={sound.id}>
+                <button type="button" aria-label={`试听 ${displayName}`} title={playing === sound.id ? "停止试听" : locked ? `${lockHint}，可先试听` : "试听"} disabled={Boolean(busy)} onClick={() => { if (playing === sound.id) { stopShotcraftAudioPreview(); setPlaying(undefined); } else void run(sound.id, "preview"); }}>{busy === sound.id ? <LoaderCircle size={13} className="spin" /> : playing === sound.id ? <Square size={13} /> : <Play size={13} />}</button>
+                <span><strong>{displayName}</strong><small>{group.category} · {(sound.durationUs / 1_000_000).toFixed(2)} 秒</small></span>
+                <button className={locked ? "pro-locked" : ""} type="button" aria-label={locked ? `${displayName} 需要 Pro 会员` : `添加 ${displayName}`} title={locked ? `${lockHint}，点击兑换` : "添加到播放头"} disabled={!locked && Boolean(busy)} onClick={() => { if (locked) { onNeedLicense?.(); return; } void run(sound.id, "add"); }}>{locked ? "PRO" : <Plus size={14} />}</button>
+              </div>;
+            })}
           </div>
         </details>
       ))}

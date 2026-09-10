@@ -124,6 +124,7 @@ const componentRegistrations: Readonly<Record<string, ComponentRegistration>> = 
       { kind: "color" as const, field: "color" as const, label: "文字颜色" },
       { kind: "color" as const, field: "accentColor" as const, label: "强调色" },
       { kind: "param-color" as const, field: "surface", label: "镜头底色" },
+      ...(shot.id === "shotcraft-before-after" ? [{ kind: "param-toggle" as const, field: "revealAfter", label: "结尾完整展示后图" }] : []),
       ...(shot.id === "shotcraft-spotlight-hero-card" ? [{ kind: "param-color" as const, field: "patchColor", label: "主角原位底色" }] : []),
       ...(shot.id === "shotcraft-card-stack" ? [{ kind: "param-select" as const, field: "fit", label: "卡片适配", options: [{ value: "contain", label: "完整显示" }, { value: "cover", label: "裁切填满" }] }] : [])
     ],

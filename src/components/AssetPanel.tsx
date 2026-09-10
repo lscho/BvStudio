@@ -115,8 +115,7 @@ export function AssetPanel({ onImport, onGenerate, onMatchEffects, onReviewMotio
         </Tabs.Content>
         <Tabs.Content value="sounds" className="panel-content asset-action-panel" tabIndex={-1}>
           <div className="asset-panel-scroll sound-library">
-          <header><AudioWaveform size={15} aria-hidden="true" /><span><strong>Shotcraft 音效</strong><small>按分类展开，添加到当前播放头</small></span></header>
-          <ShotcraftAudioLibrary />
+          <ShotcraftAudioLibrary isPro={isPro} onNeedLicense={onNeedLicense} />
           </div>
           <div className="asset-panel-actions" aria-label="音效操作">
             <button type="button" title="按字幕单独匹配音效" disabled={!subtitles.length || matching || !onMatchSounds} onClick={onMatchSounds}><WandSparkles size={15} />匹配</button>

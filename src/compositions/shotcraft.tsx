@@ -57,15 +57,17 @@ function BlurTitle({ text, t, color, accent }: { text: string; t: number; color:
   </div>;
 }
 
-function BeforeAfter({ before, after, frame, text }: { before?: ShotcraftAsset; after?: ShotcraftAsset; frame: number; text: string }) {
-  const x = frame < 26 ? lerp(8, 76, seg(frame, 14, 26, cubicOut)) : frame < 38 ? lerp(76, 70, seg(frame, 26, 38, cubicInOut)) : frame < 56 ? 70 : lerp(70, 40, seg(frame, 56, 104, (t) => eased(t, "ease-in-out")));
+function BeforeAfter({ before, after, frame, text, revealAfter }: { before?: ShotcraftAsset; after?: ShotcraftAsset; frame: number; text: string; revealAfter: boolean }) {
+  const split = frame < 26 ? lerp(8, 76, seg(frame, 14, 26, cubicOut)) : frame < 38 ? lerp(76, 70, seg(frame, 26, 38, cubicInOut)) : frame < 56 ? 70 : lerp(70, 40, seg(frame, 56, 104, (t) => eased(t, "ease-in-out")));
+  const x = revealAfter ? split * (1 - seg(frame, 104, 132, cubicInOut)) : split;
   const labels = text.split(/[|｜\n]/u);
   return <>
     <Picture asset={after} />
     <div style={{ ...fill, clipPath: `inset(0 ${100 - x}% 0 0)` }}><Picture asset={before} /></div>
-    <div style={{ position: "absolute", left: `${x}%`, top: 0, bottom: 0, width: px(1.5), background: "#ffffff", boxShadow: `0 0 ${px(4)} #00000066` }} />
+    {x > 0 && <><div style={{ position: "absolute", left: `${x}%`, top: 0, bottom: 0, width: px(1.5), background: "#ffffff", boxShadow: `0 0 ${px(4)} #00000066` }} />
     <div style={{ position: "absolute", left: `${x}%`, top: "50%", transform: "translate(-50%, -50%)", width: px(22), height: px(22), borderRadius: "50%", background: "#ffffff", color: "#111316", display: "grid", placeItems: "center", fontSize: px(14), boxShadow: `0 ${px(2)} ${px(6)} #00000055` }}>↔</div>
-    {labels.slice(0, 2).map((label, i) => <div key={i} style={{ position: "absolute", top: "7%", ...(i ? { right: "5%" } : { left: "5%" }), padding: `${px(5)} ${px(10)}`, background: "#111316d9", color: "#ffffff", borderRadius: px(3), fontSize: px(13) }}>{label}</div>)}
+    </>}
+    {labels.slice(0, 2).map((label, i) => (x > 0 || i === 1) && <div key={i} style={{ position: "absolute", top: "7%", ...(i ? { right: "5%" } : { left: "5%" }), padding: `${px(5)} ${px(10)}`, background: "#111316d9", color: "#ffffff", borderRadius: px(3), fontSize: px(13) }}>{label}</div>)}
   </>;
 }
 
@@ -174,7 +176,7 @@ function ShotScene({ clip, assets, timeUs, width, height, theme }: SceneProps) {
   const cards = slot("cards");
   let content: ReactNode;
   if (clip.compositionId === "shotcraft-blur-slide") content = <BlurTitle text={clip.text} t={t} color={appearance.color} accent={appearance.accentColor} />;
-  else if (clip.compositionId === "shotcraft-before-after") content = <BeforeAfter before={slot("before")[0]} after={slot("after")[0]} frame={frame} text={clip.text} />;
+  else if (clip.compositionId === "shotcraft-before-after") content = <BeforeAfter before={slot("before")[0]} after={slot("after")[0]} frame={frame} text={clip.text} revealAfter={clip.params?.revealAfter === true} />;
   else if (clip.compositionId === "shotcraft-cursor-flyover") content = <CursorTour page={slot("page")[0]} settings={settings} t={t} accent={appearance.accentColor} width={width} height={height} />;
   else if (clip.compositionId === "shotcraft-basic-3d") content = <SpatialSteps cards={cards} t={t} text={clip.text} color={appearance.color} accent={appearance.accentColor} surface={surface} />;
   else if (clip.compositionId === "shotcraft-card-stack") content = <CardFan cards={cards.length ? cards : [undefined, undefined]} t={t} fit={fit} />;
@@ -182,7 +184,7 @@ function ShotScene({ clip, assets, timeUs, width, height, theme }: SceneProps) {
   else content = <HeroCard page={slot("page")[0]} hero={slot("hero")[0]} settings={settings} frame={frame} height={480 * height / width} accent={appearance.accentColor} patch={patch} />;
   const caption = !["shotcraft-blur-slide", "shotcraft-before-after", "shotcraft-basic-3d"].includes(clip.compositionId) ? clip.text.trim() : "";
   const lines = caption.split(/[|｜\n]/u).filter(Boolean);
-  const captionText = clip.compositionId === "shotcraft-cursor-flyover" ? lines[Math.min(lines.length - 1, Math.max(0, [0.32, 0.52, 0.72].filter((at) => t >= at).length))] : lines.join("\n");
+  const captionText = clip.compositionId === "shotcraft-cursor-flyover" ? lines[Math.min(lines.length - 1, Math.max(0, [0.52, 0.72, 0.91].filter((at) => t >= at).length))] : lines.join("\n");
   return <div className="shotcraft-scene" style={{ ...fill, containerType: "size", background: surface, color: appearance.color, overflow: "hidden", fontFamily: '"PingFang SC", "Microsoft YaHei", system-ui, sans-serif', letterSpacing: 0 }}>
     <div style={{ ...fill, transform: caption ? lines.length > 1 && clip.compositionId !== "shotcraft-cursor-flyover" ? "translateY(-9%) scale(0.78)" : "translateY(-6%) scale(0.86)" : undefined, overflow: "hidden" }}>{content}</div>
     {caption && <div data-shotcraft-caption style={{ position: "absolute", left: "6%", right: "6%", bottom: "4%", minHeight: "9%", display: "grid", placeItems: "center", textAlign: "center", fontSize: px(14), fontWeight: 600, lineHeight: 1.35, whiteSpace: "pre-line", overflowWrap: "anywhere", opacity: seg(frame, 4, 12) }}>{captionText}</div>}

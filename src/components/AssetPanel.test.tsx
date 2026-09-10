@@ -5,6 +5,7 @@ import { InspectorPanel } from "@/components/InspectorPanel";
 import { createEmptyProject } from "@/domain/project";
 import { useEditorStore } from "@/stores/editorStore";
 import { BUILTIN_EFFECTS, PREMIUM_EFFECT_IDS } from "@/domain/effects";
+import { FREE_MUSIC_TRACKS, FREE_SOUNDS_PER_CATEGORY, SOUND_CATEGORY_ORDER } from "@/domain/soundAccess";
 import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
 import { useLicenseStore } from "@/stores/licenseStore";
 
@@ -26,9 +27,10 @@ describe("AssetPanel video audio actions", () => {
     act(() => useEditorStore.getState().redo());
     expect(useEditorStore.getState().project.tracks.find(t => t.kind === "generated")!.clips[0]).toMatchObject({ article: "更新文章" });
   });
-  it("groups the Shotcraft audio library by category and hides built-in sound effects", () => {
+  it("groups the Shotcraft audio library into 8 categories plus music and hides built-in sound effects", () => {
     const project = createEmptyProject();
     useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
+    useLicenseStore.setState({ status: { isVip: false, planName: "普通用户", expireAt: null, activatedAt: null, licenseKey: null } });
     const { container } = render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} />);
 
     const soundsTab = screen.getByRole("tab", { name: "音效" });
@@ -36,11 +38,54 @@ describe("AssetPanel video audio actions", () => {
     fireEvent.click(soundsTab);
 
     for (const name of ["丝滑转场", "片头冲击", "字幕弹出"]) expect(screen.queryByText(name)).not.toBeInTheDocument();
-    for (const category of ["转场", "冲击", "音乐"]) expect(screen.getByText(category, { selector: "summary span" })).toBeInTheDocument();
-    expect(container.querySelectorAll(".shotcraft-audio-library .effect-group").length).toBeGreaterThan(0);
+    for (const category of SOUND_CATEGORY_ORDER) expect(screen.getByText(category, { selector: "summary span" })).toBeInTheDocument();
+    expect(container.querySelectorAll(".shotcraft-audio-library .effect-group")).toHaveLength(SOUND_CATEGORY_ORDER.length);
     expect(container.querySelectorAll(".shotcraft-audio-library .effect-group[open]")).toHaveLength(0);
+
+    const transitionGroup = screen.getByText("转场", { selector: "summary span" }).closest("details")!;
+    expect(within(transitionGroup).getAllByRole("button", { name: /^添加 /, hidden: true })).toHaveLength(FREE_SOUNDS_PER_CATEGORY);
+    expect(within(transitionGroup).getAllByRole("button", { name: /需要 Pro 会员$/, hidden: true }).length).toBeGreaterThan(0);
+
     const musicGroup = screen.getByText("音乐", { selector: "summary span" }).closest("details")!;
     expect(musicGroup).toHaveTextContent("bgm-tech-house");
+    expect(within(musicGroup).getAllByRole("button", { name: /^添加 /, hidden: true })).toHaveLength(FREE_MUSIC_TRACKS);
+    expect(within(musicGroup).getAllByRole("button", { name: /需要 Pro 会员$/, hidden: true })).toHaveLength(5 - FREE_MUSIC_TRACKS);
+  });
+
+  it("keeps Pro-only sounds previewable and routes the PRO button to the license dialog", () => {
+    const project = createEmptyProject();
+    useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
+    useLicenseStore.setState({ status: { isVip: false, planName: "普通用户", expireAt: null, activatedAt: null, licenseKey: null } });
+    const onNeedLicense = vi.fn();
+    render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} onNeedLicense={onNeedLicense} />);
+
+    const soundsTab = screen.getByRole("tab", { name: "音效" });
+    fireEvent.mouseDown(soundsTab, { button: 0, ctrlKey: false });
+    fireEvent.click(soundsTab);
+
+    const transitionGroup = screen.getByText("转场", { selector: "summary span" }).closest("details")!;
+    const proButtons = within(transitionGroup).getAllByRole("button", { name: /需要 Pro 会员$/, hidden: true });
+    expect(proButtons.every((button) => button.textContent === "PRO")).toBe(true);
+    expect(within(transitionGroup).getAllByRole("button", { name: /^试听 /, hidden: true }).length).toBeGreaterThan(FREE_SOUNDS_PER_CATEGORY);
+
+    fireEvent.click(proButtons[0]);
+    expect(onNeedLicense).toHaveBeenCalledTimes(1);
+    expect(useEditorStore.getState().project.assets).toHaveLength(0);
+  });
+
+  it("unlocks every sound and music track once the device holds an active Pro license", () => {
+    const project = createEmptyProject();
+    useEditorStore.setState({ project, selectedClipId: null, selectedClipIds: [], playheadUs: 0, zoom: 1, past: [], future: [], clipboard: [] });
+    useLicenseStore.setState({ status: { isVip: true, planName: "终身 VIP 会员", expireAt: null, activatedAt: Date.now(), licenseKey: null } });
+    const { container } = render(<AssetPanel onImport={vi.fn()} onGenerate={vi.fn()} onMatchEffects={vi.fn()} onTranscribe={vi.fn()} onExtractAudio={vi.fn()} onExportAudio={vi.fn()} onRelink={vi.fn()} onCreateAudio={vi.fn()} onManageEffects={vi.fn()} />);
+
+    const soundsTab = screen.getByRole("tab", { name: "音效" });
+    fireEvent.mouseDown(soundsTab, { button: 0, ctrlKey: false });
+    fireEvent.click(soundsTab);
+
+    expect(container.querySelectorAll(".sound-row.locked")).toHaveLength(0);
+    expect(container.querySelectorAll("button.pro-locked")).toHaveLength(0);
+    const musicGroup = screen.getByText("音乐", { selector: "summary span" }).closest("details")!;
     expect(within(musicGroup).getAllByRole("button", { name: /^添加 /, hidden: true })).toHaveLength(5);
   });
 

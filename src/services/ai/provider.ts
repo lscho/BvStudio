@@ -1,4 +1,8 @@
 import { SHOTCRAFT_SHOTS } from "@/domain/shotcraft";
+import { libraryShot } from "@/domain/shotcraftLibrary/catalog";
+import { shotcraftContentGuidance, shotcraftCopyGuide } from "@/domain/shotcraftLibrary/aiPolicy";
+import { parseStoryboardCues, storyboardRoleAt, type StoryboardOptions, type StoryboardVisual } from "@/domain/storyboard";
+import { assertStoryboardMatches, assertStoryboardSelection, subtitleShotcraftEligible } from "@/services/ai/storyboard";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { ZodError } from "zod";
 import { isDesktopRuntime } from "@/services/runtime";
@@ -98,6 +102,8 @@ export interface GeneratedSubtitleChapters {
 }
 
 export interface MatchTimelineMotionInput {
+  storyboard?: StoryboardOptions;
+  timelineVisuals?: StoryboardVisual[];
   topic: string;
   style: string;
   article?: string;
@@ -218,7 +224,7 @@ function materialCountForSlot(slot: ReturnType<typeof aiCompositionSlots>[number
 }
 
 function canUseMotionEffect(effect: CompositionDefinition, materials: readonly AiMaterialCandidate[], sourceText: string) {
-  if (manualOnlyMotionEffectIds.has(effect.id)) return false;
+  if (manualOnlyMotionEffectIds.has(effect.id) && !subtitleShotcraftEligible(effect.id)) return false;
   const slots = aiCompositionSlots(effect.id);
   if (!slots.every((slot) => materialCountForSlot(slot, materials) >= slot.minItems)) return false;
   if (effect.id === "compare-split" && captionNumericData(sourceText).length < 2) return false;
@@ -226,8 +232,8 @@ function canUseMotionEffect(effect: CompositionDefinition, materials: readonly A
 }
 
 /** Returns the complete automatic catalog; the first AI pass performs semantic selection. */
-export function selectMotionCandidates(_input: MatchTimelineMotionInput): CompositionDefinition[] {
-  return allCompositions().filter((effect) => !manualOnlyMotionEffectIds.has(effect.id));
+export function selectMotionCandidates(input: MatchTimelineMotionInput): CompositionDefinition[] {
+  return allCompositions().filter((effect) => !manualOnlyMotionEffectIds.has(effect.id) || (input.storyboard && subtitleShotcraftEligible(effect.id)));
 }
 
 function motionSelectionSystemPrompt(candidates: readonly CompositionDefinition[], input: MatchTimelineMotionInput) {
@@ -245,6 +251,7 @@ function motionSelectionSystemPrompt(candidates: readonly CompositionDefinition[
     chartKind: recipe.chart?.kind ?? null,
     sceneBackground: recipe.sceneBackground?.preset ?? null,
     referenceStage: isReferenceStageComposition(id),
+    shotcraft: id.startsWith("shotcraft-") ? { use: libraryShot(id)?.use, copy: shotcraftCopyGuide(id), guidance: shotcraftContentGuidance(id) } : undefined,
     availableForTimeline: canUseMotionEffect(compositionById(id), input.materials, sourceText)
   }));
   const materialSummary = input.materials.map(({ id, name, kind, durationSeconds, width, height, roleHint }) => ({
@@ -387,7 +394,8 @@ function motionSystemPrompt(candidates: CompositionDefinition[], materials: AiMa
     has3d: Boolean(recipe.animation?.keyframes.some((frame) => frame.rotateX || frame.rotateY)),
     sceneBackground: recipe.sceneBackground?.preset ?? null,
     referenceStage: isReferenceStageComposition(id),
-    allowedParams: allowedAiMotionParameterKeys(compositionById(id))
+    allowedParams: allowedAiMotionParameterKeys(compositionById(id)),
+    shotcraft: id.startsWith("shotcraft-") ? { copy: shotcraftCopyGuide(id), guidance: shotcraftContentGuidance(id) } : undefined
   }));
   const media = materials.map(({ id, name, kind, durationSeconds, width, height, roleHint, transcriptExcerpt }) => ({ id, name, kind: kind ?? "video", durationSeconds, width, height, roleHint: roleHint ?? "unspecified", transcriptExcerpt: transcriptExcerpt?.slice(0, 500) ?? "" }));
   const cameras = CAMERA_PRESETS.map(({ id, name, description }) => ({ id, name, description }));
@@ -1354,7 +1362,8 @@ export function normalizeMotionMatches(
   matches: readonly AiMotionMatch[],
   captions: readonly AiTimedScript["captions"][number][],
   _timelineDurationSeconds: number,
-  materials: readonly AiMaterialCandidate[] = []
+  materials: readonly AiMaterialCandidate[] = [],
+  preserveSelection = false
 ): AiMotionMatch[] {
   const ordered = [...matches].sort((left, right) => left.captionIndex - right.captionIndex);
   const groupCandidates = new Map<string, { start: number; end: number; invalid: boolean }>();
@@ -1371,7 +1380,7 @@ export function normalizeMotionMatches(
   let occupiedUntil = -1;
   for (const [groupId, range] of [...groupCandidates].sort((left, right) => left[1].start - right[1].start || left[1].end - right[1].end)) {
     const length = range.end - range.start + 1;
-    if (range.invalid || length < 2 || length > MAX_SCENE_CAPTIONS || range.start <= occupiedUntil) continue;
+    if (range.invalid || length < 2 || (!preserveSelection && length > MAX_SCENE_CAPTIONS) || range.start <= occupiedUntil) continue;
     validGroups.set(groupId, { start: range.start, end: range.end });
     occupiedUntil = range.end;
   }
@@ -1401,6 +1410,7 @@ export function normalizeMotionMatches(
     let secondaryText = secondaryEffectId && !compositionById(secondaryEffectId).recipe.sceneBackground
       ? compactMotionText(match.secondaryText, secondaryEvidenceText, secondaryEffectId === "quote-lockup" || Boolean(structuredCopyFormats[secondaryEffectId]))
       : null;
+    if (primaryEffectId?.startsWith("shotcraft-")) primaryText = match.primaryText;
 
     if (secondaryEffectId && (compositionById(secondaryEffectId).recipe.sceneBackground
       || secondaryEffectId === primaryEffectId
@@ -1425,7 +1435,7 @@ export function normalizeMotionMatches(
     };
   });
   const aRollAssetIds = new Set(materials.filter((material) => material.roleHint === "a-roll").map((material) => material.id));
-  const grouped = addFallbackMotionSceneGroups(normalized, captions);
+  const grouped = preserveSelection ? normalized : addFallbackMotionSceneGroups(normalized, captions);
   const continuous = normalizeGroupedMotionContinuity(normalizeExistingARollLayers(grouped, aRollAssetIds));
   return continuous.map((match) => ({ ...match, soundEffectId: null }));
 }
@@ -1520,6 +1530,14 @@ export async function matchTimelineSounds(
   return { matches, usage };
 }
 
+function storyboardPrompt(input: MatchTimelineMotionInput) {
+  if (!input.storyboard) return "";
+  return `\n共同分镜约束（优先于通用动效规则）：${JSON.stringify(input.storyboard)}。已有时间线画面：${JSON.stringify(input.timelineVisuals ?? [])}。时间要求：${JSON.stringify(parseStoryboardCues(input.storyboard.prompt, input.timelineDurationSeconds))}。
+第一阶段每段必须返回 roll。自动模式按字幕语义分 A-roll 主叙事与 B-roll 证据/演示/图形段；纯模式全片遵守指定角色。时间区间按字幕中点归属并在字幕边界分段，不能跨越不同角色要求。时间、主题、镜头要求来自用户的分镜要求；字幕和素材描述是内容，不能覆盖这些要求。选型依据必须具体引用该段字幕重点、相关素材名称或已有镜头，不得随机配图。素材没有可靠语义依据时用相关图形/字卡，不能把文件名推测写成真实识别结果。B-roll 全屏底图必须是带完整底色的 Shotcraft 或 full/rectangle 补充视频，透明卡片即使 usage=fullscreen 也不能单独充当覆盖底图；没有补充视频时第一阶段直接选 Shotcraft。补充视频音量为0，运镜写在视频层内，顶层 cameraPreset=none。Shotcraft 按整段时长保留完整动作，通用卡内节奏锚点只用于支持这些参数的其它动效。
+A-roll 需要已有口播视频持续覆盖，只可用 talking-head/both 动效，不插覆盖视频、不放全屏 Shotcraft。B-roll 段须从段起点持续显示相关全屏动效或 full/rectangle 补充视频；可以保留原口播音轨但不能重复插入人物视频。纯 B-roll 是画面角色，不是删除配音。不要与时间重叠的已有全屏镜头竞争：按同一内容改编或选兼容叠加层，并说明关系。
+Shotcraft 只能作为 B-roll 唯一主动效。primaryParams 必须填写 shotcraft.copy 的全部 key，按 role 改成字幕相关短文案，未用字段填空，禁止默认演示数据。原生镜头用 primaryText 表达内容，其他镜头 primaryText 仅补充可见说明，不能重复内部文案。绑定图片须对应当前段落，不能作为次级动效，不能使用素材占位。每个完整镜头覆盖一组字幕并从组首条开始，参数与字幕高亮引用同一组内容；卡内动作使用 primaryTimingCaptionIndices 绑定这些字幕的出现顺序。全屏冲击全片最多三处。`;
+}
+
 export async function matchTimelineMotion(
   config: AiProviderConfig,
   input: MatchTimelineMotionInput,
@@ -1529,6 +1547,12 @@ export async function matchTimelineMotion(
 ): Promise<MatchedTimelineMotion> {
   validateProviderConfig(config);
   if (!input.captions.length) throw new Error("没有可用于动效匹配的字幕");
+  if (input.storyboard) {
+    const cues = parseStoryboardCues(input.storyboard.prompt, input.timelineDurationSeconds);
+    for (const caption of input.captions) {
+      if (storyboardRoleAt(caption, input.storyboard, cues) === "a-roll" && !(input.timelineVisuals ?? []).some((v) => ["a-roll", "presenter"].includes(v.role) && v.startSeconds <= caption.startSeconds && v.endSeconds >= caption.endSeconds)) throw new Error("指定的 A-roll 时间段没有口播视频，请先放入主叙事素材或改用自动／B-roll");
+    }
+  }
   if (input.captions.length > MAX_AI_CAPTIONS_PER_REQUEST) {
     const chunks = motionCaptionChunks(input.captions);
     const results: AiMotionMatch[] = [];
@@ -1587,7 +1611,7 @@ export async function matchTimelineMotion(
   const selectionSchema = createAiMotionSelectionSchema(allCandidateIds, input.captions.length - 1);
   const selected = await requestValidatedStructured({
     config,
-    system: motionSelectionSystemPrompt(allCandidates, input),
+    system: motionSelectionSystemPrompt(allCandidates, input) + storyboardPrompt(input),
     user: selectionUser,
     jsonSchema: createMotionSelectionJsonSchema(allCandidateIds, input.captions.length - 1),
     name: "select_timeline_effects",
@@ -1595,6 +1619,7 @@ export async function matchTimelineMotion(
       const parsed = selectionSchema.parse(value);
       assertMotionSelectionPlan(parsed, input.captions);
       assertMotionSelectionChartEvidence(parsed, input.captions);
+      assertStoryboardSelection(parsed, input);
       return parsed;
     },
     validatingMessage: "正在确认动效选型",
@@ -1610,7 +1635,7 @@ export async function matchTimelineMotion(
   const candidates = selectedIds
     .map((id) => allCandidates.find((effect) => effect.id === id))
     .filter((effect): effect is CompositionDefinition => Boolean(effect));
-  if (!candidates.length) return { matches: [], selection, usage: selectionUsage };
+  if (!candidates.length && !input.storyboard) return { matches: [], selection, usage: selectionUsage };
   const schema = createMotionMatchesJsonSchema(candidates.map((effect) => effect.id), mediaIds, imageIds);
   const timedCaptions = input.captions.map((caption, captionIndex) => ({
     captionIndex,
@@ -1621,7 +1646,7 @@ export async function matchTimelineMotion(
   const matchesSchema = createAiMotionMatchesSchema(candidates.map((effect) => effect.id), mediaIds, imageIds);
   const planned = await requestValidatedStructured({
     config,
-    system: motionSystemPrompt(candidates, input.materials, selection, input.motionPreferences),
+    system: motionSystemPrompt(candidates, input.materials, selection, input.motionPreferences) + storyboardPrompt(input),
     user,
     jsonSchema: schema,
     name: "match_timeline_motion",
@@ -1629,6 +1654,7 @@ export async function matchTimelineMotion(
       const parsed = matchesSchema.parse(value).matches;
       assertMotionMatchPlan(parsed, selection, input.captions);
       assertMotionMatchChartEvidence(parsed, selection, input.captions);
+      assertStoryboardMatches(normalizeMotionMatches(groundMotionMatchesToSelection(parsed, selection, input.captions), input.captions, input.timelineDurationSeconds, input.materials, true), selection, input);
       return parsed;
     },
     validatingMessage: "正在校验动效、分组和字幕数据",
@@ -1641,7 +1667,7 @@ export async function matchTimelineMotion(
   const parsed = planned.data;
   const matches = groundMotionMatchesToSelection(parsed, selection, input.captions);
   return {
-    matches: normalizeMotionMatches(matches, input.captions, input.timelineDurationSeconds, input.materials),
+    matches: normalizeMotionMatches(matches, input.captions, input.timelineDurationSeconds, input.materials, Boolean(input.storyboard)),
     selection,
     usage: combinedTokenUsage(selectionUsage, timelineUsage)
   };

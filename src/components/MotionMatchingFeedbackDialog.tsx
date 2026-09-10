@@ -105,6 +105,7 @@ export function MotionMatchingFeedbackDialog({ open, project, onOpenChange }: Pr
                     <span><strong>{new Date(record.createdAt).toLocaleString("zh-CN", { hour12: false })}</strong><small>{record.selection.length} 个语义段 · {selectionNames(record)}</small></span>
                     <i data-status={record.status}>{record.status === "pending" ? "待确认" : record.status === "confirmed" ? "已采纳" : "已忽略"}</i>
                   </header>
+                  {record.selection.some((segment) => segment.roll) && <details><summary>查看分镜与字幕关联</summary><ol>{record.selection.map((segment) => <li key={segment.segmentId}>{segment.roll === "a-roll" ? "A-roll" : segment.roll === "b-roll" ? "B-roll" : "未分类"} · {segment.title} · 字幕 {segment.startCaptionIndex + 1}–{segment.endCaptionIndex + 1}{segment.primaryEffectId ? ` · ${effectNames.get(segment.primaryEffectId) ?? segment.primaryEffectId}` : ""}{segment.materialNeed ? ` · ${segment.materialNeed}` : ""}</li>)}</ol></details>}
                   <div className="motion-feedback-diffs" aria-label="匹配修改统计">
                     {reportItems(report).map((item) => <span key={item.label}><b>{item.value}</b>{item.label}</span>)}
                   </div>

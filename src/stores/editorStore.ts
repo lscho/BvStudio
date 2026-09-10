@@ -1,5 +1,5 @@
 import { defaultShotcraftSettings, isShotcraftComposition, normalizeShotcraftSettings, shotcraftHoldPatch } from "@/domain/shotcraft";
-import { appendShotcraftSequence, type ShotcraftPlan, type ShotcraftSequenceOptions } from "@/domain/shotcraftPlan";
+import { appendShotcraftSequence, compileShotcraftSequence, subtitleShotcraftScene, type ShotcraftPlan, type ShotcraftSequenceOptions } from "@/domain/shotcraftPlan";
 import { create } from "zustand";
 import { compositionLayer, mediaComposition, normalizeBindings, compositionBindingIssues, compositionSlots, compositionTimeUs, compositionRetimeBounds, sceneGroupRetimeRatio, slotAccepts, isBackgroundComposition, isSequencedMediaComposition, type CompositionBinding } from "@/domain/compositions";
 import { DEFAULT_VIDEO_LAYER, normalizeLayer } from "@/domain/layers";
@@ -147,7 +147,7 @@ function aiMotionEntries(match: AiMotionMatch, captionText: string, useCaptionFa
     ? ""
     : match.primaryText.trim() || (useCaptionFallback ? captionText : "");
   const entries: Array<AiMotionEntry | null> = [
-    primaryDefinition && (primaryText || primaryDefinition.recipe.sceneBackground || isBackgroundComposition(primaryDefinition.id) || compositionSlots(primaryDefinition.id).length > 0)
+    primaryDefinition && (primaryText || primaryDefinition.recipe.sceneBackground || isBackgroundComposition(primaryDefinition.id) || isShotcraftComposition(primaryDefinition.id) || compositionSlots(primaryDefinition.id).length > 0)
       ? { slot: "primary", compositionId: primaryDefinition.id, text: primaryText, x: match.x, y: match.y, scale: match.scale, zIndex: 20, params: match.primaryParams ?? [], timingCaptionIndices: match.primaryTimingCaptionIndices ?? [], materialPlaceholder: match.materialPlaceholder ?? false }
       : null,
     match.secondaryEffectId && match.secondaryText?.trim()
@@ -195,7 +195,7 @@ function resolveAiMotionPlacements(
     for (const entry of aiMotionEntries(match, caption.text, useCaptionFallback)) {
       const recipe = materializedAiEffectRecipe(entry.compositionId, match);
       if (recipe.sceneBackground || isBackgroundComposition(entry.compositionId) || mediaComposition(entry.compositionId)) continue;
-      if (isReferenceStageComposition(entry.compositionId)) {
+      if (isReferenceStageComposition(entry.compositionId) || isShotcraftComposition(entry.compositionId)) {
         referencePlacements.set(aiMotionLayoutId(captionIndex, entry.slot), { x: 50, y: 50, scale: 1 });
         continue;
       }
@@ -1137,8 +1137,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       )));
       if (!effectTrack.locked) effectTrack.clips = effectTrack.clips.filter((clip) => clip.locked || clip.kind !== "composition" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
       if (!sceneTrack.locked) sceneTrack.clips = sceneTrack.clips.filter((clip) => clip.locked || clip.kind !== "scene" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
+      const lockedVideoSubtitleIds = new Set(project.tracks.flatMap((track) => track.clips.flatMap((clip) => clip.kind === "video" && clip.sourceSubtitleId && (track.locked || clip.locked) ? [clip.sourceSubtitleId] : [])));
       for (const track of project.tracks.filter((candidate) => candidate.kind === "video")) {
-        track.clips = track.clips.filter((clip) => clip.kind !== "video" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
+        if (!track.locked) track.clips = track.clips.filter((clip) => clip.locked || clip.kind !== "video" || !clip.sourceSubtitleId || !selectedIds.has(clip.sourceSubtitleId));
       }
       const motionCaptions = subtitles.map((subtitle) => ({
         startUs: subtitle.startUs,
@@ -1163,6 +1164,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       );
 
       const addMatchedVideo = (subtitle: SubtitleClip, durationUs: number, layer: AiMotionMatch["videoLayers"][number], labelPrefix: string, sourceVideo?: VideoClip) => {
+        if (lockedVideoSubtitleIds.has(subtitle.id)) return;
         const asset = project.assets.find((candidate) => candidate.id === layer.assetId && candidate.kind === "video" && !candidate.missing);
         if (!asset || asset.durationUs <= 0) return;
         const track = videoTrackForPlacement(project, subtitle.startUs, "auto", durationUs);
@@ -1205,6 +1207,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         for (const entry of selectedEntries) {
           const definition = compositionById(entry.compositionId);
           if (effectTrack.locked || (definition.recipe.sceneBackground && sceneTrack.locked)) { summary.skippedEffectCount += 1; continue; }
+          if (isShotcraftComposition(definition.id)) {
+            const scene = subtitleShotcraftScene({ compositionId: definition.id, durationSeconds: matchDurationUs / 1_000_000, text: entry.text, params: entry.params, bindings: match.compositionBindings });
+            const compiled = compileShotcraftSequence({ title: "字幕分镜", scenes: [scene] }, project.assets, { startUs: subtitle.startUs, musicSourceInUs: 0, musicVolume: 0, beatSync: false, soundEnabled: false }, () => crypto.randomUUID());
+            const clip = compiled.tracks[0].clips[0];
+            if (clip.kind !== "composition") continue;
+            effectTrack.clips.push({ ...clip, trackId: effectTrack.id, label: `AI 分镜 · ${definition.name}`, sourceSubtitleId: subtitle.id, sourceBlockId: subtitle.sourceBlockId, sceneGroupId: match.motionGroupId ? motionGroupSceneIds.get(match.motionGroupId) : undefined, matchQuery: subtitle.text, colorRole: motionColorRoleForEffect(definition.id), accentColor: themeAccentColor });
+            summary.effectCount += 1;
+            continue;
+          }
           if (mediaComposition(definition.id)) {
             const bindings = normalizeBindings(match.compositionBindings);
             const placeholder = entry.materialPlaceholder && bindings.length === 0;

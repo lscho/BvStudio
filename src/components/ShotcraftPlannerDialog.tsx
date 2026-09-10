@@ -13,8 +13,8 @@ import { loadShotcraftAudio, SHOTCRAFT_AUDIO } from "@/services/shotcraftAudio";
 import type { PersistedSettings } from "@/services/storage";
 import { useEditorStore } from "@/stores/editorStore";
 
-interface Props { open: boolean; settings: PersistedSettings; onOpenChange: (open: boolean) => void; onNeedSettings: () => void }
-export function ShotcraftPlannerDialog({ open, settings, onOpenChange, onNeedSettings }: Props) {
+interface Props { open: boolean; settings: PersistedSettings; onOpenChange: (open: boolean) => void; onNeedSettings: () => void; onSubtitleStoryboard?: () => void }
+export function ShotcraftPlannerDialog({ open, settings, onOpenChange, onNeedSettings, onSubtitleStoryboard }: Props) {
   const assets = useEditorStore((state) => state.project.assets);
   const playheadUs = useEditorStore((state) => state.playheadUs);
   const addSequence = useEditorStore((state) => state.addShotcraftSequence);
@@ -99,6 +99,7 @@ export function ShotcraftPlannerDialog({ open, settings, onOpenChange, onNeedSet
       <Dialog.Close type="button" className="icon-button dialog-close" aria-label="关闭镜头编排"><X size={18} /></Dialog.Close>
       <Dialog.Title>AI 镜头编排</Dialog.Title>
       <Dialog.Description id="shotcraft-planner-description">选择素材和音乐，生成镜头、转场与动作音效。加入后可在时间线逐段编辑。</Dialog.Description>
+      {onSubtitleStoryboard && <button type="button" className="button secondary" disabled={working} onClick={() => { onOpenChange(false); onSubtitleStoryboard(); }}>按现有字幕编排 A-roll / B-roll</button>}
       <form className="settings-form" onSubmit={generate}>
         <fieldset disabled={working}>
           <label><span>视频内容与镜头要求</span><textarea rows={3} value={brief} onChange={(event) => setBrief(event.target.value)} placeholder="例如：用 30 秒展示产品，从标题开场到页面巡览，重点突出中央功能卡片" /></label>

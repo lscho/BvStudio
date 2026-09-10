@@ -3,6 +3,8 @@ import { desktopCompositionFrames } from "@/services/compositionFrames";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { Clapperboard, Download, FolderOpen, History, LoaderCircle, Redo2, Save, Settings, Square, Undo2 } from "lucide-react";
 import { ShotcraftPlannerDialog } from "@/components/ShotcraftPlannerDialog";
+import { SubtitleStoryboardDialog } from "@/components/SubtitleStoryboardDialog";
+import { storyboardVisuals, type StoryboardOptions } from "@/domain/storyboard";
 import { AiGenerateDialog } from "@/components/AiGenerateDialog";
 import { AiSettingsDialog, type SettingsSection } from "@/components/AiSettingsDialog";
 import { AudioCreateDialog, type CreatedAudioSource } from "@/components/AudioCreateDialog";
@@ -117,6 +119,7 @@ export default function App() {
   const speechSegments = useMemo(() => audioContext?.subtitles.map(subtitle => ({ id: subtitle.id, text: subtitle.text })) ?? [], [audioContext]);
   const [effectLibraryOpen, setEffectLibraryOpen] = useState(false);
   const [motionFeedbackOpen, setMotionFeedbackOpen] = useState(false);
+  const [subtitleStoryboardOpen, setSubtitleStoryboardOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
@@ -500,7 +503,7 @@ export default function App() {
     }
   }
 
-  async function matchSubtitleEffects(mode: "motion" | "sound" = "motion") {
+  async function matchSubtitleEffects(mode: "motion" | "sound" = "motion", storyboard?: StoryboardOptions) {
     if (aiRequestController) return;
     const project = useEditorStore.getState().project;
     const allSubtitles = project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle");
@@ -543,6 +546,8 @@ export default function App() {
         return [];
       });
       const result = await matchTimelineMotion(settings.aiProvider, {
+        storyboard,
+        timelineVisuals: storyboardVisuals(project),
         topic: project.name,
         style: "内容优先、关键词精炼、时间轴感知、避免遮挡字幕",
         article: generatedClips.map((clip) => clip.article).filter(Boolean).join("\n").slice(0, 8_000),
@@ -558,7 +563,7 @@ export default function App() {
             durationSeconds: asset.durationUs / 1_000_000,
             width: asset.width,
             height: asset.height,
-            roleHint: sourceSubtitles.length ? "a-roll" as const : placedRole ?? "unspecified" as const,
+            roleHint: placedRole && placedRole !== "unspecified" ? placedRole : sourceSubtitles.length && videoClips.some((clip) => clip.assetId === asset.id) ? "a-roll" as const : "unspecified" as const,
             transcriptExcerpt: sourceSubtitles.map((subtitle) => subtitle.text).join(" ").slice(0, 500)
           };
         }),
@@ -795,13 +800,14 @@ export default function App() {
           </div>
           <WindowControls />
         </header>
-        <EditorWorkspace aiProvider={settings.aiProvider} onNeedSettings={() => setSettingsOpen(true)} onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onMatchEffects={() => void matchSubtitleEffects()} onReviewMotionMatching={() => setMotionFeedbackOpen(true)} onMatchSounds={() => void matchSubtitleEffects("sound")} matching={Boolean(aiRequestController)} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => { const state = useEditorStore.getState(); setAudioContext(narrationContext(state.project, state.selectedClipIds, state.playheadUs)); setAudioOpen(true); }} onManageEffects={() => setEffectLibraryOpen(true)} onNeedLicense={() => { setSettingsInitialSection("license"); setSettingsOpen(true); }} />
+        <EditorWorkspace aiProvider={settings.aiProvider} onNeedSettings={() => setSettingsOpen(true)} onImport={() => void requestImport()} onGenerate={() => setGenerateOpen(true)} onMatchEffects={() => setSubtitleStoryboardOpen(true)} onReviewMotionMatching={() => setMotionFeedbackOpen(true)} onMatchSounds={() => void matchSubtitleEffects("sound")} matching={Boolean(aiRequestController)} onTranscribe={(assetId) => void transcribeAsset(assetId)} onExtractAudio={(assetId) => void extractAssetAudio(assetId, false)} onExportAudio={(assetId) => void extractAssetAudio(assetId, true)} onRelink={(assetId) => void relinkAsset(assetId)} onCreateAudio={() => { const state = useEditorStore.getState(); setAudioContext(narrationContext(state.project, state.selectedClipIds, state.playheadUs)); setAudioOpen(true); }} onManageEffects={() => setEffectLibraryOpen(true)} onNeedLicense={() => { setSettingsInitialSection("license"); setSettingsOpen(true); }} />
         <input ref={fileInput} className="visually-hidden" type="file" accept="video/*,audio/*,image/png,image/jpeg,image/webp,image/bmp" onChange={(event) => void importBrowserMedia(event)} />
       </div>
       {(busyMessage || notice) && <div className={`status-toast ${busyMessage ? "busy" : ""}`}>{busyMessage && <LoaderCircle className="spin" size={15} />}<span>{busyMessage ?? notice}{exportProgress ? <small>{Math.round(exportProgress.progress * 100)}% · {exportProgress.segmentIndex}/{exportProgress.segmentCount || "-"}</small> : proxyProgress ? <small>{Math.round(proxyProgress.progress * 100)}%</small> : asrProgress ? <small>{Math.round(asrProgress.progress * 100)}% · 云端处理</small> : null}</span>{(compositionExportController.current || aiRequestController || exportJobId || proxyJobId || audioExtractionJobId || asrJobId) && <button type="button" aria-label={aiRequestController ? "取消 AI 匹配" : (exportJobId || compositionExportController.current) ? "取消视频导出" : proxyJobId ? "取消代理生成" : audioExtractionJobId ? "取消音频分离" : "取消字幕识别"} title="取消任务" onClick={() => void cancelCurrentTask()}><Square size={12} fill="currentColor" /></button>}{notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button>}</div>}
       <AiSettingsDialog open={settingsOpen} initialSection={settingsInitialSection} settings={settings} onOpenChange={setSettingsOpen} onSave={setSettings} />
       <AiGenerateDialog open={generateOpen} settings={settings} onOpenChange={setGenerateOpen} onNeedSettings={() => { setGenerateOpen(false); setSettingsOpen(true); }} />
-      <ShotcraftPlannerDialog open={shotcraftOpen} settings={settings} onOpenChange={setShotcraftOpen} onNeedSettings={() => { setShotcraftOpen(false); setSettingsOpen(true); }} />
+      <ShotcraftPlannerDialog open={shotcraftOpen} settings={settings} onOpenChange={setShotcraftOpen} onSubtitleStoryboard={() => setSubtitleStoryboardOpen(true)} onNeedSettings={() => { setShotcraftOpen(false); setSettingsOpen(true); }} />
+      <SubtitleStoryboardDialog open={subtitleStoryboardOpen} onOpenChange={setSubtitleStoryboardOpen} onGenerate={(options) => void matchSubtitleEffects("motion", options)} subtitleCount={subtitlesForMotionMatch(project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle"), useEditorStore.getState().selectedClipIds).length} durationSeconds={project.durationUs / 1_000_000} />
       <AudioCreateDialog open={audioOpen} defaultText={audioContext?.text ?? ""} targetLabel={audioContext ? `${audioContext.block ? `脚本：${audioContext.block.label}` : audioContext.subtitles.length ? "选中字幕" : "自由配音"} · 起点 ${(audioContext.startUs / 1_000_000).toFixed(3)} 秒` : undefined} speechSegments={speechSegments} cloudSpeech={settings.cloudSpeech} onOpenChange={setAudioOpen} onCreated={(source) => addCreatedAudio(source, audioContext?.startUs, audioContext?.block?.id)} />
       <EffectLibraryDialog open={effectLibraryOpen} onOpenChange={setEffectLibraryOpen} />
       <MotionMatchingFeedbackDialog open={motionFeedbackOpen} project={project} onOpenChange={setMotionFeedbackOpen} />

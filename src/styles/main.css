@@ -170,10 +170,7 @@ h1, h2, h3, p { margin: 0; }
 .effect-swatch.chart-swatch::after { right: 5px; bottom: 5px; left: 5px; height: 1px; background: color-mix(in srgb, var(--swatch-accent) 35%, transparent); }
 .effect-swatch.chart-swatch i { display: grid; place-items: center; color: var(--swatch-accent); }
 .sound-library { display: grid; align-content: start; gap: 12px; }
-.sound-library > header { min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--green); }
-.sound-library > header > span { min-width: 0; display: grid; gap: 2px; }
-.sound-library > header strong { color: var(--text); font-size: 13px; }
-.sound-library > header small, .sound-row small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.sound-row small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .sound-group { min-width: 0; display: grid; gap: 3px; }
 .sound-row { min-width: 0; display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: center; gap: 7px; min-height: 44px; padding: 5px; border: 1px solid transparent; border-radius: 5px; background: var(--surface-2); }
 .sound-row:hover { border-color: var(--line); background: var(--surface-3); }
@@ -182,6 +179,9 @@ h1, h2, h3, p { margin: 0; }
 .sound-row button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; color: var(--muted); background: transparent; cursor: pointer; }
 .sound-row button:hover { color: var(--text); background: var(--surface); }
 .sound-row button:first-child { color: var(--green); }
+.sound-row.locked strong { opacity: 0.72; }
+.sound-row button.pro-locked { color: var(--orange); font-size: 9px; font-weight: 700; letter-spacing: 0.02em; }
+.sound-row button.pro-locked:hover { color: var(--orange); background: color-mix(in srgb, var(--orange) 14%, transparent); }
 .effect-swatch.chart-swatch svg { filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.45)); }
 .effect-swatch.scene-swatch { background: #171a1e; }
 .effect-swatch.scene-swatch::before { inset: 5px 11px 9px 5px; border: 1px solid var(--swatch-accent); border-radius: 2px; background: rgb(255 255 255 / 0.08); box-shadow: 5px 4px 0 rgb(255 255 255 / 0.1), 9px 7px 0 color-mix(in srgb, var(--swatch-accent) 24%, transparent); }

@@ -81,6 +81,23 @@ describe("truncateRepairOutput", () => {
 });
 
 describe("provider requests", () => {
+  it("字幕分镜的两阶段共享角色、要求、素材和时间轴，并保持镜头到组尾", async () => {
+    const selection = motionSelection("shotcraft-blur-slide", 1);
+    const captions = [{ startSeconds: 0, endSeconds: 4, text: "生成很快" }, { startSeconds: 4, endSeconds: 8, text: "改片很慢" }];
+    const matched = { captionIndex: 0, primaryEffectId: "shotcraft-blur-slide", primaryText: "生成很快｜改片很慢", secondaryEffectId: null, secondaryText: null, accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 50, secondaryY: 50, cameraPreset: "none", chart: null };
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ segments: selection.segments.map((s) => ({ ...s, roll: "b-roll" })) }) } }] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ matches: [matched] }) } }] })));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await matchTimelineMotion(config, { topic: "痛点", style: "简洁", captions, timelineDurationSeconds: 8, materials: [{ id: "screenshot", kind: "image", name: "产品时间线", durationSeconds: 0 }], storyboard: { mode: "b-roll", prompt: "0-8秒 B-roll 用柔焦标题对比生成和改片" }, timelineVisuals: [] }, "secret");
+    expect(result.matches[0]).toMatchObject({ primaryText: matched.primaryText, persistUntilCaptionIndex: 1, motionGroupId: "segment-1" });
+    expect(result.selection.segments[0].roll).toBe("b-roll");
+    for (const call of fetchMock.mock.calls) {
+      const payload = JSON.parse(String(call[1]?.body));
+      expect(payload.messages[0].content).toContain("0-8秒 B-roll");
+      expect(payload.messages[0].content).toContain("产品时间线");
+      expect(payload.messages.at(-1).content).toContain("改片很慢");
+    }
+  });
   it("assembles a streamed Responses API structured output and reports progress", async () => {
     const script = { title: "流式响应", article: "文章", narration: "口播", captions: [{ startSeconds: 0, endSeconds: 2, text: "逐步返回内容。" }] };
     const serialized = JSON.stringify(script);
