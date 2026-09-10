@@ -1,5 +1,5 @@
 // Timing adaptations from video-shotcraft, Copyright 2026 Wei Yihao (Apache-2.0).
-// Modified for editable BVideo projects; see docs/shotcraft.md.
+// Modified for editable BVideo projects; see docs/03-Shotcraft镜头.md.
 import { z } from "zod";
 import type { CompositionDefinition } from "@/domain/effects";
 import type { CompositionClip, EditorProject } from "@/domain/project";

@@ -760,7 +760,7 @@ const REPLICATED_OVERLAY_STUDIO_EFFECTS: readonly CompositionDefinition[] = impo
 
 /**
  * 高级动效：3D 空间与复杂运镜品类，默认只对 Pro 开放。
- * 新增或调整时必须同步 docs/effect-access.md 的清单说明。
+ * 新增或调整时必须同步 docs/12-动效分类与Pro可用性约束.md 的清单说明。
  */
 export const PREMIUM_EFFECT_IDS = [
   "terminal-3d", "poster-wall-3d", "image-duet-3d",

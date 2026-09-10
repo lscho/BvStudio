@@ -48,7 +48,7 @@ export async function loadShotcraftAudio(id: string, signal?: AbortSignal): Prom
   const existing = cached.get(id);
   if (existing) return existing;
   const response = await fetch(`${import.meta.env.BASE_URL}shotcraft-audio/${item.file}`, { signal });
-  if (!response.ok) throw new Error("音效素材未准备，请运行 README 中的 Shotcraft 素材准备命令，或导入自己的音频");
+  if (!response.ok) throw new Error("音效素材未准备，请运行 npm run prepare:shotcraft-assets 准备素材（见 docs/03-Shotcraft镜头.md），或导入自己的音频");
   const bytes = await response.arrayBuffer();
   const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((value) => value.toString(16).padStart(2, "0")).join("");
   if (digest !== item.sha256) throw new Error("音频素材缺失或版本不一致，请重新准备 Shotcraft 素材");

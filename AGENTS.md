@@ -21,7 +21,7 @@
 - `src/components/`：界面、交互和可访问性。复杂计算优先下沉到 domain/service，避免在 JSX 内复制业务规则。
 - `src/styles/main.css`：当前全局设计系统和组件样式。新增样式优先复用现有 CSS 变量及类名语义。
 - `src-tauri/src/`：文件系统、媒体进程、系统能力、密钥和网络代理等原生实现。
-- `scripts/`：构建与发布辅助脚本；`docs/`：外部格式和协议文档；`examples/`：可提交的示例资产。
+- `scripts/`：构建与发布辅助脚本；`docs/`：产品行为、格式与协议文档，索引见 [`docs/README.md`](docs/README.md)；`examples/`：可提交的示例资产。
 
 ## 3. 不可破坏的领域约定
 
@@ -32,7 +32,7 @@
 - 项目文件是用户数据。修改 `EditorProject` 的持久化结构时，必须递增 `schemaVersion`，在 `parseProject` 中兼容迁移受支持的旧版本，并增加序列化、迁移和异常输入测试。
 - `objectUrl`、代理 URL 等会话态数据不得写入工程文件；本地源路径及缺失素材恢复继续通过现有 project session/media 服务处理。
 - 外部输入不可信。AI 响应继续通过 Zod schema 校验；工程 JSON、动效包、更新清单、IPC 参数和媒体探测结果均需校验或规范化后再进入领域模型。
-- API Key 只通过既有安全路径处理：桌面端写入系统钥匙串，浏览器开发预览最多使用会话级存储。不得写日志、localStorage、工程 JSON或错误详情。
+- API Key 只通过既有安全路径处理：桌面端写入应用数据目录下权限受限的凭证文件（`<app_data_dir>/credentials`，`src-tauri/src/secrets.rs`），浏览器开发预览最多使用会话级存储。不得写日志、localStorage、工程 JSON或错误详情。
 
 ## 4. TypeScript 与 React 风格
 
@@ -112,7 +112,9 @@ npm run build
 
 ## 9. 文档、依赖与交付
 
-- 用户可见行为、环境变量或本地命令发生变化时同步更新 `README.md`；外部契约和 `.bveffect` 格式分别更新 `docs/updater-api.md`、`docs/effect-package-format.md`。
+- 文档按主题拆分在 `docs/` 下，索引与「改动 → 应更新的文档」对照表见 [`docs/README.md`](docs/README.md)；`README.md` 只保留项目简介、快速开始和能力概览，细节写入对应主题文档，不要在 README 里堆叠功能细节。
+- `docs/` 下的主题文档统一命名为 `NN-中文标题.md`（两位序号 + 连字符 + 中文标题，标题内不加空格），新增文档追加到序号末尾并在 [`docs/README.md`](docs/README.md) 登记；例外仅限索引 `docs/README.md`、`licenses/` 下的上游许可证原文和 `shotcraft-migration.json` 数据文件。重命名文档后必须同步更新全仓引用（根 `README.md`、`AGENTS.md`、`docs/*.md` 交叉链接及 `src/`、`edge/` 中的路径注释）。
+- 常见映射：用户可见行为更新对应主题文档（编辑器 [`docs/01-编辑器与时间线.md`](docs/01-编辑器与时间线.md)、动效 [`docs/02-动效体系.md`](docs/02-动效体系.md)、AI [`docs/05-AI生成与动效匹配.md`](docs/05-AI生成与动效匹配.md)、语音 [`docs/07-云端语音.md`](docs/07-云端语音.md)、媒体导出 [`docs/08-媒体管线与导出.md`](docs/08-媒体管线与导出.md)、工程格式 [`docs/09-工程格式与持久化.md`](docs/09-工程格式与持久化.md)、平台集成 [`docs/10-应用运行时与平台集成.md`](docs/10-应用运行时与平台集成.md)）；本地命令、环境变量与 CI 变量更新 [`docs/11-本地命令与环境变量.md`](docs/11-本地命令与环境变量.md)；外部契约和 `.bveffect` 格式分别更新 [`docs/15-桌面更新服务协议.md`](docs/15-桌面更新服务协议.md)、[`docs/14-bveffect扩展包格式.md`](docs/14-bveffect扩展包格式.md)。
 - 修改依赖时使用 npm 并同步提交 `package.json` 与 `package-lock.json`；先确认 Node `>=22 <23` 兼容性，不混用 pnpm/yarn 锁文件。
 - 修改 Rust 依赖时同步 `src-tauri/Cargo.toml` 与 `src-tauri/Cargo.lock`，不要手工编辑 lockfile。
 - 完成后检查 `git diff` 和 `git status`，确认没有生成物、密钥、临时配置或无关格式改动。

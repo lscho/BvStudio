@@ -1,5 +1,5 @@
 // 动效可用性规则：分类内前 N 个免费，其余需要 Pro；高级分类全部需要 Pro。
-// 规则说明与高级清单见 docs/effect-access.md。
+// 规则说明与高级清单见 docs/12-动效分类与Pro可用性约束.md。
 import type { CompositionDefinition, EffectCategory } from "@/domain/effects";
 
 /** 每个常规分类免费开放的动效数量；该分类第 11 个起需要 Pro。 */

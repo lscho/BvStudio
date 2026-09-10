@@ -4,7 +4,7 @@
  * 与 license-core.mjs 同样不依赖运行时全局 API，可同时运行在 ESA Edge Routine、
  * Node 22 与 Vitest 中，供边缘函数、发布导入脚本与单元测试共用。
  *
- * 契约依据 docs/updater-api.md 与 tauri-plugin-updater 的 RemoteRelease 反序列化：
+ * 契约依据 docs/15-桌面更新服务协议.md 与 tauri-plugin-updater 的 RemoteRelease 反序列化：
  * 本项目按单平台查询（端点模板只含 {{target}}），因此响应使用 Dynamic 形态
  * （顶层平铺 url 与 signature），而不是 Static 的 platforms 映射。
  * 其中 version / url / signature 缺失会让 Rust 侧整个响应反序列化失败，

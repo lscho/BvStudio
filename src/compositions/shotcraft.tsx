@@ -9,7 +9,7 @@ import { eased } from "@/domain/easing";
 import { defaultShotcraftSettings, shotcraftBezier, shotcraftFrame, shotcraftHeroZoom, shotcraftImageRect, shotcraftProgress as seg, shotcraftShot, shotcraftTransitionState, type ShotcraftSettings } from "@/domain/shotcraft";
 
 // Adapted from video-shotcraft, Copyright 2026 Wei Yihao (Apache-2.0).
-// Modified for editable assets, microsecond clocks and native React export. See docs/shotcraft.md.
+// Modified for editable assets, microsecond clocks and native React export. See docs/03-Shotcraft镜头.md.
 const fill: CSSProperties = { position: "absolute", inset: 0 };
 const px = (value: number) => `${value / 4.8}cqw`;
 const cubicOut = (t: number) => eased(t, "cubic-out");

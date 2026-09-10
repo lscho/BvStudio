@@ -2,7 +2,7 @@
  * BVideo 桌面更新服务的请求处理层（ESA Edge Routine）。
  *
  * KV 通过参数注入，便于单元测试；部署入口见 index.js。
- * 客户端契约见 docs/updater-api.md：动态格式响应、204 表示无更新、
+ * 客户端契约见 docs/15-桌面更新服务协议.md：动态格式响应、204 表示无更新、
  * 响应头必须 Cache-Control: no-store（客户端 15s 超时内不做缓存复用）。
  */
 import { decideUpdateResponse, isValidUpdatePlatform, releaseKeyFor } from "./release-core.mjs";

@@ -1,5 +1,5 @@
 // 音效可用性规则：8 个常规分类内前 5 个免费，音乐分类前 2 首免费，其余需要 Pro。
-// 规则说明见 docs/sound-access.md。
+// 规则说明见 docs/13-音效分类与Pro可用性约束.md。
 export type SoundTier = "free" | "pro";
 
 /** 资源面板「音效」页展示的分类顺序；音乐固定排在最后。 */
