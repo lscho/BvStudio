@@ -8,8 +8,9 @@
  *   npm run esa:import-release -- --manifest <path> --notes-file CHANGELOG.md
  *   npm run esa:import-release -- --manifest <path> --dry-run          # 只校验和打印，不写入
  *
- * 全部五个平台必须先通过校验再整体写入：任一条不合格则整批中止，
- * 避免出现「只剩某个平台停在旧版本」的半发布状态。
+ * 清单里的全部平台必须先通过校验再整体写入：任一条不合格则整批中止，
+ * 避免出现「只剩某个平台停在旧版本」的半发布状态。平台集合取自清单本身，
+ * 不要求五平台齐全（构建矩阵可裁剪），缺失的平台只提示、不中止。
  *
  * 凭证解析优先级：环境变量 ESA_ACCESS_KEY_ID/ESA_ACCESS_KEY_SECRET > esa-cli 登录态。
  * 命名空间默认读取 edge/config.js 的 KV_NAMESPACE（该文件已 gitignore），可用 --namespace 覆盖。
@@ -104,8 +105,9 @@ export function deriveUpdaterUrl(manifest, updater) {
 }
 
 /**
- * 清单 → 五平台 KV 记录。返回 { records, problems }，
- * problems 非空时调用方必须整批中止。
+ * 清单 → KV 记录，平台集合取自清单本身（构建矩阵可裁剪）。
+ * 返回 { records, problems, missingPlatforms }：problems 非空时调用方必须整批中止，
+ * missingPlatforms 只用于提示「这些客户端本轮拿不到更新」。
  */
 export function buildReleaseRecords(
   manifest,
@@ -135,12 +137,19 @@ export function buildReleaseRecords(
   const commitSha = trimmedString(manifest?.commitSha);
   const records = [];
 
-  for (const platform of CLIENT_UPDATE_PLATFORMS) {
+  /**
+   * 构建矩阵可以裁剪，因此不能要求五平台齐全——只发布清单里实际存在的平台。
+   * 但缺失的平台意味着这些客户端本轮拿不到更新，必须显式提示，不能静默通过。
+   */
+  const targetPlatforms = CLIENT_UPDATE_PLATFORMS.filter((platform) =>
+    platforms.some((item) => item?.platform === platform)
+  );
+  const missingPlatforms = CLIENT_UPDATE_PLATFORMS.filter(
+    (platform) => !targetPlatforms.includes(platform)
+  );
+
+  for (const platform of targetPlatforms) {
     const entry = platforms.find((item) => item?.platform === platform);
-    if (!entry) {
-      problems.push(`清单缺少平台 ${platform}`);
-      continue;
-    }
 
     const updater = entry.updater ?? {};
     // 清单自带的 sourceUrl 优先；非空却不合法时明确报错，不静默换成推导地址。
@@ -198,7 +207,7 @@ export function buildReleaseRecords(
     });
   }
 
-  return { records, problems };
+  return { records, problems, missingPlatforms };
 }
 
 /**
@@ -317,7 +326,7 @@ async function runCli(argv = process.argv.slice(2)) {
 
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   const notes = readNotes(args).trim();
-  const { records, problems } = buildReleaseRecords(manifest, {
+  const { records, problems, missingPlatforms } = buildReleaseRecords(manifest, {
     notes,
     isForceUpdate: args["force-update"] === true,
     pubDate: typeof args["pub-date"] === "string" ? args["pub-date"] : null
@@ -328,6 +337,13 @@ async function runCli(argv = process.argv.slice(2)) {
     for (const problem of problems) console.error(`  - ${problem}`);
     process.exitCode = 1;
     return;
+  }
+
+  if (missingPlatforms.length) {
+    console.warn(
+      `注意：清单不含 ${missingPlatforms.join(", ")}，这些平台的客户端本轮不会收到更新，` +
+        "已发布记录（若存在）保持指向上一版本。"
+    );
   }
 
   console.warn(

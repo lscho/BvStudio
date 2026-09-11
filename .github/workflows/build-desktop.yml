@@ -26,6 +26,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # 只构建 Windows x64 与 macOS Apple Silicon。
+        # 平台集合以这里为唯一来源：清单脚本按产物目录是否存在决定平台列表，
+        # 因此重新支持某个平台只需恢复对应条目，无需改动任何脚本。
         include:
           - name: Windows x64
             runner: windows-2025
@@ -36,26 +39,6 @@ jobs:
             upload_path: |
               src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
               src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
-          - name: Windows ARM64
-            runner: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            artifact: bframe-studio-windows-arm64
-            bundles: nsis
-            media_arch: x64
-            upload_path: |
-              src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe
-              src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
-          - name: macOS Intel
-            runner: macos-15-intel
-            target: x86_64-apple-darwin
-            artifact: bframe-studio-macos-x64
-            updater_arch: x64
-            bundles: app,dmg
-            media_arch: x64
-            upload_path: |
-              src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
-              src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
-              src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.sig
           - name: macOS Apple Silicon
             runner: macos-15
             target: aarch64-apple-darwin
@@ -67,17 +50,6 @@ jobs:
               src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
               src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
               src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.sig
-          - name: Linux x64
-            runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            artifact: bframe-studio-linux-x64
-            bundles: appimage,deb
-            media_arch: x64
-            upload_path: |
-              src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
-              src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.tar.gz
-              src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.tar.gz.sig
-              src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
 
     steps:
       - name: Check out repository
@@ -336,7 +308,14 @@ jobs:
           curl -fsSL -o "$archive" \
             "https://gosspublic.alicdn.com/ossutil/v2/${OSSUTIL_VERSION}/ossutil-${OSSUTIL_VERSION}-linux-amd64.zip"
           echo "${OSSUTIL_SHA256}  ${archive}" | sha256sum -c -
-          unzip -q -o "$archive" -d "$RUNNER_TEMP/ossutil-bin"
+          # 官方 zip 内带一层 ossutil-<版本>-linux-amd64/ 目录，用 -j 丢弃路径直接解到目标目录。
+          # 不加 -j 会解成 ossutil-bin/ossutil-2.3.0-linux-amd64/ossutil，后续 chmod 找不到文件。
+          unzip -j -q -o "$archive" -d "$RUNNER_TEMP/ossutil-bin"
+          if [ ! -f "$RUNNER_TEMP/ossutil-bin/ossutil" ]; then
+            echo "解压后未找到 ossutil，压缩包结构可能已变，实际内容：" >&2
+            unzip -l "$archive" >&2
+            exit 1
+          fi
           chmod 0755 "$RUNNER_TEMP/ossutil-bin/ossutil"
           echo "$RUNNER_TEMP/ossutil-bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/ossutil-bin/ossutil" version

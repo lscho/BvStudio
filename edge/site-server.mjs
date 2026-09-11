@@ -2,10 +2,10 @@
  * BFrame Studio 官方网站与下载页面服务（ESA Edge Routine）。
  *
  * 纯逻辑与单文件极速响应，不引入外部 CDN 依赖；
- * 支持动态读取 EdgeKV 发版元数据，自动展示当前全平台最新版本、安装包体积与下载地址；
- * 若 KV 暂无发版记录，平滑回退至官方 GitHub Releases。
+ * 支持动态读取 EdgeKV 发版元数据，自动展示当前最新版本、安装包体积与下载地址；
+ * 若 KV 暂无发版记录，平滑回退至内置的默认下载元数据。
  */
-import { CLIENT_UPDATE_PLATFORMS, releaseKeyFor } from "./release-core.mjs";
+import { releaseKeyFor } from "./release-core.mjs";
 
 export const SITE_PATHS = new Set(["/", "/index.html", "/download", "/downloads"]);
 export const FAVICON_PATH = "/favicon.ico";
@@ -69,13 +69,26 @@ const FALLBACK_VERSION = "0.3.0";
 const APP_SLUG = "bframe-studio";
 
 /**
+ * 下载页对外提供的平台，顺序即卡片顺序，第一项同时作为「智能下载」的 SSR 默认值。
+ *
+ * **必须与 `.github/workflows/build-desktop.yml` 的构建矩阵一致**：列出 CI 不构建的平台，
+ * 页面就会出现指向不存在文件的下载按钮。`getLatestReleases` 只读这些平台的 EdgeKV 记录，
+ * 下载卡片也只按这份清单渲染，两端共用同一个来源；`edge/site-server.test.mjs`
+ * 有一条反向核对把它与构建矩阵锁死。
+ */
+export const DOWNLOAD_PLATFORMS = ["macos-arm", "windows-x86"];
+
+/**
  * 回退下载基址，须与 CI 的 `RELEASE_ASSET_BASE_URL` 保持一致（自建对象存储 + CDN）。
  * 路径层级为 `{域名}/{应用名}/releases/v{版本}`。
  * 只在 EdgeKV 尚无发版记录时用于展示，正常路径一律读 KV 里的真实地址。
  */
 const FALLBACK_ASSET_BASE_URL = `https://download.atmomo.cn/${APP_SLUG}/releases/v${FALLBACK_VERSION}`;
 
-/** 默认下载元数据（KV 无记录时的平滑回退） */
+/**
+ * 默认下载元数据（KV 无记录时的平滑回退），键集合必须等于 `DOWNLOAD_PLATFORMS`。
+ * 文件名与体积是占位值——首次真实发布后，用清单里的 `fileName` / `fileSize` 校准。
+ */
 export const FALLBACK_RELEASES = {
   "macos-arm": {
     platform: "macos-arm",
@@ -83,25 +96,12 @@ export const FALLBACK_RELEASES = {
     arch: "arm64",
     os: "macOS",
     version: FALLBACK_VERSION,
-    fileName: `BFrame_Studio_${FALLBACK_VERSION}_aarch64.dmg`,
+    fileName: `BFrame Studio_${FALLBACK_VERSION}_aarch64.dmg`,
     fileSize: 45 * 1024 * 1024,
     url: `${FALLBACK_ASSET_BASE_URL}/BFrame%20Studio_${FALLBACK_VERSION}_aarch64.dmg`,
     updaterUrl: `${FALLBACK_ASSET_BASE_URL}/BFrame%20Studio_${FALLBACK_VERSION}_aarch64_arm64.app.tar.gz`,
     pub_date: "2026-02-01T00:00:00Z",
     notes: "AI 视频动效编排全新发布，支持两阶段智能选型与电影级运镜库"
-  },
-  "macos-x86": {
-    platform: "macos-x86",
-    name: "macOS (Intel)",
-    arch: "x86_64",
-    os: "macOS",
-    version: FALLBACK_VERSION,
-    fileName: `BFrame_Studio_${FALLBACK_VERSION}_x64.dmg`,
-    fileSize: 48 * 1024 * 1024,
-    url: `${FALLBACK_ASSET_BASE_URL}/BFrame%20Studio_${FALLBACK_VERSION}_x64.dmg`,
-    updaterUrl: `${FALLBACK_ASSET_BASE_URL}/BFrame%20Studio_${FALLBACK_VERSION}_x64_x64.app.tar.gz`,
-    pub_date: "2026-02-01T00:00:00Z",
-    notes: "适配 macOS Intel 架构"
   },
   "windows-x86": {
     platform: "windows-x86",
@@ -109,47 +109,21 @@ export const FALLBACK_RELEASES = {
     arch: "x86_64",
     os: "Windows",
     version: FALLBACK_VERSION,
-    fileName: `BFrame_Studio_${FALLBACK_VERSION}_x64-setup.exe`,
+    fileName: `BFrame Studio_${FALLBACK_VERSION}_x64-setup.exe`,
     fileSize: 52 * 1024 * 1024,
     url: `${FALLBACK_ASSET_BASE_URL}/BFrame%20Studio_${FALLBACK_VERSION}_x64-setup.exe`,
     updaterUrl: `${FALLBACK_ASSET_BASE_URL}/BFrame%20Studio_${FALLBACK_VERSION}_x64-setup.exe`,
     pub_date: "2026-02-01T00:00:00Z",
     notes: "Windows 10/11 64 位安装程序"
-  },
-  "windows-arm": {
-    platform: "windows-arm",
-    name: "Windows ARM64",
-    arch: "arm64",
-    os: "Windows",
-    version: FALLBACK_VERSION,
-    fileName: `BFrame_Studio_${FALLBACK_VERSION}_arm64-setup.exe`,
-    fileSize: 49 * 1024 * 1024,
-    url: `${FALLBACK_ASSET_BASE_URL}/BFrame%20Studio_${FALLBACK_VERSION}_arm64-setup.exe`,
-    updaterUrl: `${FALLBACK_ASSET_BASE_URL}/BFrame%20Studio_${FALLBACK_VERSION}_arm64-setup.exe`,
-    pub_date: "2026-02-01T00:00:00Z",
-    notes: "Windows ARM64 原生架构（Surface Pro / 骁龙 X 系列）"
-  },
-  "linux-x86": {
-    platform: "linux-x86",
-    name: "Linux (x64)",
-    arch: "x86_64",
-    os: "Linux",
-    version: FALLBACK_VERSION,
-    fileName: `BFrame_Studio_${FALLBACK_VERSION}_amd64.AppImage`,
-    fileSize: 68 * 1024 * 1024,
-    url: `${FALLBACK_ASSET_BASE_URL}/BFrame%20Studio_${FALLBACK_VERSION}_amd64.AppImage`,
-    updaterUrl: `${FALLBACK_ASSET_BASE_URL}/BFrame%20Studio_${FALLBACK_VERSION}_amd64.AppImage.tar.gz`,
-    pub_date: "2026-02-01T00:00:00Z",
-    notes: "Linux AppImage 即开即用包"
   }
 };
 
-/** 从 EdgeKV 批量加载最新发版元数据 */
+/** 从 EdgeKV 批量加载最新发版元数据（只读当前对外提供的平台） */
 export async function getLatestReleases(kv) {
   const result = structuredClone(FALLBACK_RELEASES);
   if (!kv || typeof kv.get !== "function") return result;
 
-  for (const platform of CLIENT_UPDATE_PLATFORMS) {
+  for (const platform of DOWNLOAD_PLATFORMS) {
     try {
       const record = await kv.get(releaseKeyFor(platform));
       if (record && typeof record === "object" && record.version && record.url) {
@@ -207,12 +181,124 @@ Disallow: /api/
 Sitemap: https://bframe.studio/sitemap.xml
 `;
 
+/** 下载卡片图标，键由 DOWNLOAD_CARD_META.icon 引用。 */
+const DOWNLOAD_CARD_ICONS = {
+  apple:
+    `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.38c.62-.76 1.04-1.81.93-2.88-.9.04-1.99.6-2.63 1.36-.57.66-.99 1.74-.86 2.78.99.08 2-.51 2.56-1.26z"/></svg>`,
+  windows:
+    `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>`,
+  linux:
+    `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-2.3 0-4.3 1.2-5.3 3.1-.3.6-.5 1.3-.5 2 0 .4.1.8.2 1.2-1.3.8-2.2 2.2-2.4 3.8-.1.7 0 1.5.2 2.2-.5 1-.8 2.1-.8 3.2 0 3.3 2.7 6 6 6h5.2c3.3 0 6-2.7 6-6 0-1.1-.3-2.2-.8-3.2.2-.7.3-1.5.2-2.2-.2-1.6-1.1-3-2.4-3.8.1-.4.2-.8.2-1.2 0-.7-.2-1.4-.5-2-1-1.9-3-3.1-5.3-3.1z"/></svg>`
+};
+
+/** 所有下载按钮共用的箭头图标 */
+const DOWNLOAD_CARD_ACTION_ICON =
+  `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
+
+/**
+ * 下载卡片的展示文案。**保留全部已知平台的条目**，即使当前未构建——
+ * 这样恢复某个平台只需把它加回 `DOWNLOAD_PLATFORMS`，不必重写卡片 markup。
+ */
+const DOWNLOAD_CARD_META = {
+  "macos-arm": {
+    icon: "apple",
+    tipLabel: "macOS (Apple Silicon)",
+    title: "macOS Apple Silicon",
+    badge: "ARM64 · M1/M2/M3/M4",
+    formatLabel: "DMG 安装盘",
+    action: "下载 DMG 安装包",
+    updaterLink: true
+  },
+  "macos-x86": {
+    icon: "apple",
+    tipLabel: "macOS (Intel)",
+    title: "macOS Intel",
+    badge: "x86_64 处理器",
+    formatLabel: "DMG 安装盘",
+    action: "下载 DMG 安装包",
+    updaterLink: false
+  },
+  "windows-x86": {
+    icon: "windows",
+    tipLabel: "Windows 10/11",
+    title: "Windows 64 位",
+    badge: "x64 · Win 10/11",
+    formatLabel: "EXE 安装向导",
+    action: "下载 Windows 版",
+    updaterLink: false
+  },
+  "windows-arm": {
+    icon: "windows",
+    tipLabel: "Windows ARM64",
+    title: "Windows ARM64",
+    badge: "ARM64 · 骁龙 X / Surface",
+    formatLabel: "原生 ARM",
+    action: "下载 Windows ARM 版",
+    updaterLink: false
+  },
+  "linux-x86": {
+    icon: "linux",
+    tipLabel: "Linux",
+    title: "Linux (x64)",
+    badge: "Ubuntu / Debian / Arch",
+    formatLabel: "AppImage",
+    action: "下载 Linux AppImage",
+    updaterLink: false
+  }
+};
+
+/**
+ * 渲染单张下载卡片（缩进与最终 HTML 对齐）。文件名 / 体积 / 版本一律取自发布元数据，
+ * 取不到就留空——不在页面上凭空编一个点了必然 404 的按钮。
+ */
+function renderDownloadCard(platform, release, isDefault) {
+  const meta = DOWNLOAD_CARD_META[platform];
+  if (!meta) return "";
+
+  const updaterLink =
+    meta.updaterLink && release.updaterUrl
+      ? `\n            <div style="text-align: center;"><a href="${release.updaterUrl}" class="dl-secondary-link">下载 .app.tar.gz 压缩包</a></div>`
+      : "";
+
+  return `        <!-- ${platform} -->
+        <div id="card-${platform}" class="download-card${isDefault ? " highlight" : ""}">
+          <div>
+            <div class="dl-header">
+              <div class="dl-os-icon">
+                ${DOWNLOAD_CARD_ICONS[meta.icon]}
+              </div>
+              <div>
+                <div class="dl-os-title">${meta.title}</div>
+                <span class="dl-arch-badge">${meta.badge}</span>
+              </div>
+            </div>
+            <div class="dl-meta">
+              <span>文件: ${release.fileName || ""}</span>
+              <span>体积: ${formatBytes(release.fileSize)} · 格式: ${meta.formatLabel}</span>
+              <span>版本: v${release.version || ""}</span>
+            </div>
+          </div>
+          <div>
+            <a href="${release.url || "#download"}" class="dl-btn">
+              ${DOWNLOAD_CARD_ACTION_ICON}
+              ${meta.action}
+            </a>${updaterLink}
+          </div>
+        </div>`;
+}
+
 /** 生成官网 HTML 页面 */
 export function renderLandingPageHtml({ releases = FALLBACK_RELEASES } = {}) {
-  const macArm = releases["macos-arm"] || FALLBACK_RELEASES["macos-arm"];
-  const winX86 = releases["windows-x86"] || FALLBACK_RELEASES["windows-x86"];
-  const latestVersion = macArm.version || winX86.version || FALLBACK_VERSION;
+  const releaseFor = (platform) => releases[platform] ?? FALLBACK_RELEASES[platform] ?? {};
+  const defaultRelease = releaseFor(DOWNLOAD_PLATFORMS[0]);
+  const latestVersion =
+    DOWNLOAD_PLATFORMS.map((platform) => releaseFor(platform).version).find(Boolean) || FALLBACK_VERSION;
   const releasesJson = JSON.stringify(releases).replace(/</g, "\\u003c");
+  const supportedPlatformsJson = JSON.stringify(DOWNLOAD_PLATFORMS);
+  // 卡片顺序与高亮都来自 DOWNLOAD_PLATFORMS：第一项是 SSR 默认高亮，加载后由脚本按访客系统改写。
+  const downloadGridHtml = DOWNLOAD_PLATFORMS.map((platform, index) =>
+    renderDownloadCard(platform, releaseFor(platform), index === 0)
+  ).join("\n");
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -926,7 +1012,7 @@ export function renderLandingPageHtml({ releases = FALLBACK_RELEASES } = {}) {
       line-height: 1.6;
     }
 
-    /* 全平台下载中心 */
+    /* 下载中心 */
     #download {
       scroll-margin-top: 80px;
     }
@@ -936,6 +1022,14 @@ export function renderLandingPageHtml({ releases = FALLBACK_RELEASES } = {}) {
       gap: 20px;
       text-align: left;
       margin-top: 40px;
+    }
+    /* 恰好两张卡片时整体收窄居中：1fr 会把它们各拉到 ~566px，按钮也跟着变成超宽横幅。
+       平台恢复成三个以上时不匹配这条规则，维持原来的自适应铺满；不支持 :has() 的
+       浏览器同样退化为原布局，不影响可用性。 */
+    .download-grid:has(> .download-card:last-child:nth-child(2)) {
+      max-width: 880px;
+      margin-left: auto;
+      margin-right: auto;
     }
     .download-card {
       background: var(--bg-card);
@@ -1176,7 +1270,7 @@ export function renderLandingPageHtml({ releases = FALLBACK_RELEASES } = {}) {
               <polyline points="7 10 12 15 17 10"></polyline>
               <line x1="12" y1="15" x2="12" y2="3"></line>
             </svg>
-            <span id="hero-smart-download-text">下载 macOS 版 (Apple Silicon)</span>
+            <span id="hero-smart-download-text">下载 ${defaultRelease.name || "客户端"}</span>
           </a>
           <a href="#features" class="btn-all-platforms">
             探索核心特性
@@ -1184,7 +1278,7 @@ export function renderLandingPageHtml({ releases = FALLBACK_RELEASES } = {}) {
         </div>
         <div class="platform-tip">
           <span class="platform-tip-dot"></span>
-          <span>原生支持 macOS (Apple Silicon & Intel) · Windows 10/11 · Linux</span>
+          <span>原生支持 ${DOWNLOAD_PLATFORMS.map((platform) => DOWNLOAD_CARD_META[platform]?.tipLabel).filter(Boolean).join(" · ")}</span>
         </div>
       </div>
 
@@ -1483,136 +1577,7 @@ export function renderLandingPageHtml({ releases = FALLBACK_RELEASES } = {}) {
       </div>
 
       <div class="download-grid">
-        <!-- 1. macOS ARM -->
-        <div id="card-macos-arm" class="download-card highlight">
-          <div>
-            <div class="dl-header">
-              <div class="dl-os-icon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.38c.62-.76 1.04-1.81.93-2.88-.9.04-1.99.6-2.63 1.36-.57.66-.99 1.74-.86 2.78.99.08 2-.51 2.56-1.26z"/></svg>
-              </div>
-              <div>
-                <div class="dl-os-title">macOS Apple Silicon</div>
-                <span class="dl-arch-badge">ARM64 · M1/M2/M3/M4</span>
-              </div>
-            </div>
-            <div class="dl-meta">
-              <span>文件: ${macArm.fileName || "BFrame_Studio_aarch64.dmg"}</span>
-              <span>体积: ${formatBytes(macArm.fileSize) || "约 45 MB"} · 格式: DMG 安装盘</span>
-              <span>版本: v${macArm.version || latestVersion}</span>
-            </div>
-          </div>
-          <div>
-            <a href="${macArm.url}" class="dl-btn">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-              下载 DMG 安装包
-            </a>
-            ${macArm.updaterUrl ? `<div style="text-align: center;"><a href="${macArm.updaterUrl}" class="dl-secondary-link">下载 .app.tar.gz 压缩包</a></div>` : ""}
-          </div>
-        </div>
-
-        <!-- 2. macOS Intel -->
-        <div id="card-macos-x86" class="download-card">
-          <div>
-            <div class="dl-header">
-              <div class="dl-os-icon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.38c.62-.76 1.04-1.81.93-2.88-.9.04-1.99.6-2.63 1.36-.57.66-.99 1.74-.86 2.78.99.08 2-.51 2.56-1.26z"/></svg>
-              </div>
-              <div>
-                <div class="dl-os-title">macOS Intel</div>
-                <span class="dl-arch-badge">x86_64 处理器</span>
-              </div>
-            </div>
-            <div class="dl-meta">
-              <span>文件: ${releases["macos-x86"]?.fileName || "BFrame_Studio_x64.dmg"}</span>
-              <span>体积: ${formatBytes(releases["macos-x86"]?.fileSize) || "约 48 MB"} · 格式: DMG 安装盘</span>
-              <span>版本: v${releases["macos-x86"]?.version || latestVersion}</span>
-            </div>
-          </div>
-          <div>
-            <a href="${releases["macos-x86"]?.url}" class="dl-btn">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-              下载 DMG 安装包
-            </a>
-          </div>
-        </div>
-
-        <!-- 3. Windows x64 -->
-        <div id="card-windows-x86" class="download-card">
-          <div>
-            <div class="dl-header">
-              <div class="dl-os-icon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
-              </div>
-              <div>
-                <div class="dl-os-title">Windows 64 位</div>
-                <span class="dl-arch-badge">x64 · Win 10/11</span>
-              </div>
-            </div>
-            <div class="dl-meta">
-              <span>文件: ${winX86.fileName || "BFrame_Studio_x64-setup.exe"}</span>
-              <span>体积: ${formatBytes(winX86.fileSize) || "约 52 MB"} · 格式: EXE 安装向导</span>
-              <span>版本: v${winX86.version || latestVersion}</span>
-            </div>
-          </div>
-          <div>
-            <a href="${winX86.url}" class="dl-btn">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-              下载 Windows 版
-            </a>
-          </div>
-        </div>
-
-        <!-- 4. Windows ARM64 -->
-        <div id="card-windows-arm" class="download-card">
-          <div>
-            <div class="dl-header">
-              <div class="dl-os-icon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
-              </div>
-              <div>
-                <div class="dl-os-title">Windows ARM64</div>
-                <span class="dl-arch-badge">ARM64 · 骁龙 X / Surface</span>
-              </div>
-            </div>
-            <div class="dl-meta">
-              <span>文件: ${releases["windows-arm"]?.fileName || "BFrame_Studio_arm64-setup.exe"}</span>
-              <span>体积: ${formatBytes(releases["windows-arm"]?.fileSize) || "约 49 MB"} · 格式: 原生 ARM</span>
-              <span>版本: v${releases["windows-arm"]?.version || latestVersion}</span>
-            </div>
-          </div>
-          <div>
-            <a href="${releases["windows-arm"]?.url}" class="dl-btn">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-              下载 Windows ARM 版
-            </a>
-          </div>
-        </div>
-
-        <!-- 5. Linux x64 -->
-        <div id="card-linux-x86" class="download-card">
-          <div>
-            <div class="dl-header">
-              <div class="dl-os-icon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-2.3 0-4.3 1.2-5.3 3.1-.3.6-.5 1.3-.5 2 0 .4.1.8.2 1.2-1.3.8-2.2 2.2-2.4 3.8-.1.7 0 1.5.2 2.2-.5 1-.8 2.1-.8 3.2 0 3.3 2.7 6 6 6h5.2c3.3 0 6-2.7 6-6 0-1.1-.3-2.2-.8-3.2.2-.7.3-1.5.2-2.2-.2-1.6-1.1-3-2.4-3.8.1-.4.2-.8.2-1.2 0-.7-.2-1.4-.5-2-1-1.9-3-3.1-5.3-3.1z"/></svg>
-              </div>
-              <div>
-                <div class="dl-os-title">Linux (x64)</div>
-                <span class="dl-arch-badge">Ubuntu / Debian / Arch</span>
-              </div>
-            </div>
-            <div class="dl-meta">
-              <span>文件: ${releases["linux-x86"]?.fileName || "BFrame_Studio_amd64.AppImage"}</span>
-              <span>体积: ${formatBytes(releases["linux-x86"]?.fileSize) || "约 68 MB"} · 格式: AppImage</span>
-              <span>版本: v${releases["linux-x86"]?.version || latestVersion}</span>
-            </div>
-          </div>
-          <div>
-            <a href="${releases["linux-x86"]?.url}" class="dl-btn">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-              下载 Linux AppImage
-            </a>
-          </div>
-        </div>
+${downloadGridHtml}
       </div>
 
       <!-- 隐私与完整性说明 -->
@@ -1660,7 +1625,7 @@ export function renderLandingPageHtml({ releases = FALLBACK_RELEASES } = {}) {
     <ul class="footer-links">
       <li><a href="#features" class="footer-link">功能特性</a></li>
       <li><a href="#pipeline" class="footer-link">AI 编排流</a></li>
-      <li><a href="#download" class="footer-link">全平台下载</a></li>
+      <li><a href="#download" class="footer-link">下载客户端</a></li>
       <li><a href="#faq" class="footer-link">常见问题</a></li>
     </ul>
     <p>© 2026 BFrame Studio. 现代 AI 驱动的高性能视频动效客户端。保留所有权利。</p>
@@ -1669,6 +1634,10 @@ export function renderLandingPageHtml({ releases = FALLBACK_RELEASES } = {}) {
   <!-- 访客设备智能检测与动效卡片交互脚本 -->
   <script>
     const RELEASES = ${releasesJson};
+    const SUPPORTED_PLATFORMS = ${supportedPlatformsJson};
+    // 构建矩阵裁剪后，部分系统在本页没有对应产物。Windows ARM 可回退到 x64 版本
+    // （Windows 11 带 x64 仿真）；其余返回 null，由调用方隐藏下载入口，而不是指向不存在的文件。
+    const PLATFORM_FALLBACKS = { "windows-arm": "windows-x86" };
 
     function detectUserPlatform() {
       const ua = navigator.userAgent.toLowerCase();
@@ -1686,26 +1655,38 @@ export function renderLandingPageHtml({ releases = FALLBACK_RELEASES } = {}) {
       return "macos-arm";
     }
 
+    function resolveDownloadPlatform() {
+      const detected = detectUserPlatform();
+      if (SUPPORTED_PLATFORMS.indexOf(detected) !== -1) return detected;
+      const fallback = PLATFORM_FALLBACKS[detected];
+      return fallback && SUPPORTED_PLATFORMS.indexOf(fallback) !== -1 ? fallback : null;
+    }
+
     function applySmartDownloadHighlight() {
-      const targetPlatform = detectUserPlatform();
-      const target = RELEASES[targetPlatform] || RELEASES["macos-arm"];
-      
+      const targetPlatform = resolveDownloadPlatform();
+      const target = targetPlatform ? RELEASES[targetPlatform] : null;
+
       const smartBtn = document.getElementById("hero-smart-download-btn");
       const smartText = document.getElementById("hero-smart-download-text");
-      
-      if (smartBtn && smartText && target) {
-        smartBtn.href = target.url || "#download";
-        smartText.textContent = "下载 " + target.name + " (v" + target.version + ")";
+
+      if (smartBtn && smartText) {
+        if (target) {
+          smartBtn.href = target.url || "#download";
+          smartText.textContent = "下载 " + target.name + " (v" + target.version + ")";
+        } else {
+          smartBtn.style.display = "none";
+        }
       }
 
       // 高亮对应卡片
       document.querySelectorAll(".download-card").forEach(function(card) {
         card.classList.remove("highlight");
       });
-      const cardId = "card-" + targetPlatform;
-      const targetCard = document.getElementById(cardId);
-      if (targetCard) {
-        targetCard.classList.add("highlight");
+      if (targetPlatform) {
+        const targetCard = document.getElementById("card-" + targetPlatform);
+        if (targetCard) {
+          targetCard.classList.add("highlight");
+        }
       }
     }
 
@@ -1767,7 +1748,7 @@ export async function handleSiteRequest(request, { kv } = {}) {
     return new Response(SITE_ROBOTS_TXT, { status: 200, headers: TEXT_HEADERS });
   }
 
-  // 获取最新全平台发版数据
+  // 获取当前对外提供平台的发版数据
   const releases = await getLatestReleases(kv);
 
   // 默认渲染官网 HTML

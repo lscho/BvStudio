@@ -190,12 +190,18 @@ describe("buildReleaseRecords", () => {
     assert.equal(buildReleaseRecords(validManifest({ version: "v0.4.0" })).records[0].version, "0.4.0");
   });
 
-  it("缺少某个平台时整批报告问题", () => {
+  it("清单缺少平台时不再整批中止，改为只发布已有平台并提示缺失项", () => {
     const manifest = validManifest();
     manifest.platforms = manifest.platforms.filter((entry) => entry.platform !== "linux-x86");
-    const { records, problems } = buildReleaseRecords(manifest);
+    const { records, problems, missingPlatforms } = buildReleaseRecords(manifest);
+    assert.deepEqual(problems, []);
     assert.equal(records.length, 4);
-    assert.deepEqual(problems, ["清单缺少平台 linux-x86"]);
+    assert.deepEqual(missingPlatforms, ["linux-x86"]);
+  });
+
+  it("平台齐全时不报告缺失平台", () => {
+    const { missingPlatforms } = buildReleaseRecords(validManifest());
+    assert.deepEqual(missingPlatforms, []);
   });
 
   it("签名、fileSize、sourceUrl 异常时逐项报告", () => {

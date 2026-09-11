@@ -162,17 +162,41 @@ test("manual builds (no GitHub release) get null source URLs", () => {
   }
 });
 
-test("fails before emitting a manifest for missing platform artifacts", () => {
+test("skips platforms without an artifact directory instead of failing", () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
   try {
     const artifactsDir = join(tempRoot, "release-artifacts");
     createArtifactTree(artifactsDir);
-    rmSync(join(artifactsDir, "bframe-studio-windows-arm64"), { recursive: true, force: true });
+    // 构建矩阵裁剪后，未参与构建的平台不会有对应 artifact 目录。
+    // 平台集合以实际产物为准，而不是要求五平台齐全。
+    for (const name of ["bframe-studio-windows-arm64", "bframe-studio-macos-x64", "bframe-studio-linux-x64"]) {
+      rmSync(join(artifactsDir, name), { recursive: true, force: true });
+    }
+    const manifestPath = join(tempRoot, "desktop-release-manifest.json");
+
+    const { status, stderr } = runScript(baseEnv(artifactsDir, manifestPath));
+    assert.equal(status, 0);
+    assert.match(stderr, /本次未构建/);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    assert.deepEqual(
+      manifest.platforms.map((entry) => entry.platform),
+      ["windows-x86", "macos-arm"]
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("fails when no artifact directory exists for any platform", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
+  try {
+    const artifactsDir = join(tempRoot, "release-artifacts");
+    mkdirSync(artifactsDir, { recursive: true });
     const manifestPath = join(tempRoot, "desktop-release-manifest.json");
 
     const { status, stderr } = runScript(baseEnv(artifactsDir, manifestPath));
     assert.notEqual(status, 0);
-    assert.match(stderr, /Missing artifact directory/);
+    assert.match(stderr, /未找到任何平台产物目录/);
     assert.equal(existsSync(manifestPath), false);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });

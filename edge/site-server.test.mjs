@@ -1,16 +1,25 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import rootPackage from "../package.json";
 import { releaseKeyFor } from "./release-core.mjs";
 import {
+  DOWNLOAD_PLATFORMS,
   formatBytes,
   getLatestReleases,
   handleSiteRequest,
   isSiteRoute,
   normalizePath,
+  renderLandingPageHtml,
   FALLBACK_RELEASES,
   SITE_FAVICON_SVG,
   SITE_ROBOTS_TXT
 } from "./site-server.mjs";
+
+// 不用 `new URL(..., import.meta.url)` 取路径：vitest 的 DOM 环境会替换 URL 实现，
+// 直接抛 `The URL must be of scheme file`。
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function createFakeKv(initial = {}) {
   const store = new Map(Object.entries(initial));
@@ -133,18 +142,36 @@ describe("getLatestReleases", () => {
   });
 
   it("旧记录没有 installerUrl 时退回更新包地址，保持向后兼容", async () => {
+    // 旧记录只有 Tauri 契约要求的 url（更新包）。下载页此时只能退回它，
+    // 虽然 macOS 上会拿到 .app.tar.gz 而不是 .dmg，但至少不是空链接。
     const record = {
-      platform: "linux-x86",
+      platform: "macos-arm",
       version: "0.4.0",
-      url: "https://dl.example.com/releases/v0.4.0/BFrame%20Studio_0.4.0_amd64.AppImage.tar.gz",
-      fileName: "BFrame Studio_0.4.0_amd64.AppImage.tar.gz",
+      url: "https://dl.example.com/releases/v0.4.0/BFrame%20Studio_0.4.0_aarch64_arm64.app.tar.gz",
+      fileName: "BFrame Studio_0.4.0_aarch64_arm64.app.tar.gz",
       fileSize: 72351744
     };
-    const releases = await getLatestReleases(createFakeKv({ [releaseKeyFor("linux-x86")]: record }));
+    const releases = await getLatestReleases(createFakeKv({ [releaseKeyFor("macos-arm")]: record }));
 
-    expect(releases["linux-x86"].url).toBe(record.url);
-    expect(releases["linux-x86"].updaterUrl).toBe(record.url);
-    expect(releases["linux-x86"].fileName).toBe(record.fileName);
+    expect(releases["macos-arm"].url).toBe(record.url);
+    expect(releases["macos-arm"].updaterUrl).toBe(record.url);
+    expect(releases["macos-arm"].fileName).toBe(record.fileName);
+  });
+
+  it("只读取当前对外提供平台的记录，未构建平台的残留记录不进入渲染数据", async () => {
+    // 构建矩阵裁剪后，KV 里可能还留着早期发布的未构建平台记录，
+    // 它们不该出现在页面上（否则会渲染出指向不存在文件的按钮）。
+    const stale = {
+      platform: "linux-x86",
+      version: "0.4.0",
+      url: "https://dl.example.com/releases/v0.4.0/bframe-linux.AppImage.tar.gz",
+      fileName: "bframe-linux.AppImage.tar.gz",
+      fileSize: 72351744
+    };
+    const releases = await getLatestReleases(createFakeKv({ [releaseKeyFor("linux-x86")]: stale }));
+
+    expect(releases["linux-x86"]).toBeUndefined();
+    expect(Object.keys(releases).sort()).toEqual([...DOWNLOAD_PLATFORMS].sort());
   });
 
   it("内置回退数据带应用名子目录，且应用名与 package.json 一致", () => {
@@ -159,6 +186,71 @@ describe("getLatestReleases", () => {
       expect(release.url).toContain(`/${appSlug}/releases/v`);
       expect(release.updaterUrl).toContain(`/${appSlug}/releases/v`);
     }
+  });
+});
+
+describe("下载页平台清单", () => {
+  const TARGET_TO_PLATFORM = {
+    "x86_64-pc-windows-msvc": "windows-x86",
+    "aarch64-pc-windows-msvc": "windows-arm",
+    "x86_64-apple-darwin": "macos-x86",
+    "aarch64-apple-darwin": "macos-arm",
+    "x86_64-unknown-linux-gnu": "linux-x86"
+  };
+
+  it("回退数据的键集合与 DOWNLOAD_PLATFORMS 一致", () => {
+    expect(Object.keys(FALLBACK_RELEASES).sort()).toEqual([...DOWNLOAD_PLATFORMS].sort());
+  });
+
+  it("只展示构建矩阵里真实存在的平台", () => {
+    // 这条守卫防的是最容易犯的错：CI 收窄了构建矩阵，下载页却还列着旧平台，
+    // 页面上于是出现点了必然 404 的下载按钮。
+    const workflow = readFileSync(resolve(repoRoot, ".github/workflows/build-desktop.yml"), "utf8");
+    const builtPlatforms = [...workflow.matchAll(/^\s+target: (\S+)$/gmu)].map(([, target]) => {
+      const platform = TARGET_TO_PLATFORM[target];
+      expect(platform, `构建矩阵出现未知 target：${target}`).toBeTruthy();
+      return platform;
+    });
+
+    expect(builtPlatforms.length).toBeGreaterThan(0);
+    for (const platform of DOWNLOAD_PLATFORMS) {
+      expect(builtPlatforms, `下载页展示了 CI 不构建的平台：${platform}`).toContain(platform);
+    }
+  });
+
+  it("渲染出的卡片与 DOWNLOAD_PLATFORMS 一一对应，且元数据完整", () => {
+    const html = renderLandingPageHtml();
+    const cardIds = [...html.matchAll(/id="card-([a-z0-9-]+)"/gu)].map(([, id]) => id);
+    expect(cardIds).toEqual(DOWNLOAD_PLATFORMS);
+
+    for (const platform of DOWNLOAD_PLATFORMS) {
+      const card = html.match(new RegExp(`id="card-${platform}"[\\s\\S]*?(?=<!-- |\\n      </div>)`))?.[0];
+      expect(card, `${platform} 卡片未能定位`).toBeTruthy();
+      expect(card).toContain('class="dl-os-title"');
+      expect(card).toContain('class="dl-arch-badge"');
+      expect(card).toContain('class="dl-btn"');
+      expect(card).not.toContain("undefined");
+    }
+  });
+
+  it("未构建的平台不残留卡片，也不出现在 hero 提示行", () => {
+    const html = renderLandingPageHtml();
+    for (const platform of Object.values(TARGET_TO_PLATFORM)) {
+      if (DOWNLOAD_PLATFORMS.includes(platform)) continue;
+      expect(html, `页面残留了未构建平台的卡片：${platform}`).not.toContain(`id="card-${platform}"`);
+    }
+    // hero 提示行由 DOWNLOAD_PLATFORMS 拼出，不应再写死三平台
+    expect(html).not.toContain("macOS (Apple Silicon & Intel)");
+    expect(html).toContain("原生支持 macOS (Apple Silicon) · Windows 10/11");
+  });
+
+  it("客户端探测脚本以服务端下发的平台清单为准", () => {
+    const html = renderLandingPageHtml();
+    expect(html).toContain(`const SUPPORTED_PLATFORMS = ${JSON.stringify(DOWNLOAD_PLATFORMS)};`);
+    // 探测结果不在支持列表时要有显式处理，而不是回落到某个硬编码平台
+    expect(html).toContain("function resolveDownloadPlatform()");
+    expect(html).toContain('smartBtn.style.display = "none"');
+    expect(html).not.toContain('RELEASES[targetPlatform] || RELEASES["macos-arm"]');
   });
 });
 

@@ -105,4 +105,46 @@ test("verifies the downloaded ossutil binary against its checksum", () => {
   assert.match(installStep, /https:\/\/gosspublic\.alicdn\.com\/ossutil\/v2\/\$\{OSSUTIL_VERSION\}\/ossutil-\$\{OSSUTIL_VERSION\}-linux-amd64\.zip/u);
   assert.match(installStep, /sha256sum -c -/u);
   assert.match(installStep, /OSSUTIL_SHA256: "[0-9a-f]{64}"/u);
+  // 官方 zip 内含一层 ossutil-<版本>-linux-amd64/ 目录，必须用 -j 扁平化解压；
+  // 不带 -j 会解到子目录里，chmod 报 "cannot access .../ossutil"（曾真实失败过）。
+  assert.match(installStep, /unzip -j -q -o "\$archive" -d "\$RUNNER_TEMP\/ossutil-bin"/u);
+  assert.match(installStep, /\[ ! -f "\$RUNNER_TEMP\/ossutil-bin\/ossutil" \]/u);
+});
+
+test("builds only Windows x64 and macOS Apple Silicon", () => {
+  const matrix = workflow.match(/matrix:\n[\s\S]*?(?=\n    steps:)/u)?.[0];
+  assert.ok(matrix);
+  const targets = [...matrix.matchAll(/target: (\S+)/gu)].map((match) => match[1]);
+  assert.deepEqual(targets, ["x86_64-pc-windows-msvc", "aarch64-apple-darwin"]);
+
+  // artifact 名即清单脚本的 artifactDirectory 输入，同样只保留这两个，
+  // 避免矩阵裁剪后这里还留着已不构建的平台。
+  const artifacts = [...matrix.matchAll(/artifact: (\S+)/gu)].map((match) => match[1]);
+  assert.deepEqual(artifacts, ["bframe-studio-windows-x64", "bframe-studio-macos-arm64"]);
+
+  // 其余平台的构建步骤仍按 runner.os 门控保留，恢复某个平台只需加回一条矩阵条目。
+  assert.match(workflow, /- name: Build Linux bundles\n\s+if: runner\.os == 'Linux'/u);
+  assert.match(workflow, /- name: Build Windows bundles\n\s+if: runner\.os == 'Windows'/u);
+});
+
+test("every matrix artifact maps to a known artifact directory", () => {
+  // 清单脚本按「产物目录是否存在」决定平台集合，目录名对不上会被静默跳过（只打一行提示），
+  // 相当于那个平台永远发不出去。这里反向核对，把重命名漂移挡在 CI 之前。
+  const manifestScript = readFileSync(
+    fileURLToPath(new URL("../scripts/build-desktop-release-manifest.mjs", import.meta.url)),
+    "utf8"
+  );
+  const knownDirectories = new Set(
+    [...manifestScript.matchAll(/artifactDirectory: "([^"]+)"/gu)].map((match) => match[1])
+  );
+  assert.ok(knownDirectories.size >= 5, "清单脚本的平台目录清单疑似被删减");
+
+  const matrix = workflow.match(/matrix:\n[\s\S]*?(?=\n    steps:)/u)?.[0];
+  assert.ok(matrix);
+  for (const [, artifact] of matrix.matchAll(/artifact: (\S+)/gu)) {
+    assert.ok(
+      knownDirectories.has(artifact),
+      `矩阵 artifact「${artifact}」不在清单脚本的 artifactDirectory 中，会被静默跳过而永不发布`
+    );
+  }
 });

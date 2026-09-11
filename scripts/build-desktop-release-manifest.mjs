@@ -150,8 +150,18 @@ const sourceAssetBaseUrl =
 const usedAssetNames = new Set();
 
 const platforms = [];
+const skippedPlatforms = [];
 for (const definition of PLATFORM_ARTIFACTS) {
   const directory = join(artifactsDirectory, definition.artifactDirectory);
+  /**
+   * 平台集合以「实际构建出的产物」为准：构建矩阵里没有的平台不会有对应 artifact 目录。
+   * 目录存在但缺文件仍按错误处理（上传步骤有 if-no-files-found: error 兜底），
+   * 避免把「构建失败」误判成「该平台本次未启用」。
+   */
+  if (!existsSync(directory)) {
+    skippedPlatforms.push(definition.platform);
+    continue;
+  }
   const files = filesUnder(directory);
   const installerPath = exactlyOne(
     files,
@@ -189,6 +199,15 @@ for (const definition of PLATFORM_ARTIFACTS) {
       signature
     }
   });
+}
+
+if (!platforms.length) {
+  throw new Error(
+    `未找到任何平台产物目录，请检查 ${artifactsDirectory} 与构建矩阵。已跳过：${skippedPlatforms.join(", ") || "（无）"}`
+  );
+}
+if (skippedPlatforms.length) {
+  console.error(`提示：以下平台本次未构建，不会出现在清单中：${skippedPlatforms.join(", ")}`);
 }
 
 const manifest = {
