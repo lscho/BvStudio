@@ -18,6 +18,19 @@ const UPDATER_FILE_NAMES = {
   "linux-x86": "bframe-studio_0.4.0_amd64.AppImage.tar.gz"
 };
 
+/** Windows 的安装包与更新包是同一个 NSIS `.exe`；macOS/Linux 上是两个不同文件。 */
+const INSTALLER_FILE_NAMES = {
+  "windows-x86": "bframe-studio_0.4.0_x64-setup.exe",
+  "windows-arm": "bframe-studio_0.4.0_arm64-setup.exe",
+  "macos-x86": "bframe-studio_0.4.0_x64.dmg",
+  "macos-arm": "bframe-studio_0.4.0_arm64.dmg",
+  "linux-x86": "bframe-studio_0.4.0_amd64.AppImage"
+};
+
+const UPDATER_FILE_SIZE = 42354176;
+const INSTALLER_FILE_SIZE = 25165824;
+const RELEASE_ASSET_BASE = "https://github.com/example/bframe-studio/releases/download/v0.4.0";
+
 function validManifest(overrides = {}) {
   return {
     schemaVersion: 1,
@@ -26,18 +39,26 @@ function validManifest(overrides = {}) {
     generatedAt: "2026-01-15T08:00:00.000Z",
     repository: "example/bframe-studio",
     commitSha: "abc123",
-    platforms: Object.entries(UPDATER_FILE_NAMES).map(([platform, fileName]) => ({
-      platform,
-      installer: { fileName: fileName.replace(/\.tar\.gz$/, ""), fileSize: 10, sha256: "0".repeat(64), sourceUrl: null },
-      updater: {
-        fileName,
-        fileSize: 42354176,
-        sha256: "1".repeat(64),
-        sourceUrl: `https://github.com/example/bframe-studio/releases/download/v0.4.0/${fileName}`,
-        signatureFileName: `${fileName}.sig`,
-        signature: "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZQ=="
-      }
-    })),
+    platforms: Object.entries(UPDATER_FILE_NAMES).map(([platform, updaterFileName]) => {
+      const installerFileName = INSTALLER_FILE_NAMES[platform];
+      return {
+        platform,
+        installer: {
+          fileName: installerFileName,
+          fileSize: INSTALLER_FILE_SIZE,
+          sha256: "0".repeat(64),
+          sourceUrl: `${RELEASE_ASSET_BASE}/${installerFileName}`
+        },
+        updater: {
+          fileName: updaterFileName,
+          fileSize: UPDATER_FILE_SIZE,
+          sha256: "1".repeat(64),
+          sourceUrl: `${RELEASE_ASSET_BASE}/${updaterFileName}`,
+          signatureFileName: `${updaterFileName}.sig`,
+          signature: "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZQ=="
+        }
+      };
+    }),
     ...overrides
   };
 }
@@ -113,10 +134,13 @@ describe("buildReleaseRecords", () => {
     assert.deepEqual(macosArm, {
       platform: "macos-arm",
       version: "0.4.0",
-      url: `https://github.com/example/bframe-studio/releases/download/v0.4.0/${UPDATER_FILE_NAMES["macos-arm"]}`,
+      url: `${RELEASE_ASSET_BASE}/${UPDATER_FILE_NAMES["macos-arm"]}`,
       signature: "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZQ==",
       fileName: UPDATER_FILE_NAMES["macos-arm"],
-      fileSize: 42354176,
+      fileSize: UPDATER_FILE_SIZE,
+      installerUrl: `${RELEASE_ASSET_BASE}/${INSTALLER_FILE_NAMES["macos-arm"]}`,
+      installerFileName: INSTALLER_FILE_NAMES["macos-arm"],
+      installerFileSize: INSTALLER_FILE_SIZE,
       notes: "修复若干问题",
       pub_date: "2026-01-15T08:00:00.000Z",
       isForceUpdate: false,
@@ -125,6 +149,22 @@ describe("buildReleaseRecords", () => {
       commitSha: "abc123",
       importedAt: macosArm.importedAt
     });
+  });
+
+  it("区分安装包与更新包地址：macOS 不同、Windows 同一个", () => {
+    const { records } = buildReleaseRecords(validManifest());
+    const byPlatform = Object.fromEntries(records.map((record) => [record.platform, record]));
+
+    assert.notEqual(byPlatform["macos-arm"].installerUrl, byPlatform["macos-arm"].url);
+    assert.match(byPlatform["macos-arm"].installerUrl, /\.dmg$/);
+    assert.match(byPlatform["macos-arm"].url, /\.app\.tar\.gz$/);
+
+    assert.notEqual(byPlatform["linux-x86"].installerUrl, byPlatform["linux-x86"].url);
+    assert.match(byPlatform["linux-x86"].installerUrl, /\.AppImage$/);
+
+    // Windows 的 NSIS 安装包同时充当更新包
+    assert.equal(byPlatform["windows-x86"].installerUrl, byPlatform["windows-x86"].url);
+    assert.equal(byPlatform["windows-arm"].installerUrl, byPlatform["windows-arm"].url);
   });
 
   it("pub_date 默认取清单 generatedAt，可用参数覆盖", () => {

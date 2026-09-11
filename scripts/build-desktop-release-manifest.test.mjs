@@ -57,10 +57,13 @@ function createArtifactTree(root) {
 }
 
 function runScript(env) {
+  // RELEASE_ASSET_BASE_URL 可能残留在开发机 shell 中，显式清掉后再按用例覆盖，保证测试自洽。
+  const inherited = { ...process.env };
+  delete inherited.RELEASE_ASSET_BASE_URL;
   const result = spawnSync(process.execPath, [scriptPath], {
     cwd: repoRoot,
     encoding: "utf8",
-    env: { ...process.env, ...env }
+    env: { ...inherited, ...env }
   });
   return { status: result.status, stdout: result.stdout.trim(), stderr: result.stderr.trim() };
 }
@@ -263,6 +266,84 @@ test("rejects a release tag that does not match the version", () => {
     assert.notEqual(status, 0);
     assert.match(stderr, /does not match version/);
     assert.equal(existsSync(manifestPath), false);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("points every sourceUrl at RELEASE_ASSET_BASE_URL when it is configured", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
+  try {
+    const artifactsDir = join(tempRoot, "release-artifacts");
+    createArtifactTree(artifactsDir);
+    const manifestPath = join(tempRoot, "desktop-release-manifest.json");
+    const baseUrl = "https://dl.example.com/releases/v0.1.0";
+
+    const { status, stderr } = runScript({
+      ...baseEnv(artifactsDir, manifestPath),
+      RELEASE_ASSET_BASE_URL: baseUrl
+    });
+    assert.equal(status, 0, stderr);
+
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    assert.equal(manifest.platforms.length, 5);
+    for (const entry of manifest.platforms) {
+      // 安装包与更新包都要指向自建源，否则官网下载页与客户端更新会一个走 OSS、一个走 GitHub
+      assert.ok(entry.installer.sourceUrl.startsWith(`${baseUrl}/`), entry.installer.sourceUrl);
+      assert.ok(entry.updater.sourceUrl.startsWith(`${baseUrl}/`), entry.updater.sourceUrl);
+      assert.ok(!entry.installer.sourceUrl.includes("github.com"));
+    }
+
+    const macosArm = manifest.platforms.find((entry) => entry.platform === "macos-arm");
+    assert.equal(macosArm.updater.sourceUrl, `${baseUrl}/bframe-studio_0.1.0_aarch64_arm64.app.tar.gz`);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("honours RELEASE_ASSET_BASE_URL even without publishing a GitHub release", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
+  try {
+    const artifactsDir = join(tempRoot, "release-artifacts");
+    createArtifactTree(artifactsDir);
+    const manifestPath = join(tempRoot, "desktop-release-manifest.json");
+    const baseUrl = "https://dl.example.com/releases/v0.1.0";
+
+    // 手工触发（非 tag 推送）时 PUBLISH_GITHUB_RELEASE 为 false，但自建源仍然可用
+    const { status, stderr } = runScript({
+      ...baseEnv(artifactsDir, manifestPath),
+      PUBLISH_GITHUB_RELEASE: "false",
+      RELEASE_ASSET_BASE_URL: baseUrl
+    });
+    assert.equal(status, 0, stderr);
+
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    assert.equal(manifest.platforms[0].updater.sourceUrl.startsWith(`${baseUrl}/`), true);
+    assert.equal(manifest.platforms[0].installer.sourceUrl.startsWith(`${baseUrl}/`), true);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects a RELEASE_ASSET_BASE_URL that is not HTTPS", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "bframe-studio-manifest-"));
+  try {
+    const artifactsDir = join(tempRoot, "release-artifacts");
+    createArtifactTree(artifactsDir);
+    const manifestPath = join(tempRoot, "desktop-release-manifest.json");
+
+    for (const { value, expected } of [
+      { value: "http://dl.example.com/releases", expected: /must use HTTPS/ },
+      { value: "not a url", expected: /is not a valid URL/ }
+    ]) {
+      const { status, stderr } = runScript({
+        ...baseEnv(artifactsDir, manifestPath),
+        RELEASE_ASSET_BASE_URL: value
+      });
+      assert.notEqual(status, 0, `${value} should be rejected`);
+      assert.match(stderr, expected);
+      assert.equal(existsSync(manifestPath), false, "校验失败时不应写出清单");
+    }
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

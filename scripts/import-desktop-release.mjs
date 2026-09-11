@@ -160,6 +160,24 @@ export function buildReleaseRecords(
     const fileSize = positiveInteger(updater.fileSize);
     if (fileSize === null) problems.push(`${platform} 更新包 fileSize 不是正整数`);
 
+    /**
+     * 安装包与更新包在 macOS/Linux 上是两个不同文件（`.dmg` vs `.app.tar.gz`、`.AppImage` vs
+     * `*.AppImage.tar.gz`），Windows 上才是同一个 `.exe`。Tauri 更新契约要求 `url` 必须是更新包，
+     * 因此官网下载页需要单独一份安装包地址，否则「下载 DMG」会拿到 `.app.tar.gz`。
+     */
+    const installer = entry.installer ?? {};
+    const rawInstallerUrl = trimmedString(installer.sourceUrl);
+    const installerUrl = rawInstallerUrl || deriveUpdaterUrl(manifest, installer);
+    if (!isHttpsUrl(installerUrl)) {
+      problems.push(
+        rawInstallerUrl
+          ? `${platform} 清单中的安装包 sourceUrl 不是合法的 https 地址：${JSON.stringify(rawInstallerUrl)}`
+          : `${platform} 缺少可用的安装包地址（sourceUrl 为空且无法按 tag 推导）`
+      );
+    }
+    const installerFileSize = positiveInteger(installer.fileSize);
+    if (installerFileSize === null) problems.push(`${platform} 安装包 fileSize 不是正整数`);
+
     records.push({
       platform,
       version,
@@ -167,6 +185,9 @@ export function buildReleaseRecords(
       signature,
       fileName: trimmedString(updater.fileName) || fileNameFromUrl(url),
       fileSize,
+      installerUrl,
+      installerFileName: trimmedString(installer.fileName) || fileNameFromUrl(installerUrl),
+      installerFileSize,
       notes: trimmedString(notes),
       pub_date: date,
       isForceUpdate: isForceUpdate === true,

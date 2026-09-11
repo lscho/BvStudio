@@ -52,3 +52,57 @@ test("wires the license server URL into the updater config and every release bui
     );
   }
 });
+
+test("titles published releases with the product name instead of the upstream template", () => {
+  // Release 标题只在「新建 Release」分支写入，既有的 Release 不会被后续构建改写，
+  // 因此这里必须锁住字面值，避免模板名再次漏进用户可见的发布页。
+  const releaseStep = workflow.match(/- name: Create or update release[\s\S]*/u)?.[0];
+  assert.ok(releaseStep);
+  assert.match(releaseStep, /--title "BFrame Studio \$GITHUB_REF_NAME"/u);
+  assert.doesNotMatch(workflow, /Tauri Base/u);
+});
+
+test("uploads release assets to OSS after the manifest is validated", () => {
+  const resolveStep = workflow.match(/- name: Resolve release asset base URL[\s\S]*?(?=\n\s+- name:)/u)?.[0];
+  assert.ok(resolveStep);
+  assert.match(resolveStep, /CONFIGURED_ASSET_BASE_URL: \$\{\{ vars\.RELEASE_ASSET_BASE_URL \}\}/u);
+
+  // 应用名必须进路径：下载域名可能同时托管多个应用，靠应用名分子目录隔离
+  assert.match(resolveStep, /app_slug="\$\(node -p /u);
+  assert.match(resolveStep, /require\('\.\/package\.json'\)\.name/u);
+  // 应用名读不出来时要直接失败，不能拿猜出来的路径去上传
+  assert.match(resolveStep, /无法从 package\.json 读取应用名/u);
+
+  // 版本号必须进对象前缀，否则重发旧版本会覆盖新版本的产物
+  assert.match(resolveStep, /baseUrl=\$\{CONFIGURED_ASSET_BASE_URL%\/\}\/\$\{app_slug\}\/releases\/v\$\{version\}/u);
+  assert.match(resolveStep, /objectPrefix=\$\{app_slug\}\/releases\/v\$\{version\}/u);
+
+  // 清单必须拿到自建基址，否则会退回 GitHub URL，出现「官网走 CDN、客户端走 GitHub」的错配
+  const manifestStep = workflow.match(/- name: Validate bundles and create desktop release manifest[\s\S]*?(?=\n\s+- name:)/u)?.[0];
+  assert.ok(manifestStep);
+  assert.match(manifestStep, /RELEASE_ASSET_BASE_URL: \$\{\{ steps\.asset-base\.outputs\.baseUrl \}\}/u);
+
+  const uploadStep = workflow.match(/- name: Upload release assets to Aliyun OSS[\s\S]*?(?=\n\s+- name:)/u)?.[0];
+  assert.ok(uploadStep);
+  // 未配置基址时必须整步跳过，让仓库在没有 OSS 的情况下仍能正常发布
+  assert.match(uploadStep, /if: steps\.asset-base\.outputs\.baseUrl != ''/u);
+  assert.match(uploadStep, /OSS_ACCESS_KEY_ID: \$\{\{ secrets\.OSS_ACCESS_KEY_ID \}\}/u);
+  assert.match(uploadStep, /OSS_ACCESS_KEY_SECRET: \$\{\{ secrets\.OSS_ACCESS_KEY_SECRET \}\}/u);
+  // 无 --disable-ignore-error 时批量上传出错会被记为 report 后继续，静默漏传文件
+  assert.match(uploadStep, /--disable-ignore-error/u);
+  assert.match(uploadStep, /ossutil cp -r "\$staging\/" "oss:\/\/\$\{OSS_BUCKET\}\/\$\{OBJECT_PREFIX\}\/"/u);
+
+  // 上传必须发生在清单发布之前：上传失败就不能让指向空对象的清单流出去
+  assert.ok(workflow.indexOf("- name: Upload release assets to Aliyun OSS") < workflow.indexOf("- name: Upload desktop release manifest"));
+  // 上传前必须先完成清单校验，它同时保证文件名全局唯一（扁平化上传依赖这一点）
+  assert.ok(workflow.indexOf("- name: Validate bundles and create desktop release manifest") < workflow.indexOf("- name: Upload release assets to Aliyun OSS"));
+});
+
+test("verifies the downloaded ossutil binary against its checksum", () => {
+  const installStep = workflow.match(/- name: Install ossutil[\s\S]*?(?=\n\s+- name:)/u)?.[0];
+  assert.ok(installStep);
+  assert.match(installStep, /if: steps\.asset-base\.outputs\.baseUrl != ''/u);
+  assert.match(installStep, /https:\/\/gosspublic\.alicdn\.com\/ossutil\/v2\/\$\{OSSUTIL_VERSION\}\/ossutil-\$\{OSSUTIL_VERSION\}-linux-amd64\.zip/u);
+  assert.match(installStep, /sha256sum -c -/u);
+  assert.match(installStep, /OSSUTIL_SHA256: "[0-9a-f]{64}"/u);
+});

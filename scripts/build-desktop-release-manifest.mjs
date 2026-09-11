@@ -123,10 +123,30 @@ const repository = process.env.GITHUB_REPOSITORY?.trim() || null;
 const commitSha = process.env.GITHUB_SHA?.trim() || null;
 const githubServerUrl = process.env.GITHUB_SERVER_URL?.trim() || "https://github.com";
 const publishGitHubRelease = process.env.PUBLISH_GITHUB_RELEASE === "true";
+
+/**
+ * 发布资产的公开基址。配置后（例如自建 OSS + CDN）清单里的 sourceUrl 一律指向它，
+ * 客户端更新与官网下载页都会跟着切换；未配置时保持原有行为，回退到 GitHub Release。
+ * 只接受 https：客户端与 edge 侧都会校验下载地址的协议。
+ */
+const configuredAssetBaseUrl = process.env.RELEASE_ASSET_BASE_URL?.trim() || null;
+if (configuredAssetBaseUrl) {
+  let parsedAssetBaseUrl;
+  try {
+    parsedAssetBaseUrl = new URL(configuredAssetBaseUrl);
+  } catch {
+    throw new Error(`RELEASE_ASSET_BASE_URL is not a valid URL: ${configuredAssetBaseUrl}`);
+  }
+  if (parsedAssetBaseUrl.protocol !== "https:") {
+    throw new Error("RELEASE_ASSET_BASE_URL must use HTTPS");
+  }
+}
+
 const sourceAssetBaseUrl =
-  publishGitHubRelease && repository
+  configuredAssetBaseUrl ??
+  (publishGitHubRelease && repository
     ? `${githubServerUrl.replace(/\/$/u, "")}/${repository}/releases/download/${encodeURIComponent(tag)}`
-    : null;
+    : null);
 const usedAssetNames = new Set();
 
 const platforms = [];
