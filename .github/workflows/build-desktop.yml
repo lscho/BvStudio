@@ -343,15 +343,30 @@ jobs:
           staging="$RUNNER_TEMP/oss-staging"
           mkdir -p "$staging"
           find "$RELEASE_ARTIFACTS_DIR" -type f -exec cp -p {} "$staging/" \;
-          find "$staging" -type f | sort
 
-          # --disable-ignore-error：批量上传默认「出错记 report 后继续」，会静默漏传文件
-          ossutil cp -r "$staging/" "oss://${OSS_BUCKET}/${OBJECT_PREFIX}/" \
-            -e "$OSS_ENDPOINT" \
-            -i "$OSS_ACCESS_KEY_ID" \
-            -k "$OSS_ACCESS_KEY_SECRET" \
-            -f \
-            --disable-ignore-error
+          shopt -s nullglob
+          files=("$staging"/*)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "暂存目录为空，没有可上传的产物" >&2
+            exit 1
+          fi
+          echo "待上传 ${#files[@]} 个产物："
+          printf '  %s\n' "${files[@]##*/}"
+
+          # 逐文件上传，刻意不用 `cp -r` 批量模式：批量模式下单个文件失败只会被记进 report
+          # 再继续，job 依旧成功，产物就静默漏传了（ossutil 2.x 没有 1.x 的
+          # --disable-ignore-error，而 --no-error-report 只关报告、不改变退出码语义）。
+          # 单文件 cp 不进入批量迭代，失败会直接以非零码退出，配合 set -e 让 job 失败。
+          # 只用 oss:PutObject，无需为「上传后再列一遍」额外开放 oss:ListObjects。
+          for file in "${files[@]}"; do
+            name="${file##*/}"
+            echo "上传 ${name}"
+            ossutil cp "$file" "oss://${OSS_BUCKET}/${OBJECT_PREFIX}/${name}" \
+              -e "$OSS_ENDPOINT" \
+              -i "$OSS_ACCESS_KEY_ID" \
+              -k "$OSS_ACCESS_KEY_SECRET" \
+              -f
+          done
 
       - name: Upload desktop release manifest
         uses: actions/upload-artifact@v4

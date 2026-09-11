@@ -88,9 +88,26 @@ test("uploads release assets to OSS after the manifest is validated", () => {
   assert.match(uploadStep, /if: steps\.asset-base\.outputs\.baseUrl != ''/u);
   assert.match(uploadStep, /OSS_ACCESS_KEY_ID: \$\{\{ secrets\.OSS_ACCESS_KEY_ID \}\}/u);
   assert.match(uploadStep, /OSS_ACCESS_KEY_SECRET: \$\{\{ secrets\.OSS_ACCESS_KEY_SECRET \}\}/u);
-  // 无 --disable-ignore-error 时批量上传出错会被记为 report 后继续，静默漏传文件
-  assert.match(uploadStep, /--disable-ignore-error/u);
-  assert.match(uploadStep, /ossutil cp -r "\$staging\/" "oss:\/\/\$\{OSS_BUCKET\}\/\$\{OBJECT_PREFIX\}\/"/u);
+  // 逐个文件上传：批量 `cp -r` 下单个文件失败只会被记进 report 再继续，job 仍成功，
+  // 产物就静默漏传。单文件 cp 失败会以非零码退出，配合 set -e 让 job 失败。
+  assert.match(uploadStep, /for file in "\$\{files\[@\]\}"; do/u);
+  // 暂存目录为空时必须失败，不能安静地传 0 个文件
+  assert.match(uploadStep, /暂存目录为空，没有可上传的产物/u);
+
+  // 断言只针对真正的命令行（先把 `\` 续行接起来），否则说明性注释里出现过的
+  // flag 名字会被下面的否定断言误伤。
+  const ossutilCommands = uploadStep
+    .replace(/\\\n\s*/gu, " ")
+    .split("\n")
+    .filter((line) => line.trimStart().startsWith("ossutil "))
+    .join("\n");
+  assert.ok(ossutilCommands, "未找到 ossutil 命令行");
+  assert.match(ossutilCommands, /ossutil cp "\$file" "oss:\/\/\$\{OSS_BUCKET\}\/\$\{OBJECT_PREFIX\}\/\$\{name\}"/u);
+  assert.doesNotMatch(ossutilCommands, /cp -r/u);
+  // ossutil 2.x 没有 1.x 的 disable-ignore-error，写了会直接报 unknown flag；
+  // no-error-report 只关报告文件，不改变退出码语义，加了也没用。
+  assert.doesNotMatch(ossutilCommands, /disable-ignore-error/u);
+  assert.doesNotMatch(ossutilCommands, /no-error-report/u);
 
   // 上传必须发生在清单发布之前：上传失败就不能让指向空对象的清单流出去
   assert.ok(workflow.indexOf("- name: Upload release assets to Aliyun OSS") < workflow.indexOf("- name: Upload desktop release manifest"));
