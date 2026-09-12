@@ -67,6 +67,58 @@ describe("licenseStore", () => {
     expect(useLicenseStore.getState().devOverride).toBeNull();
   });
 
+  it("keeps a redeemed identity when initialization is requested again", async () => {
+    const redeemed = {
+      isVip: true,
+      planName: "终身 VIP 会员",
+      expireAt: null,
+      activatedAt: Date.now(),
+      licenseKey: "VIP-****-9999"
+    };
+    useLicenseStore.setState({
+      deviceId: "BV-DEVICE-123",
+      baseStatus: redeemed,
+      status: redeemed,
+      isInitialized: true
+    });
+    vi.mocked(licenseService.verifyVipStatus).mockResolvedValue({
+      isVip: false,
+      planName: "普通用户",
+      expireAt: null,
+      activatedAt: null,
+      licenseKey: null
+    });
+
+    await useLicenseStore.getState().initialize();
+
+    expect(licenseService.verifyVipStatus).not.toHaveBeenCalled();
+    expect(useLicenseStore.getState().status).toEqual(redeemed);
+  });
+
+  it("ignores a verification response that started before a successful redemption", async () => {
+    let resolveVerification!: (status: licenseService.VipStatus) => void;
+    vi.mocked(licenseService.verifyVipStatus).mockImplementation(() => new Promise((resolve) => {
+      resolveVerification = resolve;
+    }));
+    const redeemed = {
+      isVip: true,
+      planName: "终身 VIP 会员",
+      expireAt: null,
+      activatedAt: Date.now(),
+      licenseKey: "VIP-****-9999"
+    };
+    vi.mocked(licenseService.redeemCardKey).mockResolvedValue({ success: true, message: "兑换成功", status: redeemed });
+    useLicenseStore.setState({ deviceId: "BV-DEVICE-123" });
+
+    const verification = useLicenseStore.getState().checkVipStatus();
+    await Promise.resolve();
+    await useLicenseStore.getState().redeem("VIP-TEST-KEY-9999");
+    resolveVerification({ isVip: false, planName: "普通用户", expireAt: null, activatedAt: null, licenseKey: null });
+    await verification;
+
+    expect(useLicenseStore.getState().status).toEqual(redeemed);
+  });
+
   it("only simulates free/pro identity after a card key is redeemed", () => {
     useLicenseStore.getState().setDevOverride("pro");
     expect(useLicenseStore.getState().status.isVip).toBe(false);
@@ -119,4 +171,3 @@ describe("licenseStore", () => {
     expect(useLicenseStore.getState().status.licenseKey).toBeNull();
   });
 });
-

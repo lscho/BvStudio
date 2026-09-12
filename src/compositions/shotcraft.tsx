@@ -6,7 +6,7 @@ import type { CompositionRenderProps } from "@/compositions/registry";
 import type { CompositionClip, MediaAsset, MotionTheme } from "@/domain/project";
 import { resolveEffectAppearance } from "@/domain/motionTheme";
 import { eased } from "@/domain/easing";
-import { defaultShotcraftSettings, shotcraftBezier, shotcraftFrame, shotcraftHeroZoom, shotcraftImageRect, shotcraftProgress as seg, shotcraftShot, shotcraftTransitionState, type ShotcraftSettings } from "@/domain/shotcraft";
+import { defaultShotcraftSettings, shotcraftBezier, shotcraftFrame, shotcraftHasDesignedText, shotcraftHeroZoom, shotcraftImageRect, shotcraftProgress as seg, shotcraftShot, shotcraftTextMode, shotcraftTransitionState, type ShotcraftSettings } from "@/domain/shotcraft";
 
 // Adapted from video-shotcraft, Copyright 2026 Wei Yihao (Apache-2.0).
 // Modified for editable assets, microsecond clocks and native React export. See docs/03-Shotcraft镜头.md.
@@ -182,11 +182,11 @@ function ShotScene({ clip, assets, timeUs, width, height, theme }: SceneProps) {
   else if (clip.compositionId === "shotcraft-card-stack") content = <CardFan cards={cards.length ? cards : [undefined, undefined]} t={t} fit={fit} />;
   else if (libraryShot(clip.compositionId)) content = <LibraryScene clip={clip} assets={assets} frame={frame} width={width} height={height} appearance={{ color: appearance.color, accent: appearance.accentColor, surface, fontFamily: '"PingFang SC", "Microsoft YaHei", system-ui, sans-serif' }} />;
   else content = <HeroCard page={slot("page")[0]} hero={slot("hero")[0]} settings={settings} frame={frame} height={480 * height / width} accent={appearance.accentColor} patch={patch} />;
-  const caption = !["shotcraft-blur-slide", "shotcraft-before-after", "shotcraft-basic-3d"].includes(clip.compositionId) ? clip.text.trim() : "";
+  const caption = shotcraftTextMode(clip) !== "narration" && !shotcraftHasDesignedText(clip.compositionId) ? clip.text.trim() : "";
   const lines = caption.split(/[|｜\n]/u).filter(Boolean);
   const captionText = clip.compositionId === "shotcraft-cursor-flyover" ? lines[Math.min(lines.length - 1, Math.max(0, [0.52, 0.72, 0.91].filter((at) => t >= at).length))] : lines.join("\n");
   return <div className="shotcraft-scene" style={{ ...fill, containerType: "size", background: surface, color: appearance.color, overflow: "hidden", fontFamily: '"PingFang SC", "Microsoft YaHei", system-ui, sans-serif', letterSpacing: 0 }}>
-    <div style={{ ...fill, transform: caption ? lines.length > 1 && clip.compositionId !== "shotcraft-cursor-flyover" ? "translateY(-9%) scale(0.78)" : "translateY(-6%) scale(0.86)" : undefined, overflow: "hidden" }}>{content}</div>
+    <div style={{ ...fill, overflow: "hidden" }}>{content}</div>
     {caption && <div data-shotcraft-caption style={{ position: "absolute", left: "6%", right: "6%", bottom: "4%", minHeight: "9%", display: "grid", placeItems: "center", textAlign: "center", fontSize: px(14), fontWeight: 600, lineHeight: 1.35, whiteSpace: "pre-line", overflowWrap: "anywhere", opacity: seg(frame, 4, 12) }}>{captionText}</div>}
   </div>;
 }

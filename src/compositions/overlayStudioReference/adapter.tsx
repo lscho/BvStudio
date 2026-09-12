@@ -32,6 +32,33 @@ function runtimeDefaults(defaults: object): RuntimeParams {
   return result;
 }
 
+function rgb(color: string) {
+  const normalized = /^#[0-9a-f]{3}$/iu.test(color)
+    ? color.slice(1).split("").map((part) => `${part}${part}`).join("")
+    : /^#[0-9a-f]{6}$/iu.test(color) ? color.slice(1) : null;
+  if (!normalized) return null;
+  return [0, 2, 4].map((offset) => Number.parseInt(normalized.slice(offset, offset + 2), 16));
+}
+
+function luminance(color: string) {
+  const channels = rgb(color);
+  if (!channels) return null;
+  const linear = channels.map((channel) => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+}
+
+export function readableOverlayInk(preferred: string, theme: "dark" | "light") {
+  const surface = theme === "light" ? "#f7f8fa" : "#111316";
+  const preferredLuminance = luminance(preferred);
+  const surfaceLuminance = luminance(surface)!;
+  const contrast = preferredLuminance === null ? 0 : (Math.max(preferredLuminance, surfaceLuminance) + 0.05) / (Math.min(preferredLuminance, surfaceLuminance) + 0.05);
+  if (contrast >= 4.5) return preferred;
+  return theme === "light" ? "#1b1d21" : "#ffffff";
+}
+
 function useReferenceStageScale(canvasWidth: number) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
@@ -91,6 +118,7 @@ export function ReplicatedOverlayStudioCard(props: CompositionRenderProps) {
     __end: props.durationUs / 1_000_000
   };
   const theme = params.theme === "light" ? "light" : "dark";
+  const readableInk = readableOverlayInk(props.color, theme);
   const cardScale = typeof params.scale === "number" && Number.isFinite(params.scale)
     ? Math.max(0.3, Math.min(3, params.scale))
     : 1;
@@ -106,11 +134,11 @@ export function ReplicatedOverlayStudioCard(props: CompositionRenderProps) {
     background: "transparent",
     border: 0,
     boxShadow: "none",
-    color: props.color,
+    color: readableInk,
     "--stage-w": `${props.canvasWidth}px`,
     "--stage-h": `${canvasHeight}px`,
     "--hud-blue": props.accentColor,
-    "--hud-ink-doc": props.color
+    "--hud-ink-doc": readableInk
   } as CSSProperties;
 
   return <div ref={frameRef} className="overlay-studio-reference" data-composition-layer={compositionLayer} style={{ position: "relative", width: "100%", height: "100%", background: "transparent", border: 0, boxShadow: "none" }}>

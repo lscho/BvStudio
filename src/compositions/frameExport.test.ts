@@ -68,6 +68,21 @@ describe("composition frame streaming", () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
+  it("batches native frame writes while preserving frame order", async () => {
+    const { sink, plan } = setup();
+    const appendBatch = vi.fn().mockResolvedValue(undefined);
+    const result = await streamCompositionFrames({ ...overlay, durationUs: 170_000 }, plan, {
+      sink: { ...sink, appendBatch },
+      sequences: []
+    });
+    expect(sink.append).not.toHaveBeenCalled();
+    expect(appendBatch.mock.calls).toEqual([
+      ["sequence", 0, ["frame", "frame", "frame", "frame"]],
+      ["sequence", 4, ["frame", "frame"]]
+    ]);
+    expect(result).toMatchObject({ sequenceId: "sequence", sequenceFrameCount: 6 });
+  });
+
   it("stops on cancellation and leaves the cache ID available for caller cleanup", async () => {
     const { dispose, sink, plan } = setup();
     const controller = new AbortController();

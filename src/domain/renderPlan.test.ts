@@ -71,6 +71,25 @@ describe("buildRenderPlan", () => {
     expect(overlays).toContainEqual(expect.objectContaining({ text: "时间字幕", startUs: 1_000_000, y: 88, verticalAnchor: "bottom" }));
   });
 
+  it("lets an explicit promo Shotcraft scene replace overlapping timeline subtitles", () => {
+    const project = createEmptyProject();
+    const effect = createEffectPreviewClip("shotcraft-lead-word-zoom-assemble", project.motionTheme, []);
+    Object.assign(effect, { startUs: 0, durationUs: 5_000_000, params: { ...effect.params, shotcraftTextMode: "promo" } });
+    project.tracks.find((track) => track.kind === "composition")!.clips.push(effect);
+    project.tracks.find((track) => track.kind === "subtitle")!.clips.push({
+      id: "subtitle", trackId: "subtitle-main", kind: "subtitle", label: "字幕", startUs: 0, durationUs: 5_000_000,
+      locked: false, text: "不应重复导出的口播字幕。", color: "#ffffff", backgroundColor: "#000000", fontSize: 44, positionY: 88
+    });
+
+    let overlays = buildRenderPlan(project, "/output.mp4").overlays;
+    expect(overlays).toContainEqual(expect.objectContaining({ compositionId: effect.compositionId, params: expect.objectContaining({ shotcraftTextMode: "promo" }) }));
+    expect(overlays.some((overlay) => overlay.kind === "text" && overlay.text === "不应重复导出的口播字幕")).toBe(false);
+
+    effect.params = { ...effect.params, shotcraftTextMode: "narration" };
+    overlays = buildRenderPlan(project, "/output.mp4").overlays;
+    expect(overlays).toContainEqual(expect.objectContaining({ text: "不应重复导出的口播字幕", verticalAnchor: "bottom" }));
+  });
+
   it("resolves project theme roles and React renderer metadata for export", () => {
     const project = createEmptyProject();
     project.motionTheme = { ...project.motionTheme, skin: "light", style: "editorial", font: "display", colors: { ...project.motionTheme.colors, text: "#121212", data: "#0099cc" } };

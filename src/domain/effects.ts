@@ -1,6 +1,6 @@
 import { EASING_NAMES, eased as evaluateEasing, type EasingName } from "@/domain/easing";
 import { FOCUS_CARD_SLOTS, MEDIA_COMPOSITIONS, type CompositionSlot } from "@/domain/compositions";
-import { FREE_EFFECTS_PER_CATEGORY, PREMIUM_EFFECT_CATEGORY } from "@/domain/effectAccess";
+import { CORE_FREE_EFFECT_IDS, FREE_EFFECTS_PER_CATEGORY, PREMIUM_EFFECT_CATEGORY } from "@/domain/effectAccess";
 import { importedOverlayStudioEffectIds, importedOverlayStudioEffects, importedOverlayStudioTextParamKeys } from "@/domain/overlayStudioCatalog";
 import { isShotcraftComposition, SHOTCRAFT_COMPOSITIONS } from "@/domain/shotcraft";
 
@@ -774,6 +774,7 @@ export const PREMIUM_EFFECT_IDS = [
 ] as const;
 
 const premiumEffectIdSet = new Set<string>(PREMIUM_EFFECT_IDS);
+const coreFreeEffectIdSet = new Set<string>(CORE_FREE_EFFECT_IDS);
 
 /** 这些分类只保留免费额度内的动效，其余整体归入高级分类。 */
 export const PROMOTED_EFFECT_CATEGORIES: readonly EffectCategory[] = ["展示"];
@@ -782,6 +783,7 @@ export const PROMOTED_EFFECT_CATEGORIES: readonly EffectCategory[] = ["展示"];
 function applyAccessCategory(effects: readonly CompositionDefinition[]): readonly CompositionDefinition[] {
   const seenPerCategory = new Map<EffectCategory, number>();
   return effects.map((effect) => {
+    if (coreFreeEffectIdSet.has(effect.id)) return effect;
     const index = seenPerCategory.get(effect.category) ?? 0;
     seenPerCategory.set(effect.category, index + 1);
     const promoted = premiumEffectIdSet.has(effect.id)

@@ -9,6 +9,23 @@ beforeEach(() => {
 });
 
 describe("Timeline interactions", () => {
+  it("keeps adjacent short subtitles on one row at the default timeline density", () => {
+    const project = createEmptyProject();
+    const track = project.tracks.find((candidate) => candidate.kind === "subtitle")!;
+    track.clips = [
+      { id: "first-caption", trackId: track.id, kind: "subtitle", label: "正", startUs: 0, durationUs: 1_100_000, locked: false, text: "正", color: "#ffffff", backgroundColor: "#000000", fontSize: 44, positionY: 88 },
+      { id: "second-caption", trackId: track.id, kind: "subtitle", label: "加盟前还需确认", startUs: 1_100_000, durationUs: 2_000_000, locked: false, text: "加盟前还需确认", color: "#ffffff", backgroundColor: "#000000", fontSize: 44, positionY: 88 }
+    ];
+    useEditorStore.setState((state) => ({ ...state, project }));
+
+    const { container } = render(<Timeline />);
+
+    expect(screen.getByRole("button", { name: "正" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "加盟前还需确认" })).toBeInTheDocument();
+    expect(container.querySelector(".row-lane")).not.toBeInTheDocument();
+    expect(container.querySelector(".timeline-inner")).toHaveStyle({ width: "930px" });
+  });
+
   it("shows overlapping compositions on separate collapsible rows without grouping their selection", () => {
     useEditorStore.getState().setPlayhead(0);
     useEditorStore.getState().addComposition("background-stripes");

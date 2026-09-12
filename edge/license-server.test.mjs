@@ -105,6 +105,24 @@ describe("verify", () => {
     expect(kv.store.get(cardKeyFor(hash)).status).toBe("bound");
   });
 
+  it("keeps a newly redeemed device active while the card read is still stale", async () => {
+    const { kv, hash } = await seededKv();
+    await kv.put(deviceKeyFor(DEVICE_ID), {
+      isVip: true,
+      planName: "终身 VIP 会员",
+      expireAt: null,
+      activatedAt: NOW,
+      licenseKey: "VIP-ABCD****QRST",
+      cardHash: hash
+    });
+
+    const response = await handleLicenseRequest(request("/api/license/verify", { deviceId: DEVICE_ID }), { kv, secret: SECRET, now: NOW + 5_000 });
+    const envelope = await response.json();
+
+    expect(envelope.status.isVip).toBe(true);
+    expect(await kv.get(deviceKeyFor(DEVICE_ID))).toBeTruthy();
+  });
+
   it("downgrades to free and clears the device when the card is revoked or rebound elsewhere", async () => {
     const revoked = await seededKv({ status: "revoked", boundDeviceId: DEVICE_ID, boundAt: NOW });
     await revoked.kv.put(deviceKeyFor(DEVICE_ID), { isVip: true, planName: "终身 VIP 会员", expireAt: null, activatedAt: NOW, licenseKey: "VIP-ABCD****QRST", cardHash: revoked.hash });

@@ -5,6 +5,7 @@ import { Select } from "@/components/Select";
 import { compositionById } from "@/domain/effects";
 import type { MusicAnalysis } from "@/domain/musicBeats";
 import type { MediaAsset } from "@/domain/project";
+import type { ShotcraftTextMode } from "@/domain/shotcraft";
 import { parseStoryboardCues, type StoryboardOptions } from "@/domain/storyboard";
 import { analyseMusicAsset } from "@/services/musicBeats";
 import { canUseShotcraftAudio, loadShotcraftAudio, shotcraftAudioForAccess } from "@/services/shotcraftAudio";
@@ -45,6 +46,7 @@ interface Props {
 
 export function SubtitleStoryboardDialog({ open, assets, onOpenChange, onGenerate, onApply, onNeedSettings, subtitleCount, durationSeconds, isPro = false }: Props) {
   const [mode, setMode] = useState<StoryboardOptions["mode"]>("auto");
+  const [shotcraftTextMode, setShotcraftTextMode] = useState<ShotcraftTextMode>("narration");
   const [prompt, setPrompt] = useState("");
   const [selectedAssets, setSelectedAssets] = useState<string[]>([]);
   const [musicId, setMusicId] = useState("none");
@@ -63,6 +65,7 @@ export function SubtitleStoryboardDialog({ open, assets, onOpenChange, onGenerat
   const mounted = useRef(true);
   const visualAssets = assets.filter((asset) => (asset.kind === "image" || asset.kind === "video") && !asset.missing);
   const selectedImageCount = visualAssets.filter((asset) => asset.kind === "image" && selectedAssets.includes(asset.id)).length;
+  const selectedVideoCount = visualAssets.filter((asset) => asset.kind === "video" && selectedAssets.includes(asset.id)).length;
   const musicOptions = [{ value: "none", label: "不使用音乐" }, ...assets.filter((asset) => asset.kind === "audio" && !asset.missing && (!asset.id.startsWith("shotcraft-audio:") || canUseShotcraftAudio(asset.id, isPro))).map((asset) => ({ value: asset.id, label: asset.name })), ...shotcraftAudioForAccess(isPro).filter((asset) => asset.kind === "music" && !assets.some((item) => item.id === asset.id)).map((asset) => ({ value: asset.id, label: asset.name }))];
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; controller.current?.abort(); }; }, []);
@@ -82,7 +85,7 @@ export function SubtitleStoryboardDialog({ open, assets, onOpenChange, onGenerat
       : visualAssets.filter((asset, index, all) => asset.kind !== "image" || all.slice(0, index).filter((candidate) => candidate.kind === "image").length < 12).slice(0, 24).map((asset) => asset.id));
   }, [open, assets]);
   useEffect(() => { setAnalysis(undefined); }, [musicId]);
-  useEffect(() => { setPreview(undefined); setPreviewRequest(undefined); setError(""); }, [mode, prompt, selectedAssets, musicId, musicOffset, musicVolume, beatSync, soundEnabled, useVision, isPro]);
+  useEffect(() => { setPreview(undefined); setPreviewRequest(undefined); setError(""); }, [mode, shotcraftTextMode, prompt, selectedAssets, musicId, musicOffset, musicVolume, beatSync, soundEnabled, useVision, isPro]);
 
   async function selectedMusic(signal: AbortSignal) {
     if (musicId === "none") return undefined;
@@ -125,7 +128,7 @@ export function SubtitleStoryboardDialog({ open, assets, onOpenChange, onGenerat
         active.signal.throwIfAborted();
         if (mounted.current) setAnalysis(measured);
       }
-      const request: SubtitleStoryboardRequest = { storyboard: { mode, prompt: prompt.trim() }, materialAssetIds: selectedAssets, useVision, soundEnabled, musicAssetId: music?.id, musicSourceInUs: Math.round(musicOffset * 1_000_000), musicVolume, beatSync: Boolean(music && beatSync), analysis: measured };
+      const request: SubtitleStoryboardRequest = { storyboard: { mode, prompt: prompt.trim(), shotcraftTextMode }, materialAssetIds: selectedAssets, useVision, soundEnabled, musicAssetId: music?.id, musicSourceInUs: Math.round(musicOffset * 1_000_000), musicVolume, beatSync: Boolean(music && beatSync), analysis: measured };
       const result = await onGenerate(request, active.signal, setStatus);
       active.signal.throwIfAborted();
       if (mounted.current && controller.current === active) { setPreview(result); setPreviewRequest(request); setStatus("整套分镜已准备"); }
@@ -150,13 +153,18 @@ export function SubtitleStoryboardDialog({ open, assets, onOpenChange, onGenerat
       <Dialog.Description id="subtitle-storyboard-description">用同一份字幕语义统一生成 A-roll / B-roll、动效、转场、音乐卡点与动作音效。</Dialog.Description>
       <form className="settings-form" onSubmit={generate}>
         <fieldset disabled={working}>
-          <label><span>画面模式</span><Select label="分镜画面模式" value={mode} options={[{ value: "auto", label: "自动混合 A-roll / B-roll" }, { value: "a-roll", label: "纯 A-roll · 口播为主" }, { value: "b-roll", label: "纯 B-roll · 补充画面" }]} onChange={(value) => { if (value === "auto" || value === "a-roll" || value === "b-roll") setMode(value); }} /></label>
+          <div className="form-grid">
+            <label><span>画面模式</span><Select label="分镜画面模式" value={mode} options={[{ value: "auto", label: "自动混合 A-roll / B-roll" }, { value: "a-roll", label: "纯 A-roll · 口播为主" }, { value: "b-roll", label: "纯 B-roll · 补充画面" }]} onChange={(value) => { if (value === "auto" || value === "a-roll" || value === "b-roll") setMode(value); }} /></label>
+            <label><span>Shotcraft 文案</span><Select label="Shotcraft 文案策略" value={shotcraftTextMode} options={[{ value: "narration", label: "口播字幕优先 · 仅无文案镜头" }, { value: "promo", label: "宣传片文案 · Shotcraft 承担字幕" }]} onChange={(value) => { if (value === "narration" || value === "promo") setShotcraftTextMode(value); }} /></label>
+          </div>
+          <p className="range-callout">{shotcraftTextMode === "promo" ? "Shotcraft 使用模板内文案或全屏镜头说明；覆盖区间自动隐藏时间线字幕。" : "保留时间线口播字幕；只选不依赖自带文案的 Shotcraft，并使用完整画布。"}</p>
           <label><span>分镜要求</span><textarea aria-label="分镜要求" rows={4} maxLength={4000} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="例如：0-5秒 A-roll 保留口播；5-12秒 B-roll 用产品截图解释痛点。" /></label>
           <div className="form-grid"><label><span>背景音乐</span><Select label="编排背景音乐" value={musicId} options={musicOptions} onChange={setMusicId} /></label><label><span>音乐源起点（秒）</span><input aria-label="音乐源起点" type="number" min={0} step={0.1} disabled={musicId === "none"} value={musicOffset} onChange={(event) => setMusicOffset(event.target.valueAsNumber)} /></label></div>
           {musicId !== "none" && <label><span>音乐音量</span><input aria-label="编排音乐音量" type="range" min={0} max={0.6} step={0.01} value={musicVolume} onChange={(event) => setMusicVolume(event.target.valueAsNumber)} /></label>}
           <div className="shotcraft-planner-options"><label><input type="checkbox" checked={beatSync} disabled={musicId === "none"} onChange={(event) => setBeatSync(event.target.checked)} />音乐卡点</label><label><input type="checkbox" checked={soundEnabled} onChange={(event) => setSoundEnabled(event.target.checked)} />编排动作音效</label><label><input type="checkbox" checked={useVision} disabled={!visualAssets.some((asset) => asset.kind === "image")} onChange={(event) => setUseVision(event.target.checked)} />识别所选图片</label></div>
           <span>参与匹配的素材</span>
           <div className="shotcraft-planner-assets">{visualAssets.length ? visualAssets.map((asset) => <label key={asset.id} title={asset.name}><input type="checkbox" checked={selectedAssets.includes(asset.id)} disabled={!selectedAssets.includes(asset.id) && (selectedAssets.length >= 24 || (useVision && asset.kind === "image" && selectedImageCount >= 12))} onChange={(event) => setSelectedAssets((ids) => event.target.checked ? [...ids, asset.id] : ids.filter((id) => id !== asset.id))} /><span>{asset.kind === "image" ? "图片" : "视频"} · {asset.name}</span></label>) : <p>没有可用图片或视频，将使用文字与图形镜头。</p>}</div>
+          {selectedImageCount > 0 && selectedVideoCount === 0 && <p className="range-callout" role="status">仅使用图片：将自动生成全屏图片镜头，素材不足时会错开复用。</p>}
         </fieldset>
         {musicId !== "none" && <button type="button" className="button secondary" disabled={working} onClick={analyse}><AudioLines size={16} />分析拍点</button>}
         {analysis && musicId !== "none" && <p role="status">{analysis.bpm.toFixed(2)} BPM · {analysis.reliableGrid ? "节拍网格通过验证" : "网格不稳定，按实际鼓点编排"} · {analysis.hits.length} 个瞬态</p>}

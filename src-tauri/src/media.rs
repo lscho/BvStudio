@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -123,6 +123,7 @@ impl ExportManagerState {
     }
 }
 
+#[derive(Clone)]
 struct ExportReporter {
     job_id: String,
     channel: Option<Channel<ExportJobEvent>>,
@@ -214,6 +215,7 @@ pub struct RenderOverlay {
     sequence_frames_base64: Option<Vec<String>>,
     sequence_fps: Option<f64>,
     sequence_id: Option<String>,
+    sequence_frame_count: Option<usize>,
     #[serde(skip)]
     sequence_path: Option<PathBuf>,
     image_path: Option<String>,
@@ -664,8 +666,35 @@ fn video_encoder_args(encoder: &str, stage: VideoEncodingStage) -> Vec<&'static 
     }
 }
 
-fn apply_video_encoder(command: &mut Command, encoder: &str, stage: VideoEncodingStage) {
+fn apply_video_encoder(
+    command: &mut Command,
+    encoder: &str,
+    stage: VideoEncodingStage,
+    thread_count: Option<usize>,
+) {
     command.args(video_encoder_args(encoder, stage));
+    if stage == VideoEncodingStage::Intermediate || encoder == "software" {
+        if let Some(thread_count) = thread_count {
+            command.args(["-threads", &thread_count.max(1).to_string()]);
+        }
+    }
+}
+
+fn export_worker_budget(
+    available_cores: usize,
+    segment_count: usize,
+    hardware_encoder: bool,
+) -> (usize, usize) {
+    let cores = available_cores.max(1);
+    let mut workers = if segment_count <= 1 {
+        1
+    } else {
+        (cores / 4).clamp(1, 4).min(segment_count)
+    };
+    if hardware_encoder {
+        workers = workers.min(2);
+    }
+    (workers, (cores / workers).max(1))
 }
 
 fn audio_mastering_filters(role: &str) -> &'static [&'static str] {
@@ -1697,6 +1726,7 @@ fn render_segment(
     output: &Path,
     index: usize,
     encoder: &str,
+    encoder_threads: usize,
     reporter: &ExportReporter,
     progress_start: f64,
     progress_span: f64,
@@ -1783,7 +1813,7 @@ fn render_segment(
     } else {
         VideoEncodingStage::Intermediate
     };
-    apply_video_encoder(&mut command, encoder, encoding_stage);
+    apply_video_encoder(&mut command, encoder, encoding_stage, Some(encoder_threads));
     command
         .args([
             "-c:a",
@@ -2345,7 +2375,7 @@ fn render_overlays(
         "-t",
         &seconds(total_duration_us),
     ]);
-    apply_video_encoder(&mut command, encoder, VideoEncodingStage::Final);
+    apply_video_encoder(&mut command, encoder, VideoEncodingStage::Final, None);
     // The explicit project duration is authoritative; -shortest can drop buffered video on FFmpeg 6.
     command
         .args([
@@ -2546,23 +2576,110 @@ fn execute_export(
         0,
         plan.segments.len(),
     )?;
-    let mut segment_paths = Vec::new();
-    let segment_span = 0.65 / plan.segments.len().max(1) as f64;
-    for (index, segment) in plan.segments.iter().enumerate() {
-        let segment_path = job_dir.join(format!("segment-{index:05}.mp4"));
-        render_segment(
-            ffmpeg,
-            plan,
-            segment,
-            &segment_path,
-            index,
-            &encoder,
-            reporter,
-            index as f64 * segment_span,
-            segment_span,
-            &job_dir.join(format!("segment-{index:05}.log")),
+    let segment_paths = (0..plan.segments.len())
+        .map(|index| job_dir.join(format!("segment-{index:05}.mp4")))
+        .collect::<Vec<_>>();
+    let available_cores = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    let hardware_segments = plan.overlays.is_empty() && encoder != "software";
+    let (worker_count, encoder_threads) =
+        export_worker_budget(available_cores, plan.segments.len(), hardware_segments);
+    if worker_count == 1 {
+        let segment_span = 0.65 / plan.segments.len().max(1) as f64;
+        for (index, segment) in plan.segments.iter().enumerate() {
+            render_segment(
+                ffmpeg,
+                plan,
+                segment,
+                &segment_paths[index],
+                index,
+                &encoder,
+                encoder_threads,
+                reporter,
+                index as f64 * segment_span,
+                segment_span,
+                &job_dir.join(format!("segment-{index:05}.log")),
+            )?;
+        }
+    } else {
+        reporter.emit(
+            "rendering",
+            format!("正在使用 {worker_count} 个并发任务渲染视频片段"),
+            0.0,
+            0,
+            plan.segments.len(),
         )?;
-        segment_paths.push(segment_path);
+        let next_index = AtomicUsize::new(0);
+        let completed = AtomicUsize::new(0);
+        let failure = Mutex::new(None::<String>);
+        std::thread::scope(|scope| {
+            for _ in 0..worker_count {
+                let reporter = reporter.clone();
+                let next_index = &next_index;
+                let completed = &completed;
+                let failure = &failure;
+                let segment_paths = &segment_paths;
+                let encoder = &encoder;
+                scope.spawn(move || loop {
+                    if reporter.cancelled.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let index = next_index.fetch_add(1, Ordering::Relaxed);
+                    let Some(segment) = plan.segments.get(index) else {
+                        break;
+                    };
+                    let quiet_reporter = ExportReporter {
+                        job_id: reporter.job_id.clone(),
+                        channel: None,
+                        cancelled: reporter.cancelled.clone(),
+                    };
+                    let result = render_segment(
+                        ffmpeg,
+                        plan,
+                        segment,
+                        &segment_paths[index],
+                        index,
+                        &encoder,
+                        encoder_threads,
+                        &quiet_reporter,
+                        0.0,
+                        0.0,
+                        &job_dir.join(format!("segment-{index:05}.log")),
+                    );
+                    if let Err(error) = result {
+                        if let Ok(mut current) = failure.lock() {
+                            current.get_or_insert(error);
+                        }
+                        reporter.cancelled.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                    let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                    if let Err(error) = reporter.emit(
+                        "rendering",
+                        format!("已渲染 {done}/{} 个视频片段", plan.segments.len()),
+                        done as f64 / plan.segments.len() as f64 * 0.65,
+                        done,
+                        plan.segments.len(),
+                    ) {
+                        if let Ok(mut current) = failure.lock() {
+                            current.get_or_insert(error);
+                        }
+                        reporter.cancelled.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                });
+            }
+        });
+        if let Some(error) = failure
+            .into_inner()
+            .map_err(|_| "导出任务状态不可用".to_string())?
+        {
+            return Err(error);
+        }
+        if reporter.cancelled.load(Ordering::Relaxed) {
+            return Err("视频导出已取消".into());
+        }
     }
     let concat_list = job_dir.join("concat.txt");
     let concat_text = segment_paths
@@ -2623,6 +2740,19 @@ fn execute_export(
     )
 }
 
+fn expected_sequence_frames(overlay: &RenderOverlay, default_fps: f64) -> Result<usize, String> {
+    let fps = overlay.sequence_fps.unwrap_or(default_fps);
+    if !fps.is_finite() || !(1.0..=120.0).contains(&fps) {
+        return Err("动效帧率无效".into());
+    }
+    let full_count = (overlay.duration_us as f64 / 1_000_000.0 * fps).ceil() as usize;
+    let frame_count = overlay.sequence_frame_count.unwrap_or(full_count);
+    if frame_count == 0 || frame_count > full_count {
+        return Err("动效帧数量无效".into());
+    }
+    Ok(frame_count)
+}
+
 #[tauri::command]
 pub async fn export_render_plan(
     app: AppHandle,
@@ -2634,11 +2764,7 @@ pub async fn export_render_plan(
 ) -> Result<String, String> {
     for overlay in &mut plan.overlays {
         if let Some(id) = &overlay.sequence_id {
-            let fps = overlay.sequence_fps.unwrap_or(plan.fps);
-            if !fps.is_finite() || !(1.0..=120.0).contains(&fps) {
-                return Err("动效帧率无效".into());
-            }
-            let expected = (overlay.duration_us as f64 / 1_000_000.0 * fps).ceil() as usize;
+            let expected = expected_sequence_frames(overlay, plan.fps)?;
             overlay.sequence_path = Some(frames.resolve(id, expected)?);
         }
     }
@@ -2733,6 +2859,34 @@ pub fn media_path_exists(path: String) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_worker_budget_reserves_cpu_for_each_ffmpeg_process() {
+        assert_eq!(export_worker_budget(2, 8, false), (1, 2));
+        assert_eq!(export_worker_budget(8, 8, false), (2, 4));
+        assert_eq!(export_worker_budget(16, 3, false), (3, 5));
+        assert_eq!(export_worker_budget(16, 8, true), (2, 8));
+        assert_eq!(export_worker_budget(16, 1, false), (1, 16));
+    }
+
+    #[test]
+    fn streamed_overlay_accepts_a_short_sequence_for_native_final_frame_extension() {
+        let overlay: RenderOverlay = serde_json::from_value(serde_json::json!({
+            "kind": "composition", "startUs": 0, "durationUs": 2000000,
+            "x": 50, "y": 50, "sequenceFps": 30, "sequenceFrameCount": 15,
+            "opacity": 1, "scale": 1
+        }))
+        .unwrap();
+        assert_eq!(expected_sequence_frames(&overlay, 60.0).unwrap(), 15);
+
+        let invalid: RenderOverlay = serde_json::from_value(serde_json::json!({
+            "kind": "composition", "startUs": 0, "durationUs": 2000000,
+            "x": 50, "y": 50, "sequenceFps": 30, "sequenceFrameCount": 61,
+            "opacity": 1, "scale": 1
+        }))
+        .unwrap();
+        assert!(expected_sequence_frames(&invalid, 60.0).is_err());
+    }
 
     /// Rust mirror of one FFmpeg-generated curve used for numeric sanity checks.
     fn mirrored(easing: &str, p: f64) -> f64 {
@@ -3362,6 +3516,7 @@ mod tests {
                     image_data_base64: Some(BASE64.encode(fs::read(&wide_fixture).unwrap())),
                     sequence_frames_base64: None,
                     sequence_id: None,
+                    sequence_frame_count: None,
                     sequence_path: None,
                     sequence_fps: None,
                     image_path: None,
@@ -3407,6 +3562,7 @@ mod tests {
                         BASE64.encode(fs::read(&fixture).unwrap()),
                     ]),
                     sequence_id: None,
+                    sequence_frame_count: None,
                     sequence_path: None,
                     sequence_fps: Some(60.0),
                     image_path: None,
@@ -3445,6 +3601,7 @@ mod tests {
                     image_data_base64: None,
                     sequence_frames_base64: None,
                     sequence_id: None,
+                    sequence_frame_count: None,
                     sequence_path: None,
                     sequence_fps: None,
                     image_path: Some(fixture.to_string_lossy().into_owned()),
@@ -3488,6 +3645,7 @@ mod tests {
                     image_data_base64: None,
                     sequence_frames_base64: None,
                     sequence_id: None,
+                    sequence_frame_count: None,
                     sequence_path: None,
                     sequence_fps: None,
                     image_path: None,
@@ -3758,7 +3916,7 @@ mod tests {
             );
             let sequence_dir = job_dir.join("sequence");
             fs::create_dir(&sequence_dir).map_err(|error| error.to_string())?;
-            for index in 0..31 {
+            for index in 0..2 {
                 fs::copy(&fixture, sequence_dir.join(format!("{index:05}.png")))
                     .map_err(|error| error.to_string())?;
             }
@@ -3768,7 +3926,8 @@ mod tests {
                 "segments": [{ "kind": "generated", "durationUs": 1600000, "color": "#000000" }],
                 "audios": [],
                 "overlays": [{ "kind": "composition", "startUs": 281633, "durationUs": 1026576,
-                    "sequenceFps": 30, "x": 50, "y": 50, "scale": 1, "opacity": 1 }]
+                    "sequenceFps": 30, "sequenceFrameCount": 2,
+                    "x": 50, "y": 50, "scale": 1, "opacity": 1 }]
             })).map_err(|error| error.to_string())?;
             plan.overlays[0].sequence_path = Some(sequence_dir.join("%05d.png"));
             execute_export(&ffmpeg, &plan, &job_dir, &output, &ExportReporter::silent())?;

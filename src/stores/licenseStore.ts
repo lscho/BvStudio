@@ -21,6 +21,8 @@ function resolveStatus(base: VipStatus, override: DevLicenseOverride | null): Vi
     : { ...base, isVip: false };
 }
 
+let licenseStatusRequestId = 0;
+
 interface LicenseState {
   deviceId: string;
   /** 界面实际生效的身份（开发环境可能已被模拟覆盖） */
@@ -51,6 +53,8 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
   lastCheckedAt: null,
 
   initialize: async () => {
+    if (get().isInitialized || get().isChecking) return;
+    set({ isChecking: true, error: null });
     try {
       let deviceId = get().deviceId;
       if (!deviceId) {
@@ -62,16 +66,19 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : "获取硬件授权信息失败",
-        isInitialized: true
+        isInitialized: true,
+        isChecking: false
       });
     }
   },
 
   checkVipStatus: async () => {
+    const requestId = ++licenseStatusRequestId;
     const currentDeviceId = get().deviceId || (await getHardwareDeviceId());
     set({ deviceId: currentDeviceId, isChecking: true, error: null });
     try {
       const baseStatus = await verifyVipStatus(currentDeviceId);
+      if (requestId !== licenseStatusRequestId) return;
       set({
         baseStatus,
         status: resolveStatus(baseStatus, get().devOverride),
@@ -79,6 +86,7 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
         isChecking: false
       });
     } catch (error) {
+      if (requestId !== licenseStatusRequestId) return;
       set({
         error: error instanceof Error ? error.message : "联网识别会员状态失败",
         isChecking: false
@@ -87,15 +95,17 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
   },
 
   redeem: async (cardKey: string) => {
+    licenseStatusRequestId += 1;
     let currentDeviceId = get().deviceId;
     if (!currentDeviceId) {
       currentDeviceId = await getHardwareDeviceId();
       set({ deviceId: currentDeviceId });
     }
-    set({ isRedeeming: true });
+    set({ isRedeeming: true, isChecking: false });
     try {
       const result = await redeemCardKey(currentDeviceId, cardKey);
       if (result.success && result.status) {
+        licenseStatusRequestId += 1;
         set({
           baseStatus: result.status,
           status: result.status,

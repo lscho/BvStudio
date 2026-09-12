@@ -60,15 +60,13 @@ import {
 } from "@/services/projectSession";
 import { captionSegments } from "@/services/asr";
 import { subtitlesForMotionMatch } from "@/domain/captions";
-import { browserApiKey, hasApiKey, matchTimelineMotion, matchTimelineSounds, motionMatchesAccessIssue } from "@/services/ai/provider";
+import { browserApiKey, hasApiKey, matchTimelineMotion, matchTimelineSounds, motionMatchesAccessIssue, soundMatchesAccessIssue } from "@/services/ai/provider";
 import { cancelCloudSpeechRequest, hasSpeechApiKey, startCloudMediaTranscription, type CloudSpeechProgressEvent } from "@/services/cloudSpeech";
 import { useEditorStore } from "@/stores/editorStore";
 import { useEffectLibraryStore } from "@/stores/effectLibraryStore";
 import { useLicenseStore } from "@/stores/licenseStore";
-import { rasterizeCompositions } from "@/compositions/exportRenderer";
+import { normalizeCompositionExportError, rasterizeCompositions } from "@/compositions/exportRenderer";
 import { lintMotionProject } from "@/domain/motionLint";
-import { builtinSoundAssetId, builtinSoundEffectById } from "@/domain/soundEffects";
-import { createBuiltinSoundAsset } from "@/services/builtinSounds";
 import { createMotionMatchingFeedbackRecord, readConfirmedMotionPreferences, saveMotionMatchingFeedback } from "@/services/motionMatchingFeedback";
 import { mediaAssetVisionThumbnail } from "@/services/ai/shotcraft";
 import { canUseShotcraftAudio, loadShotcraftAudio } from "@/services/shotcraftAudio";
@@ -567,16 +565,12 @@ export default function App() {
     const preparedAssets: MediaAsset[] = [];
     if (requestedMusic) preparedAssets.push(requestedMusic);
     if (request.soundEnabled) {
-      const builtinIds = [...new Set(result.matches.flatMap((match) => match.soundEffectId ? [match.soundEffectId] : []))];
-      for (const [index, soundId] of builtinIds.entries()) {
-        onProgress(`正在准备字幕动作音效 ${index + 1}/${builtinIds.length}`);
-        const expectedName = `${builtinSoundEffectById(soundId)?.name}.wav`;
-        const existing = sourceProject.assets.find((asset) => asset.id === builtinSoundAssetId(soundId) && !asset.missing && asset.name === expectedName);
-        preparedAssets.push(existing ?? await createBuiltinSoundAsset(soundId, { refresh: true }));
-      }
-      const shotcraftSoundIds = [...new Set(result.matches.flatMap((match) => match.shotcraftSounds?.map((sound) => sound.soundId) ?? []))];
-      for (const [index, soundId] of shotcraftSoundIds.entries()) {
-        onProgress(`正在准备镜头动作音效 ${index + 1}/${shotcraftSoundIds.length}`);
+      const soundIds = [...new Set(result.matches.flatMap((match) => [
+        ...(match.soundEffectId ? [match.soundEffectId] : []),
+        ...(match.shotcraftSounds?.map((sound) => sound.soundId) ?? [])
+      ]))];
+      for (const [index, soundId] of soundIds.entries()) {
+        onProgress(`正在准备动作音效 ${index + 1}/${soundIds.length}`);
         preparedAssets.push(sourceProject.assets.find((asset) => asset.id === soundId && !asset.missing) ?? await loadShotcraftAudio(soundId, signal));
       }
     }
@@ -594,7 +588,7 @@ export default function App() {
     const subtitleIds = new Set(preview.subtitleIds);
     const subtitles = current.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === "subtitle" && subtitleIds.has(clip.id)).sort((left, right) => left.startUs - right.startUs);
     if (subtitles.length !== preview.subtitleIds.length) throw new Error("分镜引用的字幕已经变化，请重新生成");
-    const applied = applyMotionMatches(preview.subtitleIds, preview.matches, { assets: preview.preparedAssets, soundEnabled: request.soundEnabled, musicAssetId: request.musicAssetId, musicSourceInUs: request.musicSourceInUs, musicVolume: request.musicVolume, beatSync: request.beatSync, analysis: request.analysis });
+    const applied = applyMotionMatches(preview.subtitleIds, preview.matches, { assets: preview.preparedAssets, soundEnabled: request.soundEnabled, musicAssetId: request.musicAssetId, musicSourceInUs: request.musicSourceInUs, musicVolume: request.musicVolume, beatSync: request.beatSync, analysis: request.analysis, shotcraftTextMode: request.storyboard.shotcraftTextMode ?? "narration" });
     const lintIssues = lintMotionProject(useEditorStore.getState().project);
     void saveMotionMatchingFeedback(createMotionMatchingFeedbackRecord(useEditorStore.getState().project, subtitles.map((clip) => clip.id), preview.selection)).catch((feedbackError) => console.warn("Failed to save motion matching feedback", feedbackError));
     const warnings = lintIssues.filter((issue) => issue.severity === "warning");
@@ -626,16 +620,20 @@ export default function App() {
         const result = await matchTimelineSounds(settings.aiProvider, {
           topic: project.name,
           timelineDurationSeconds: Math.max(0.1, project.durationUs / 1_000_000),
-          captions: subtitles.map((clip) => ({ startSeconds: clip.startUs / 1_000_000, endSeconds: (clip.startUs + clip.durationUs) / 1_000_000, text: clip.text }))
+          captions: subtitles.map((clip) => ({ startSeconds: clip.startUs / 1_000_000, endSeconds: (clip.startUs + clip.durationUs) / 1_000_000, text: clip.text })),
+          isPro
         }, browserApiKey(), controller.signal, (progress) => setBusyMessage(progress.message));
+        const accessIssue = soundMatchesAccessIssue(result.matches, isVipActive(useLicenseStore.getState().status));
+        if (accessIssue) throw new Error(`${accessIssue}，请重新匹配或升级 Pro`);
         const soundIds = [...new Set(result.matches.flatMap((match) => match.soundEffectId ? [match.soundEffectId] : []))];
         const soundAssets = await Promise.all(soundIds.map(async (soundId) => {
-          const expectedName = `${builtinSoundEffectById(soundId)?.name}.wav`;
-          const existing = useEditorStore.getState().project.assets.find((asset) => asset.id === builtinSoundAssetId(soundId) && !asset.missing && asset.name === expectedName);
-          return existing ?? createBuiltinSoundAsset(soundId, { refresh: true });
+          const existing = useEditorStore.getState().project.assets.find((asset) => asset.id === soundId && !asset.missing);
+          return existing ?? loadShotcraftAudio(soundId, controller.signal);
         }));
         if (controller.signal.aborted) throw new Error("音效匹配已取消");
         if (useEditorStore.getState().project !== project) throw new Error("工程已发生变化，请重新匹配音效");
+        const currentAccessIssue = soundMatchesAccessIssue(result.matches, isVipActive(useLicenseStore.getState().status));
+        if (currentAccessIssue) throw new Error(`${currentAccessIssue}，请重新匹配或升级 Pro`);
         const count = applySoundMatches(subtitles.map((clip) => clip.id), result.matches, soundAssets);
         setNotice(count ? `音效匹配完成：写入 ${count} 个音效` : "本次未添加音效；模型未选择音效，或对应音效片段、轨道已锁定");
         return;
@@ -747,7 +745,7 @@ export default function App() {
       await job.result;
       setNotice(`视频已导出到 ${outputPath}`);
     } catch (error) {
-      setNotice(controller.signal.aborted ? "视频导出已取消" : error instanceof Error ? error.message : String(error || "视频导出失败"));
+      setNotice(controller.signal.aborted ? "视频导出已取消" : normalizeCompositionExportError(error).message);
     } finally {
       compositionExportController.current = null;
       await Promise.allSettled(sequences.map((id) => desktopCompositionFrames.release(id)));

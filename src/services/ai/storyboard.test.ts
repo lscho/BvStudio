@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertStoryboardMatches, assertStoryboardSelection, subtitleShotcraftEligible } from "@/services/ai/storyboard";
+import { assertStoryboardCardCoverage, assertStoryboardMatches, assertStoryboardSelection, subtitleShotcraftEligible } from "@/services/ai/storyboard";
 import { normalizeMotionMatches, type MatchTimelineMotionInput } from "@/services/ai/provider";
 import type { AiMotionMatch, AiMotionSelection } from "@/services/ai/schema";
 
@@ -8,10 +8,40 @@ const selection: AiMotionSelection = { segments: [{ segmentId: "opening", startC
 const match: AiMotionMatch = { captionIndex: 0, motionGroupId: "opening", persistUntilCaptionIndex: 1, primaryEffectId: "shotcraft-blur-slide", primaryText: "生成很快｜改片很慢", secondaryEffectId: null, secondaryText: null, accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 50, secondaryY: 50, cameraPreset: "none", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", videoLayers: [], backdropPreset: "none", chart: null };
 
 describe("字幕与分镜内容关联", () => {
+  it.each(["hook", "data", "comparison", "process", "list", "summary"] as const)("自动混合的 %s 镜头必须选择信息卡", (intent) => {
+    const bare = { segments: [{ ...selection.segments[0], intent }] };
+    expect(() => assertStoryboardCardCoverage(bare, input)).toThrow("必须叠加一张信息卡");
+    const layered = { segments: [{ ...bare.segments[0], secondaryEffectId: "checklist" }] };
+    expect(() => assertStoryboardCardCoverage(layered, input)).not.toThrow();
+    expect(() => assertStoryboardCardCoverage(layered, input, [match])).toThrow("信息卡未生成");
+    expect(() => assertStoryboardCardCoverage(layered, input, [{ ...match, secondaryEffectId: "checklist", secondaryText: "效率对比｜生成很快｜改片很慢" }])).not.toThrow();
+  });
+  it("纯模式、普通底图和纯氛围转场不强制叠卡，但有信息依据的转场仍需信息卡", () => {
+    expect(() => assertStoryboardCardCoverage(selection, { ...input, storyboard: { mode: "b-roll", prompt: "" } })).not.toThrow();
+    expect(() => assertStoryboardCardCoverage({ segments: [{ ...selection.segments[0], primaryEffectId: "background-grid" }] }, input)).not.toThrow();
+    for (const intent of ["ambient", "transition"] as const) {
+      const ambient = { segments: [{ ...selection.segments[0], intent }] };
+      expect(() => assertStoryboardCardCoverage(ambient, input)).not.toThrow();
+      expect(() => assertStoryboardCardCoverage({ segments: [{ ...ambient.segments[0], evidenceKinds: ["comparison"] }] }, input)).toThrow("必须叠加一张信息卡");
+    }
+  });
   it("同一组字幕与全屏镜头可通过验证，保留分行文字", () => {
     expect(() => assertStoryboardSelection(selection, input)).not.toThrow();
     expect(() => assertStoryboardMatches([match], selection, input)).not.toThrow();
     expect(normalizeMotionMatches([match], input.captions, 8)[0].primaryText).toBe(match.primaryText);
+  });
+  it("自动混合允许 Shotcraft 叠加一张字幕事实卡，纯模式仍保持单镜头", () => {
+    const layered = { segments: [{ ...selection.segments[0], secondaryEffectId: "checklist" }] };
+    expect(() => assertStoryboardSelection(layered, input)).not.toThrow();
+    expect(() => assertStoryboardSelection(layered, { ...input, storyboard: { mode: "b-roll", prompt: "" } })).toThrow("自动混合");
+    expect(() => assertStoryboardSelection({ segments: [{ ...selection.segments[0], secondaryEffectId: "background-grid" }] }, input)).toThrow("卡片");
+  });
+  it.each(["punch-pill", "still-image-motion", "shotcraft-glow-orb-ambient"])("自动混合选错辅助卡 %s 时指出实际卡片限制，而非误报模式", (secondaryEffectId) => {
+    const invalid = { segments: [{ ...selection.segments[0], secondaryEffectId }] };
+    expect(() => assertStoryboardSelection(invalid, input, ["checklist", "card-swap"])).toThrow(secondaryEffectId);
+    expect(() => assertStoryboardSelection(invalid, input, ["checklist", "card-swap"])).toThrow("当前已是自动混合");
+    expect(() => assertStoryboardSelection(invalid, input, ["checklist", "card-swap"])).toThrow("checklist、card-swap");
+    expect(() => assertStoryboardSelection(invalid, input)).not.toThrow("只有自动混合");
   });
   it("纯口播拒绝全屏动效和缺少主叙事素材", () => {
     const aRoll = { segments: [{ ...selection.segments[0], roll: "a-roll" as const }] };
@@ -26,6 +56,14 @@ describe("字幕与分镜内容关联", () => {
     expect(() => assertStoryboardMatches([{ ...match, primaryEffectId: null }], selection, input)).toThrow("全屏");
     expect(() => assertStoryboardMatches([{ ...match, materialPlaceholder: true }], selection, input)).toThrow("占位");
     expect(() => assertStoryboardMatches([{ ...match, primaryEffectId: "image-duet-3d" }], selection, input)).toThrow("全屏");
+    expect(() => assertStoryboardMatches([{
+      ...match,
+      primaryEffectId: "still-image-motion",
+      compositionBindings: [{ slotId: "image", assetIds: ["screen"] }]
+    }], selection, { ...input, materials: [{ id: "screen", name: "产品截图.png", kind: "image", durationSeconds: 0 }] })).not.toThrow();
+    const graphicSelection = { segments: [{ ...selection.segments[0], primaryEffectId: "background-grid", secondaryEffectId: "pain-points" }] };
+    expect(() => assertStoryboardSelection(graphicSelection, input)).not.toThrow();
+    expect(() => assertStoryboardMatches([{ ...match, primaryEffectId: "background-grid" }], graphicSelection, input)).not.toThrow();
   });
   it("B-roll 不调用口播运镜，不能借旧字段插入人物", () => {
     expect(() => assertStoryboardMatches([{ ...match, cameraPreset: "push-in" }], selection, input)).toThrow("原口播");

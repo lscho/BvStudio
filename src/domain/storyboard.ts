@@ -1,9 +1,11 @@
+import { compositionSlots } from "@/domain/compositions";
 import { compositionById } from "@/domain/effects";
 import { motionMatchingProfile } from "@/domain/motionMatching";
 import type { EditorProject } from "@/domain/project";
+import { isShotcraftComposition, type ShotcraftTextMode } from "@/domain/shotcraft";
 
 export type StoryboardRole = "a-roll" | "b-roll";
-export interface StoryboardOptions { mode: "auto" | StoryboardRole; prompt: string }
+export interface StoryboardOptions { mode: "auto" | StoryboardRole; prompt: string; shotcraftTextMode?: ShotcraftTextMode }
 export interface StoryboardCue { startSeconds: number; endSeconds: number; role: StoryboardRole }
 export interface StoryboardVisual { assetId?: string; startSeconds: number; endSeconds: number; role: string; description: string }
 
@@ -39,4 +41,20 @@ export function storyboardRoleAt(caption: { startSeconds: number; endSeconds: nu
 export function storyboardEffectAllowed(effectId: string, role: StoryboardRole) {
   const profile = motionMatchingProfile(compositionById(effectId));
   return role === "a-roll" ? profile.usage !== "fullscreen" && !profile.exclusive : profile.usage !== "talking-head";
+}
+
+export function storyboardShotcraftCardAllowed(primaryEffectId: string, secondaryEffectId: string) {
+  return isShotcraftComposition(primaryEffectId) && !storyboardInformationCardIssue(secondaryEffectId);
+}
+
+export function storyboardInformationCardIssue(effectId: string): string | undefined {
+  if (isShotcraftComposition(effectId)) return "另一个 Shotcraft 全屏镜头不能作为辅助信息卡";
+  const definition = compositionById(effectId);
+  const profile = motionMatchingProfile(definition);
+  if (compositionSlots(effectId).length > 0) return "该动效需要绑定素材，不能作为无素材信息卡";
+  if (definition.recipe.sceneBackground || profile.layerRole === "background") return "背景动效不能充当信息卡";
+  if (!["卡片", "数据", "布局"].includes(definition.category)) return `该动效属于“${definition.category}”，信息卡只接受卡片、数据或布局分类`;
+  if (profile.usage !== "both") return `该动效适用范围为 ${profile.usage}，叠加卡必须同时适用于口播和全屏（both）`;
+  if (profile.exclusive || profile.layerRole !== "content") return "该动效不是可叠加的非独占内容层";
+  return undefined;
 }

@@ -1,6 +1,6 @@
 import type { RenderPlan, RenderTextOverlay } from "@/services/media";
 import { localMediaUrl } from "@/services/media";
-import { desktopCompositionFrames, type CompositionFrameSink } from "@/services/compositionFrames";
+import { createCompositionFrameAppender, desktopCompositionFrames, type CompositionFrameSink } from "@/services/compositionFrames";
 import { visualTransformAt } from "@/domain/transforms";
 
 export interface CompositionExportOptions {
@@ -18,6 +18,7 @@ export async function streamCompositionFrames(overlay: RenderTextOverlay, plan: 
   try {
     const id = await sink.begin();
     options.sequences.push(id);
+    const appender = createCompositionFrameAppender(sink, id);
     const fps = Math.max(1, Math.min(120, plan.fps));
     const total = Math.ceil(overlay.durationUs / 1_000_000 * fps);
     const canvas = document.createElement("canvas");
@@ -43,11 +44,12 @@ export async function streamCompositionFrames(overlay: RenderTextOverlay, plan: 
       context.drawImage(renderer.canvas, -plan.width / 2, -plan.height / 2);
       context.restore();
       const data = canvas.toDataURL("image/png").split(",")[1];
-      await sink.append(id, index, data);
+      await appender.append(index, data);
       options.onProgress?.(index + 1, total);
     }
+    await appender.flush();
     // Scene transforms are baked into the full-frame PNGs; FFmpeg must not apply them again.
-    return { ...overlay, sequenceId: id, sequenceFps: fps, compositionImages: undefined, x: 50, y: 50, scale: 1, rotation: 0, transformKeyframes: undefined, opacity: 1, speed: 1 };
+    return { ...overlay, sequenceId: id, sequenceFrameCount: total, sequenceFps: fps, compositionImages: undefined, x: 50, y: 50, scale: 1, rotation: 0, transformKeyframes: undefined, opacity: 1, speed: 1 };
   } finally {
     renderer.dispose();
   }

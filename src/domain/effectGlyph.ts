@@ -48,6 +48,7 @@ const effectIdGlyphs: Readonly<Record<string, EffectGlyphKey>> = {
   "slide-gallery": "ui-carousel",
   "card-stack": "ui-stack",
   "split-reveal": "transition-wipe",
+  "still-image-motion": "background-photo",
   "background-stripes": "background-texture",
   "background-grid": "background-texture",
   "background-dots": "background-texture",

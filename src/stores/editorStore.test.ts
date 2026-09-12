@@ -8,7 +8,6 @@ import { normalizeMotionMatches } from "@/services/ai/provider";
 import { useEditorStore } from "@/stores/editorStore";
 import { buildRenderPlan } from "@/domain/renderPlan";
 import { lintMotionProject } from "@/domain/motionLint";
-import { builtinSoundAssetId } from "@/domain/soundEffects";
 
 const plan: AiVideoPlan = {
   title: "插入介绍",
@@ -84,18 +83,104 @@ describe("editorStore", () => {
     useEditorStore.getState().undo();expect(useEditorStore.getState().project).toEqual(before);
     useEditorStore.getState().redo();expect(useEditorStore.getState().project).toEqual(after);
   });
+  it("整套编排把 Shotcraft 文案策略写入镜头参数", () => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 5_000_000 });
+    useEditorStore.getState().addSubtitles("voice", [{ startSeconds: 0, endSeconds: 5, text: "保留正常口播字幕。" }]);
+    const subtitle = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [{
+      ...motionMatch, primaryEffectId: "shotcraft-blur-slide", primaryText: "镜头标题", cameraPreset: "none"
+    }], { assets: [], soundEnabled: false, musicSourceInUs: 0, musicVolume: 0, beatSync: false, shotcraftTextMode: "narration" });
+
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({
+      compositionId: "shotcraft-blur-slide",
+      params: { shotcraftTextMode: "narration" }
+    });
+  });
+  it("自动混合编排把信息卡叠在 Shotcraft 镜头之上", () => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 6_000_000, sourcePath: "/voice.mp4" });
+    useEditorStore.getState().addSubtitles("voice", [
+      { startSeconds: 0, endSeconds: 3, text: "先分析字幕，再提取事实。" },
+      { startSeconds: 3, endSeconds: 6, text: "最后生成卡片。" }
+    ]);
+    const subtitles = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips;
+    const before = useEditorStore.getState().project;
+
+    useEditorStore.getState().applyMotionMatches(subtitles.map((subtitle) => subtitle.id), [{
+      ...motionMatch,
+      motionGroupId: "information-scene",
+      persistUntilCaptionIndex: 1,
+      primaryEffectId: "shotcraft-blur-slide",
+      primaryText: "字幕驱动画面",
+      secondaryEffectId: "checklist",
+      secondaryText: "处理流程｜分析字幕｜提取事实｜生成卡片",
+      secondaryTimingCaptionIndices: [0],
+      cameraPreset: "none"
+    }], { assets: [], soundEnabled: false, musicSourceInUs: 0, musicVolume: 0, beatSync: false, shotcraftTextMode: "promo" });
+
+    const clips = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips as CompositionClip[];
+    const shotcraft = clips.find((clip) => clip.compositionId === "shotcraft-blur-slide")!;
+    const card = clips.find((clip) => clip.compositionId === "checklist")!;
+    expect(clips).toHaveLength(2);
+    expect(card.startUs).toBe(shotcraft.startUs);
+    expect(card.durationUs).toBe(shotcraft.durationUs);
+    expect(card.zIndex).toBeGreaterThan(shotcraft.zIndex ?? 0);
+    expect(card.durationUs).toBe(6_000_000);
+    expect(shotcraft.sceneGroupId).toMatch(/^ai-motion:/u);
+    expect(card.sceneGroupId).toBe(shotcraft.sceneGroupId);
+    expect(lintMotionProject(useEditorStore.getState().project).filter((issue) => issue.severity === "error")).toEqual([]);
+    expect(card.params?.stepMs).toBe(1_800);
+    const overlays = buildRenderPlan(useEditorStore.getState().project, "/out.mp4").overlays;
+    for (const clip of [shotcraft, card]) {
+      expect(overlays.find((overlay) => (overlay.kind === "composition" || overlay.kind === "text") && overlay.compositionId === clip.compositionId)).toMatchObject({
+        startUs: clip.startUs, durationUs: clip.durationUs, params: clip.params
+      });
+    }
+    const after = useEditorStore.getState().project;
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project).toEqual(before);
+    useEditorStore.getState().redo();
+    expect(useEditorStore.getState().project).toEqual(after);
+  });
+  it("AI 多素材动效完整覆盖字幕语义段而不截断到十秒", () => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 12_000_000 });
+    useEditorStore.getState().addImage({ id: "image-a", name: "图 A", kind: "image", durationUs: 0 });
+    useEditorStore.getState().addImage({ id: "image-b", name: "图 B", kind: "image", durationUs: 0 });
+    useEditorStore.getState().addSubtitles("voice", [
+      { startSeconds: 0, endSeconds: 6, text: "先展示第一部分。" },
+      { startSeconds: 6, endSeconds: 12, text: "再展示第二部分。" }
+    ]);
+    const subtitles = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips;
+
+    useEditorStore.getState().applyMotionMatches(subtitles.map((subtitle) => subtitle.id), [{
+      ...motionMatch,
+      primaryEffectId: "slide-gallery",
+      primaryText: "",
+      cameraPreset: "none",
+      motionGroupId: "gallery-scene",
+      persistUntilCaptionIndex: 1,
+      compositionBindings: [{ slotId: "media", assetIds: ["image-a", "image-b"] }]
+    }]);
+
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips[0]).toMatchObject({
+      compositionId: "slide-gallery",
+      startUs: 0,
+      durationUs: 12_000_000,
+      animationDurationUs: 12_000_000
+    });
+  });
   it("一次提交应用动效、卡点音效和背景音乐，并可整体撤销", () => {
     useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 5_000_000 });
     useEditorStore.getState().addSubtitles("voice", [{ startSeconds: 0, endSeconds: 5, text: "统一编排内容" }]);
     const prepared = structuredClone(useEditorStore.getState().project);
     const subtitle = prepared.tracks.find((track) => track.kind === "subtitle")!.clips[0];
     const music = { id: "music", name: "背景音乐", kind: "audio" as const, durationUs: 10_000_000, missing: false };
-    const sound = { id: builtinSoundAssetId("soft-whoosh"), name: "丝滑转场.wav", kind: "audio" as const, durationUs: 680_000, missing: false };
+    const sound = { id: "shotcraft-audio:sfx-camera-camera-lens-shutter", name: "相机 · camera-lens-shutter", kind: "audio" as const, durationUs: 1_462_857, missing: false };
     prepared.assets.push(music, sound);
     useEditorStore.setState({ project: prepared, past: [], future: [] });
     const before = structuredClone(prepared);
     const analysis = { version: 1 as const, durationUs: music.durationUs, bpm: 120, phaseUs: 100_000, reliableGrid: true, candidates: [], beatsUs: [100_000, 600_000, 1_100_000], hits: [], energy: [] };
-    const summary = useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, soundEffectId: "soft-whoosh" }], { assets: [music, sound], soundEnabled: true, musicAssetId: music.id, musicSourceInUs: 0, musicVolume: 0.2, beatSync: true, analysis });
+    const summary = useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, soundEffectId: sound.id }], { assets: [music, sound], soundEnabled: true, musicAssetId: music.id, musicSourceInUs: 0, musicVolume: 0.2, beatSync: true, analysis });
     const after = useEditorStore.getState().project;
     expect(summary).toMatchObject({ effectCount: 1, soundCount: 1, musicCount: 1 });
     expect(after.tracks.find((track) => track.audioRole === "sound")?.clips[0]).toMatchObject({ startUs: 100_000, sourceSubtitleId: subtitle.id });
@@ -107,6 +192,27 @@ describe("editorStore", () => {
     useEditorStore.getState().applyMotionMatches([subtitle.id], [motionMatch], { assets: [], soundEnabled: false, musicSourceInUs: 0, musicVolume: 0, beatSync: false });
     expect(useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")?.clips).toHaveLength(0);
     expect(useEditorStore.getState().project.tracks.find((track) => track.audioRole === "music")?.clips).toHaveLength(0);
+  });
+  it("整套重编排移除未锁定的旧 AI 尾部片段并保留锁定片段", () => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 6_000_000 });
+    useEditorStore.getState().addSubtitles("voice", [{ startSeconds: 0, endSeconds: 6, text: "整段字幕内容。" }]);
+    useEditorStore.getState().addComposition("background-dots");
+    const prepared = structuredClone(useEditorStore.getState().project);
+    const effectTrack = prepared.tracks.find((track) => track.kind === "composition")!;
+    const stale = effectTrack.clips[0] as CompositionClip;
+    Object.assign(stale, { id: "stale-ai-tail", label: "AI 动效 · 点阵律动", startUs: 50_000_000, durationUs: 10_000_000, sourceSubtitleId: undefined });
+    effectTrack.clips.push({ ...structuredClone(stale), id: "locked-ai-tail", locked: true });
+    useEditorStore.setState({ project: prepared, past: [], future: [] });
+    const subtitle = prepared.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [{
+      ...motionMatch, primaryEffectId: "background-dots", primaryText: "", cameraPreset: "none"
+    }], { assets: [], soundEnabled: false, musicSourceInUs: 0, musicVolume: 0, beatSync: false });
+
+    const effects = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips;
+    expect(effects.some((clip) => clip.id === "stale-ai-tail")).toBe(false);
+    expect(effects.some((clip) => clip.id === "locked-ai-tail")).toBe(true);
+    expect(effects.find((clip) => clip.id !== "locked-ai-tail")).toMatchObject({ startUs: 0, durationUs: 6_000_000 });
   });
   it("把 Shotcraft 音效放到镜头内部动作锚点并关联来源字幕", () => {
     useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 4_000_000 });
@@ -610,6 +716,24 @@ describe("editorStore", () => {
     expect(clips[1]).toMatchObject({ startUs: 3_000_000, durationUs: 5_000_000, sourceInUs: 3_000_000 });
   });
 
+  it("truncates added background music at the existing content end", () => {
+    useEditorStore.getState().addVideo({ id: "short-video", name: "short.mp4", kind: "video", sourcePath: "/video/short.mp4", durationUs: 4_000_000 });
+    useEditorStore.getState().setPlayhead(1_000_000);
+    useEditorStore.getState().addAudio({ id: "long-music", name: "long.mp3", kind: "audio", sourcePath: "/music/long.mp3", durationUs: 30_000_000, hasAudio: true }, "music");
+
+    const music = useEditorStore.getState().project.tracks.find((track) => track.audioRole === "music")!.clips[0] as AudioClip;
+    expect(music).toMatchObject({ startUs: 1_000_000, durationUs: 3_000_000, sourceInUs: 0, role: "music" });
+    expect(buildRenderPlan(useEditorStore.getState().project, "/out.mp4").audios[0]).toMatchObject({ startUs: 1_000_000, durationUs: 3_000_000 });
+    expect(useEditorStore.getState().project.durationUs).toBe(30_000_000);
+  });
+
+  it("keeps the full music duration when no other timeline content exists", () => {
+    useEditorStore.getState().addAudio({ id: "music-only", name: "music.mp3", kind: "audio", durationUs: 12_000_000, hasAudio: true }, "music");
+
+    const music = useEditorStore.getState().project.tracks.find((track) => track.audioRole === "music")!.clips[0] as AudioClip;
+    expect(music.durationUs).toBe(12_000_000);
+  });
+
   it("aligns extracted audio with every source-video edit and mutes duplicate source audio", () => {
     useEditorStore.getState().addVideo({ id: "source-video", name: "source.mp4", kind: "video", durationUs: 10_000_000, hasAudio: true });
     const video = useEditorStore.getState().project.tracks.find((track) => track.kind === "video")!.clips[0] as VideoClip;
@@ -833,23 +957,23 @@ describe("editorStore", () => {
     useEditorStore.getState().addVideo({ id: "asr-video", name: "speech.mp4", kind: "video", durationUs: 4_000_000, hasAudio: true });
     useEditorStore.getState().addSubtitles("asr-video", [{ startSeconds: 1, endSeconds: 4, text: "点击按钮完成操作。" }]);
     const subtitle = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
-    const clickAsset = { id: "builtin-sound:clean-click", name: "字幕弹出.wav", kind: "audio" as const, durationUs: 220_000, sourcePath: "/cache/click.wav", objectUrl: "asset://click", hasAudio: true, missing: false };
-    const summary = useEditorStore.getState().applySoundMatches([subtitle.id], [{ captionIndex: 0, soundEffectId: "clean-click" }], [clickAsset]);
+    const clickAsset = { id: "shotcraft-audio:sfx-camera-camera-lens-shutter", name: "相机 · camera-lens-shutter", kind: "audio" as const, durationUs: 1_462_857, sourcePath: "/cache/click.mp3", objectUrl: "asset://click", hasAudio: true, missing: false };
+    const summary = useEditorStore.getState().applySoundMatches([subtitle.id], [{ captionIndex: 0, soundEffectId: clickAsset.id }], [clickAsset]);
 
     expect(summary).toBe(1);
 
     let soundTrack = useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")!;
     expect(soundTrack.clips).toEqual([expect.objectContaining({
-      kind: "audio", label: "AI 音效 · 字幕弹出", startUs: 1_000_000, durationUs: 220_000,
-      assetId: clickAsset.id, role: "sound", sourceSubtitleId: subtitle.id
+      kind: "audio", label: `AI 音效 · ${clickAsset.name}`, startUs: 1_000_000, durationUs: 369_433,
+      sourceInUs: 0, assetId: clickAsset.id, role: "sound", sourceSubtitleId: subtitle.id
     })]);
     expect(useEditorStore.getState().project.assets).toContainEqual(expect.objectContaining({ id: clickAsset.id }));
 
-    const successAsset = { ...clickAsset, id: "builtin-sound:success-tone", name: "片尾收束.wav", durationUs: 1_050_000, sourcePath: "/cache/success.wav" };
-    useEditorStore.getState().applySoundMatches([subtitle.id], [{ captionIndex: 0, soundEffectId: "success-tone" }], [successAsset]);
+    const successAsset = { ...clickAsset, id: "shotcraft-audio:sfx-camera-camera-shutter-hard", name: "相机 · camera-shutter-hard", durationUs: 679_184, sourcePath: "/cache/shutter.mp3" };
+    useEditorStore.getState().applySoundMatches([subtitle.id], [{ captionIndex: 0, soundEffectId: successAsset.id }], [successAsset]);
     soundTrack = useEditorStore.getState().project.tracks.find((track) => track.audioRole === "sound")!;
     expect(soundTrack.clips).toHaveLength(1);
-    expect(soundTrack.clips[0]).toMatchObject({ label: "AI 音效 · 片尾收束", assetId: successAsset.id });
+    expect(soundTrack.clips[0]).toMatchObject({ label: `AI 音效 · ${successAsset.name}`, assetId: successAsset.id });
 
     useEditorStore.getState().setTrackState(soundTrack.id, { locked: true });
     useEditorStore.getState().applySoundMatches([subtitle.id], [{ captionIndex: 0, soundEffectId: null }]);

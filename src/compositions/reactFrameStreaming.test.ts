@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { toPng } from "html-to-image";
-import { rasterizeCompositions } from "@/compositions/exportRenderer";
+import { normalizeCompositionExportError, rasterizeCompositions } from "@/compositions/exportRenderer";
 import { buildRenderPlan } from "@/domain/renderPlan";
 import { createEmptyProject } from "@/domain/project";
 import type { RenderTextOverlay } from "@/services/media";
@@ -37,18 +37,26 @@ describe("React frame streaming", () => {
     expect(result.overlays[0]).toMatchObject({ sequenceId: "react-sequence", sequenceFps: 30, speed: 1 });
     expect(result.overlays[0]).not.toHaveProperty("sequenceFramesBase64");
     expect(document.querySelector(".effect-overlay")).toBeNull();
+    expect(window.requestAnimationFrame).toHaveBeenCalledTimes(vi.mocked(toPng).mock.calls.length);
   });
 
-  it("writes the full native frame count while reusing the final static image of a short entrance", async () => {
+  it("writes only the changing frames and lets native export extend the final image", async () => {
     const { plan, sink } = setup();
     plan.overlays[0] = { ...plan.overlays[0], compositionId: "test-title-slide", durationUs: 2_000_000, speed: 1,
       recipe: { ...plan.overlays[0].recipe, entrance: "fade-up" } };
     vi.mocked(toPng).mockClear();
-    await rasterizeCompositions(plan, { sink, sequences: [] });
-    expect(sink.append).toHaveBeenCalledTimes(60);
-    expect(sink.append).toHaveBeenLastCalledWith("react-sequence", 59, "frame");
-    expect(vi.mocked(toPng).mock.calls.length).toBeLessThan(60);
-    expect(vi.mocked(toPng).mock.calls.length).toBeGreaterThan(1);
+    const result = await rasterizeCompositions(plan, { sink, sequences: [] });
+    expect(sink.append).toHaveBeenCalledTimes(15);
+    expect(sink.append).toHaveBeenLastCalledWith("react-sequence", 14, "frame");
+    expect(vi.mocked(toPng)).toHaveBeenCalledTimes(15);
+    expect(result.overlays[0]).toMatchObject({ sequenceFrameCount: 15 });
+  });
+
+  it("turns raw browser media events into an actionable export error", () => {
+    expect(normalizeCompositionExportError(new Event("error")).message).toBe("动效中的图片或视频无法加载，请检查素材是否丢失或格式不受支持");
+    const original = new Error("disk full");
+    expect(normalizeCompositionExportError(original)).toBe(original);
+    expect(normalizeCompositionExportError("无法写入导出文件").message).toBe("无法写入导出文件");
   });
 
   it.each(["cancel", "disk"])("cleans the DOM and retains the sequence for caller cleanup on %s", async (mode) => {

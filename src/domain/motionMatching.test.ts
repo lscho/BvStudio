@@ -159,7 +159,7 @@ describe("motion matching catalog", () => {
     const shotcraft = BUILTIN_EFFECTS.filter((effect) => effect.id.startsWith("shotcraft-"));
     expect(shotcraft).toHaveLength(216);
     expect(shotcraft.every((effect) => motionUsage(effect) === "fullscreen")).toBe(true);
-    for (const id of ["poster-wall-3d", "image-duet-3d", "motion-zoom", "slide-gallery", "card-stack", "split-reveal"]) {
+    for (const id of ["poster-wall-3d", "image-duet-3d", "motion-zoom", "slide-gallery", "card-stack", "split-reveal", "still-image-motion"]) {
       expect(motionUsage(effectById(id))).toBe("fullscreen");
     }
   });
@@ -201,7 +201,7 @@ describe("motion matching catalog", () => {
   it("splits the builtin catalog into talking-head, fullscreen, and both", () => {
     const counts: Record<string, number> = { "talking-head": 0, fullscreen: 0, both: 0 };
     for (const effect of BUILTIN_EFFECTS) counts[motionUsage(effect)] += 1;
-    expect(counts).toEqual({ "talking-head": 42, fullscreen: 235, both: 51 });
+    expect(counts).toEqual({ "talking-head": 42, fullscreen: 236, both: 51 });
   });
 });
 

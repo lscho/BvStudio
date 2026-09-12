@@ -135,6 +135,7 @@ describe("AssetPanel video audio actions", () => {
     expect(annotationGroup).not.toHaveTextContent("玻璃底幕");
     expect(displayGroup).toHaveTextContent("截图实证");
     expect(displayGroup).toHaveTextContent("录屏演示运镜");
+    expect(displayGroup).toHaveTextContent("静态图运镜");
     expect(displayGroup).not.toHaveTextContent("3D 海报墙");
     expect(displayGroup).not.toHaveTextContent("双图展示");
     const premiumGroup = screen.getByText("高级", { selector: "summary span" }).closest("details");

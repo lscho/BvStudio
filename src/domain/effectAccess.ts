@@ -5,6 +5,11 @@ import type { CompositionDefinition, EffectCategory } from "@/domain/effects";
 /** 每个常规分类免费开放的动效数量；该分类第 11 个起需要 Pro。 */
 export const FREE_EFFECTS_PER_CATEGORY = 10;
 
+/** 生成基础能力依赖的核心动效始终免费，不占用分类免费额度。 */
+export const CORE_FREE_EFFECT_IDS = ["still-image-motion"] as const;
+
+const coreFreeEffectIdSet = new Set<string>(CORE_FREE_EFFECT_IDS);
+
 /** 高级分类默认全部需要 Pro。 */
 export const PREMIUM_EFFECT_CATEGORY: EffectCategory = "高级";
 
@@ -24,6 +29,10 @@ export function effectTierMap(library: readonly CompositionDefinition[]): Readon
   const tiers = new Map<string, EffectTier>();
   const seenPerCategory = new Map<EffectCategory, number>();
   for (const effect of library) {
+    if (coreFreeEffectIdSet.has(effect.id)) {
+      tiers.set(effect.id, "free");
+      continue;
+    }
     if (effect.category === PREMIUM_EFFECT_CATEGORY) {
       tiers.set(effect.id, "pro");
       continue;

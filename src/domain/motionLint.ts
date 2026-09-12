@@ -3,6 +3,7 @@ import { compositionBindingIssues } from "@/domain/compositions";
 import { motionMatchingProfile, referenceMotionMatchingPolicy } from "@/domain/motionMatching";
 import type { EditorProject, CompositionClip, SceneClip, TimelineClip } from "@/domain/project";
 import { isReferenceStageComposition } from "@/domain/overlayStudioReference";
+import { storyboardShotcraftCardAllowed } from "@/domain/storyboard";
 
 export interface MotionLintIssue {
   ruleId: string;
@@ -84,7 +85,14 @@ export function lintMotionProject(project: EditorProject): MotionLintIssue[] {
         break;
       }
     }
-    if (aiGeneratedGroup) {
+    // The persisted timeline has no storyboard mode; recognize the same allowed base/card pair by its clips.
+    const shotcraftCardPair = contentClips.length === 2 && contentClips.some((base, index) => {
+      const card = contentClips[1 - index];
+      return storyboardShotcraftCardAllowed(base.compositionId, card.compositionId)
+        && base.startUs <= card.startUs
+        && base.startUs + base.durationUs >= card.startUs + card.durationUs;
+    });
+    if (aiGeneratedGroup && !shotcraftCardPair) {
       for (let index = 1; index < contentClips.length; index += 1) {
         if (contentClips[index].startUs - contentClips[index - 1].startUs < referenceMotionMatchingPolicy.minContentEntryStaggerSeconds * 1_000_000) {
           issue(issues, contentClips[index], "entry-stagger", "error", `场景组“${contentClips[index].label}”的内容动效进场间隔不足 ${referenceMotionMatchingPolicy.minContentEntryStaggerSeconds} 秒`);

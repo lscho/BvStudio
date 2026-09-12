@@ -38,9 +38,9 @@ describe("retrieveEffects", () => {
   });
 
   it("exposes the migrated effects and first-round Shotcraft shots as built-ins", () => {
-    expect(BUILTIN_EFFECTS).toHaveLength(328);
+    expect(BUILTIN_EFFECTS).toHaveLength(329);
     expect(new Set(BUILTIN_EFFECTS.map((effect) => effect.id)).size).toBe(BUILTIN_EFFECTS.length);
-    expect(new Set(BUILTIN_EFFECTS.map((effect) => effect.id))).toEqual(new Set([...SHOTCRAFT_SHOTS.map((shot) => shot.id), ...OVERLAY_STUDIO_EFFECT_IDS, "poster-wall-3d", "image-duet-3d", "motion-zoom", "slide-gallery", "card-stack", "split-reveal", "background-stripes", "background-grid", "background-dots", "background-contours"]));
+    expect(new Set(BUILTIN_EFFECTS.map((effect) => effect.id))).toEqual(new Set([...SHOTCRAFT_SHOTS.map((shot) => shot.id), ...OVERLAY_STUDIO_EFFECT_IDS, "poster-wall-3d", "image-duet-3d", "motion-zoom", "slide-gallery", "card-stack", "split-reveal", "still-image-motion", "background-stripes", "background-grid", "background-dots", "background-contours"]));
     expect(BUILTIN_EFFECTS.every((effect) => !effect.kind && !effect.recipe.sceneBackground)).toBe(true);
   });
 

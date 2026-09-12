@@ -12,6 +12,38 @@ function effect(id: string, startUs = 0): CompositionClip {
 }
 
 describe("motion lint", () => {
+  it.each([
+    ["checklist", 0], ["checklist", 400_000], ["card-swap", 0], ["card-swap", 400_000]
+  ] as const)("allows %s over a covering Shotcraft base with %s us entry offset", (cardId, offsetUs) => {
+    const project = createEmptyProject();
+    const group = "ai-motion:shotcraft:caption";
+    project.tracks.find((track) => track.kind === "composition")!.clips.push(
+      { ...effect("base"), compositionId: "shotcraft-glow-orb-ambient", durationUs: 6_000_000, sceneGroupId: group },
+      { ...effect("card", offsetUs), compositionId: cardId, durationUs: 6_000_000 - offsetUs, sceneGroupId: group }
+    );
+    expect(lintMotionProject(project).filter((item) => item.severity === "error")).toEqual([]);
+  });
+  it("still checks entry staggering for a Shotcraft paired with an ineligible effect", () => {
+    const project = createEmptyProject();
+    project.tracks.find((track) => track.kind === "composition")!.clips.push(
+      { ...effect("base"), compositionId: "shotcraft-glow-orb-ambient", sceneGroupId: "ai-motion:group" },
+      { ...effect("exclusive"), compositionId: "shotcraft-glow-orb-ambient", sceneGroupId: "ai-motion:group" }
+    );
+    expect(lintMotionProject(project).some((item) => item.ruleId === "entry-stagger")).toBe(true);
+  });
+  it("does not exempt a third content layer or a card outside its Shotcraft base", () => {
+    const project = createEmptyProject();
+    const clips = project.tracks.find((track) => track.kind === "composition")!.clips;
+    clips.push(
+      { ...effect("base"), compositionId: "shotcraft-glow-orb-ambient", sceneGroupId: "ai-motion:group" },
+      { ...effect("card"), compositionId: "checklist", sceneGroupId: "ai-motion:group", durationUs: 3_000_000 }
+    );
+    expect(lintMotionProject(project).some((item) => item.ruleId === "entry-stagger")).toBe(true);
+    clips[1].durationUs = 2_000_000;
+    clips.push({ ...effect("extra"), sceneGroupId: "ai-motion:group" });
+    expect(lintMotionProject(project).some((item) => item.ruleId === "too-many-layers")).toBe(true);
+    expect(lintMotionProject(project).some((item) => item.ruleId === "entry-stagger")).toBe(true);
+  });
   it("does not count migrated scene backgrounds as foreground group layers", () => {
     const project = createEmptyProject();
     project.tracks.find(t => t.kind === "composition")!.clips.push(

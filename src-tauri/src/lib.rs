@@ -49,6 +49,7 @@ pub fn run() {
             media::export_render_plan,
             composition_frames::begin_composition_frames,
             composition_frames::append_composition_frame,
+            composition_frames::append_composition_frames,
             composition_frames::release_composition_frames,
             media::cancel_export_job,
             media::save_project_file,

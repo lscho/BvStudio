@@ -18,6 +18,7 @@ export const SHOTCRAFT_NATIVE_SHOTS = [
 
 export const SHOTCRAFT_SHOTS = [...SHOTCRAFT_NATIVE_SHOTS, ...SHOTCRAFT_LIBRARY];
 export type ShotcraftId = `shotcraft-${string}`;
+export type ShotcraftTextMode = "narration" | "promo";
 export const SHOTCRAFT_TRANSITIONS = [
   { value: "none", label: "直接切换" }, { value: "flash-cut", label: "流白" }, { value: "push-up", label: "整屏上推" },
   ...LIBRARY_TRANSITIONS.map((item) => ({ value: item.id, label: libraryShot(item.id)!.name }))
@@ -45,6 +46,20 @@ export interface ShotcraftRenderData { clip: CompositionClip; previous?: Composi
 
 export function shotcraftShot(id: string) { return SHOTCRAFT_SHOTS.find((shot) => shot.id === id); }
 export function isShotcraftComposition(id: string): id is ShotcraftId { return Boolean(shotcraftShot(id)); }
+
+export function shotcraftTextMode(clip: Pick<CompositionClip, "params">): ShotcraftTextMode | undefined {
+  const value = clip.params?.shotcraftTextMode;
+  return value === "narration" || value === "promo" ? value : undefined;
+}
+
+export function shotcraftHasDesignedText(id: string) {
+  return ["shotcraft-blur-slide", "shotcraft-before-after", "shotcraft-basic-3d"].includes(id)
+    || Boolean(libraryShot(id)?.texts.length);
+}
+
+export function shotcraftOwnsSubtitle(clip: Pick<CompositionClip, "params">) {
+  return shotcraftTextMode(clip) === "promo";
+}
 
 export function defaultShotcraftSettings(id: string): ShotcraftSettings {
   const regions = ["shotcraft-spotlight-hero-card", "shotcraft-crash-impact-real", "shotcraft-crash-zoom-real"].includes(id)

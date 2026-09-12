@@ -1,6 +1,6 @@
 import { isShotcraftComposition } from "@/domain/shotcraft";
 import { preloadLibraryShot } from "@/compositions/shotcraftLibrary/adapter";
-import { desktopCompositionFrames } from "@/services/compositionFrames";
+import { createCompositionFrameAppender, desktopCompositionFrames } from "@/services/compositionFrames";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { toPng } from "html-to-image";
@@ -26,13 +26,27 @@ const neutralRecipe = {
 };
 
 function nextPaint() {
-  return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 function dataUrlPayload(value: string) {
   const comma = value.indexOf(",");
   if (comma < 0) throw new Error("React 动效帧编码失败");
   return value.slice(comma + 1);
+}
+
+export function normalizeCompositionExportError(error: unknown) {
+  if (error instanceof Error) return error;
+  if (typeof Event !== "undefined" && error instanceof Event) return new Error("动效中的图片或视频无法加载，请检查素材是否丢失或格式不受支持");
+  if (typeof error === "string" && error.trim()) return new Error(error);
+  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" && error.message.trim()) return new Error(error.message);
+  return new Error("动效帧生成失败，请检查动效素材后重试");
+}
+
+function generatedFrameCount(overlayDurationUs: number, motionDurationUs: number, fps: number) {
+  const fullFrameCount = Math.max(1, Math.ceil(overlayDurationUs / 1_000_000 * fps));
+  if (motionDurationUs >= overlayDurationUs) return fullFrameCount;
+  return Math.min(fullFrameCount, Math.max(1, Math.ceil(motionDurationUs / 1_000_000 * fps) + 1));
 }
 
 export function configureReactOverlayHost(host: HTMLDivElement, width: number, height: number) {
@@ -161,25 +175,27 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
       return { ...overlay, shotcraftData: undefined, speed: 1, compositionImages: undefined, compositionBindings: undefined, imageDataBase64: await renderAt(overlay.durationUs), recipe: neutralRecipe, x: 50, y: 50, scale: 1, rotation: 0, opacity: 1, transformKeyframes: undefined };
     }
     const fps = Math.max(1, Math.min(120, plan.fps));
-    const frameCount = Math.max(1, Math.ceil(overlay.durationUs / 1_000_000 * fps));
+    const frameCount = generatedFrameCount(overlay.durationUs, durationUs, fps);
     const sink = options.sink ?? desktopCompositionFrames;
     signal?.throwIfAborted();
     const sequenceId = await sink.begin();
     options.sequences.push(sequenceId);
-    let finalFrame: string | undefined;
+    const appender = createCompositionFrameAppender(sink, sequenceId);
     for (let index = 0; index < frameCount; index += 1) {
       signal?.throwIfAborted();
-      const localUs = Math.round(index / fps * 1_000_000);
-      // The native sink validates a complete clip. Only one settled PNG stays in memory.
-      if (localUs >= durationUs && finalFrame === undefined) finalFrame = await renderAt(durationUs);
-      const data = finalFrame ?? await renderAt(localUs);
+      const localUs = durationUs < overlay.durationUs && index === frameCount - 1
+        ? durationUs
+        : Math.round(index / fps * 1_000_000);
+      const data = await renderAt(localUs);
       signal?.throwIfAborted();
-      await sink.append(sequenceId, index, data);
+      await appender.append(index, data);
       options.onProgress?.(index + 1, frameCount);
     }
+    await appender.flush();
     return {
       ...overlay,
       sequenceId,
+      sequenceFrameCount: frameCount,
       shotcraftData: undefined,
       speed: 1,
       sequenceFps: fps,
@@ -194,6 +210,8 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
       opacity: 1,
       transformKeyframes: undefined
     };
+  } catch (error) {
+    throw normalizeCompositionExportError(error);
   } finally {
     root.unmount();
     host.remove();
@@ -201,12 +219,16 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
 }
 
 export async function rasterizeCompositions(plan: RenderPlan, options: CompositionExportOptions = { sequences: [] }): Promise<RenderPlan> {
-  const overlays = [];
-  for (const overlay of plan.overlays) {
-    options.signal?.throwIfAborted();
-    if ((overlay.kind === "text" || overlay.kind === "composition") && (overlay.renderer === "three" || overlay.renderer === "canvas")) overlays.push(await streamCompositionFrames(overlay, plan, options));
-    else if ((overlay.kind === "text" || overlay.kind === "composition") && overlay.renderer === "react") overlays.push(await renderReactOverlay(overlay, plan, options));
-    else overlays.push(overlay);
+  try {
+    const overlays = [];
+    for (const overlay of plan.overlays) {
+      options.signal?.throwIfAborted();
+      if ((overlay.kind === "text" || overlay.kind === "composition") && (overlay.renderer === "three" || overlay.renderer === "canvas")) overlays.push(await streamCompositionFrames(overlay, plan, options));
+      else if ((overlay.kind === "text" || overlay.kind === "composition") && overlay.renderer === "react") overlays.push(await renderReactOverlay(overlay, plan, options));
+      else overlays.push(overlay);
+    }
+    return { ...plan, overlays };
+  } catch (error) {
+    throw normalizeCompositionExportError(error);
   }
-  return { ...plan, overlays };
 }

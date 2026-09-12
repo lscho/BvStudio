@@ -46,6 +46,7 @@ export interface CloudSpeechTrackResult {
 }
 
 const browserKeyName = "bframe-studio:speech-api-key";
+const speechTrackConcurrency = 3;
 
 function providerRoot(value: string) {
   const base = value.trim().replace(/\/+$/u, "");
@@ -125,16 +126,25 @@ export async function synthesizeCloudSpeechTrack(
   const texts = segmentTexts.map((text) => text.trim());
   if (!texts.length || texts.some((text) => !text)) throw new Error("字幕配音文本不能为空");
   if (texts.length > 100) throw new Error("单次最多生成 100 条字幕配音");
-  const paths: string[] = [];
-  const durationsUs: number[] = [];
-  for (let index = 0; index < texts.length; index += 1) {
-    onProgress?.({ completed: index, total: texts.length, message: `正在生成第 ${index + 1}/${texts.length} 条字幕` });
-    const path = await synthesizeCloudSpeech(config, texts[index]);
-    const metadata = await probeMedia(path);
-    if (!metadata.hasAudio || metadata.durationUs <= 0) throw new Error(`第 ${index + 1} 条字幕没有生成有效音频`);
-    paths.push(path);
-    durationsUs.push(metadata.durationUs);
-  }
+  const paths = new Array<string>(texts.length);
+  const durationsUs = new Array<number>(texts.length);
+  let nextIndex = 0;
+  let completed = 0;
+  const worker = async () => {
+    while (nextIndex < texts.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      onProgress?.({ completed, total: texts.length, message: `正在生成第 ${index + 1}/${texts.length} 条字幕` });
+      const path = await synthesizeCloudSpeech(config, texts[index]);
+      const metadata = await probeMedia(path);
+      if (!metadata.hasAudio || metadata.durationUs <= 0) throw new Error(`第 ${index + 1} 条字幕没有生成有效音频`);
+      paths[index] = path;
+      durationsUs[index] = metadata.durationUs;
+      completed += 1;
+      onProgress?.({ completed, total: texts.length, message: `已生成 ${completed}/${texts.length} 条字幕` });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(speechTrackConcurrency, texts.length) }, worker));
   onProgress?.({ completed: texts.length, total: texts.length, message: texts.length > 1 ? "正在合并字幕配音" : "字幕配音已生成" });
   if (paths.length === 1) {
     return { path: paths[0], durationUs: durationsUs[0], segmentDurationsUs: durationsUs };

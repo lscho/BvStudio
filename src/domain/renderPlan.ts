@@ -1,4 +1,4 @@
-import { isShotcraftComposition, shotcraftRenderData } from "@/domain/shotcraft";
+import { isShotcraftComposition, shotcraftOwnsSubtitle, shotcraftRenderData } from "@/domain/shotcraft";
 import { contentEndUs, type AudioClip, type EditorProject, type EffectBackdrop, type CompositionClip, type GeneratedBlock, type ImageClip, type SceneClip, type VideoClip, type VideoTransition } from "@/domain/project";
 import { compositionAssetIds, compositionBindingIssues, compositionLayer, mediaComposition } from "@/domain/compositions";
 import type { ExportVideoFormat, RenderAudioClip, RenderFocusOverlay, RenderOverlay, RenderPlan, RenderSegment, VideoEncoder } from "@/services/media";
@@ -15,6 +15,26 @@ import { isReferenceStageComposition, referenceStageOuterTransform } from "@/dom
 
 function activeAt<T extends { startUs: number; durationUs: number }>(clips: T[], timeUs: number): T | undefined {
   return clips.find((clip) => timeUs >= clip.startUs && timeUs < clip.startUs + clip.durationUs);
+}
+
+interface TimelineRange { startUs: number; durationUs: number }
+
+function subtractTimelineRanges(range: TimelineRange, blockers: readonly TimelineRange[]) {
+  let visible = [range];
+  for (const blocker of blockers) {
+    const blockerEndUs = blocker.startUs + blocker.durationUs;
+    visible = visible.flatMap((candidate) => {
+      const candidateEndUs = candidate.startUs + candidate.durationUs;
+      const overlapStartUs = Math.max(candidate.startUs, blocker.startUs);
+      const overlapEndUs = Math.min(candidateEndUs, blockerEndUs);
+      if (overlapEndUs <= overlapStartUs) return [candidate];
+      return [
+        ...(overlapStartUs > candidate.startUs ? [{ startUs: candidate.startUs, durationUs: overlapStartUs - candidate.startUs }] : []),
+        ...(overlapEndUs < candidateEndUs ? [{ startUs: overlapEndUs, durationUs: candidateEndUs - overlapEndUs }] : [])
+      ];
+    });
+  }
+  return visible;
 }
 
 const frameRecipe = { layout: "frame" as const, entrance: "none" as const, paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 };
@@ -243,6 +263,7 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
   const videoTracks = project.tracks.filter((track) => track.kind === "video" && !track.hidden);
   const videoClips = videoTracks.flatMap((track) => track.clips).filter((clip): clip is VideoClip => clip.kind === "video");
   const focusCards = project.tracks.filter((track) => track.kind === "composition" && !track.hidden).flatMap((track) => track.clips).filter((clip): clip is CompositionClip => clip.kind === "composition" && clip.compositionId === "focus-card");
+  const shotcraftSubtitleTakeovers = project.tracks.filter((track) => track.kind === "composition" && !track.hidden).flatMap((track) => track.clips).filter((clip): clip is CompositionClip => clip.kind === "composition" && isShotcraftComposition(clip.compositionId) && shotcraftOwnsSubtitle(clip)).map((clip) => ({ startUs: clip.startUs, durationUs: clip.durationUs }));
   const focusCardSourceVideo = (effect: CompositionClip) => {
     const assetId = compositionAssetIds(effect)[0];
     return videoClips.find((candidate) => candidate.assetId === assetId && effect.startUs >= candidate.startUs && effect.startUs < candidate.startUs + candidate.durationUs);
@@ -404,10 +425,10 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
     }
     if (clip.kind === "subtitle") {
       const style = subtitleStyle(clip);
-      return [{
+      return subtractTimelineRanges(clip, shotcraftSubtitleTakeovers).map((range) => ({
         kind: "text" as const,
-        startUs: clip.startUs,
-        durationUs: clip.durationUs,
+        startUs: range.startUs,
+        durationUs: range.durationUs,
         text: displaySubtitleText(clip.text),
         color: clip.color,
         accentColor: clip.backgroundColor,
@@ -438,7 +459,7 @@ export function buildRenderPlan(project: EditorProject, outputPath: string, opti
           borderRadius: style.borderRadius * outputScale,
           backgroundOpacity: style.stylePreset === "minimal" ? 0 : style.backgroundOpacity
         }
-      }];
+      }));
     }
     if (clip.kind === "image") {
       const image = clip as ImageClip;

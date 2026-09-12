@@ -1,3 +1,4 @@
+// 仅用于恢复仍引用 builtin-sound:* 的旧工程；新建、匹配和镜头编排统一使用 Shotcraft 音效库。
 export type BuiltinSoundCategory = "转场" | "强调" | "氛围";
 
 export interface BuiltinSoundEffect {

@@ -4,6 +4,7 @@ import { saveRecordedAudio } from "@/services/audio";
 import { localMediaUrl } from "@/services/media";
 import { isDesktopRuntime } from "@/services/runtime";
 
+// 仅为旧工程的 builtin-sound:* 资产重建保留；产品入口不再创建这些合成音效。
 const sampleRate = 48_000;
 const channelCount = 2;
 const wavCache = new Map<BuiltinSoundEffectId, Blob>();

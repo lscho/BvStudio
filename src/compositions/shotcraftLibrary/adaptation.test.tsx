@@ -93,6 +93,24 @@ it("普通镜头的两句说明使用换行，不显示分隔符", () => {
   expect(html).toContain("每个镜头都可编辑\n也可撤销重做");
 });
 
+it("口播模式隐藏 Shotcraft 底部说明并恢复全屏构图", () => {
+  const clip = createEffectPreviewClip("shotcraft-card-stack", createEmptyProject().motionTheme, []);
+  clip.text = "镜头说明文字";
+  const markup = (shotcraftTextMode: "narration" | "promo") => {
+    clip.params = { ...clip.params, shotcraftTextMode };
+    return renderToStaticMarkup(<ShotcraftComposition compositionId={clip.compositionId} text={clip.text} color={clip.color}
+      accentColor={clip.accentColor} fontSize={clip.fontSize} recipe={clip.recipe!} durationUs={clip.durationUs}
+      canvasWidth={1920} canvasHeight={1080} shotcraftData={{ clip }} timeUs={1_000_000} />);
+  };
+
+  expect(markup("narration")).not.toContain("data-shotcraft-caption");
+  expect(markup("narration")).not.toContain("镜头说明文字");
+  expect(markup("promo")).toContain("data-shotcraft-caption");
+  expect(markup("promo")).toContain("镜头说明文字");
+  expect(markup("promo")).not.toContain("scale(0.78)");
+  expect(markup("promo")).not.toContain("scale(0.86)");
+});
+
 it("无图节奏字卡尾部保留结论，不切入示例页面", async () => {
   const host = await shotFrame("shotcraft-card-footage-cadence", 149, { copy0: "预览", copy1: "导出", copy2: "同一镜头数据" });
   expect(host.textContent).toContain("同一镜头数据");

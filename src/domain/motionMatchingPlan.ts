@@ -2,6 +2,8 @@ import { compositionSlots } from "@/domain/compositions";
 import { allCompositions } from "@/domain/effects";
 import type { CompositionDefinition } from "@/domain/effects";
 import { allowedAiMotionParameterKeys, motionMatchingProfile, referenceMotionMatchingPolicy } from "@/domain/motionMatching";
+import { storyboardShotcraftCardAllowed } from "@/domain/storyboard";
+import { isShotcraftComposition } from "@/domain/shotcraft";
 import type { AiMotionMatch, AiMotionSelection } from "@/services/ai/schema";
 
 export type MotionPlanIssueCode =
@@ -60,6 +62,11 @@ function selectedEffectIds(segment: AiMotionSelection["segments"][number]) {
   return [segment.primaryEffectId, segment.secondaryEffectId].filter((effectId): effectId is string => Boolean(effectId));
 }
 
+function allowsShotcraftCard(segment: AiMotionSelection["segments"][number]) {
+  return Boolean(segment.primaryEffectId && segment.secondaryEffectId
+    && storyboardShotcraftCardAllowed(segment.primaryEffectId, segment.secondaryEffectId));
+}
+
 function normalizedStateText(value: string | null | undefined) {
   return (value ?? "")
     .split(/[|｜\n]/u)
@@ -84,7 +91,7 @@ export function validateMotionSelectionPlan(selection: AiMotionSelection, captio
 
     const effectIds = selectedEffectIds(segment);
     const roles = effectIds.map(effectRole);
-    if (roles.includes("exclusive") && effectIds.length > 1) {
+    if (roles.includes("exclusive") && effectIds.length > 1 && !allowsShotcraftCard(segment)) {
       issues.push({ code: "exclusive-overlap", path, message: `独占动效不能在语义段“${segment.title}”中与其他动效叠加` });
     }
     if (roles.filter((role) => role === "background").length > 1) {
@@ -164,15 +171,66 @@ function structuredEntryCount(entry: { text: string | null; params: readonly { v
   return Math.max(0, ...counts);
 }
 
+function entryNeedsTimingAnchors(effect: CompositionDefinition, text: string | null, params: readonly { value: string | number | boolean }[], bindingCount = 0) {
+  const itemCount = Math.max(structuredEntryCount({ text, params }), bindingCount);
+  const anchorDrivenKeys = motionMatchingProfile(effect).rhythmKeys.filter((key) => ![
+    "scrollMs", "countMs", "drawMs", "pushMs", "moveSec", "tourSec", "orbitSec", "periodSec", "cps", "lockMs", "flipMs"
+  ].includes(key));
+  return anchorDrivenKeys.length > 0 && (itemCount > 1 || anchorDrivenKeys.length > 1 || anchorDrivenKeys.some((key) => ["times", "stopsAt", "dockTimes", "acts"].includes(key)));
+}
+
+/** Missing anchors use exact subtitle text matches, or the entry's real start boundary when word timing is unavailable. */
+export function completeMotionTimingAnchors(matches: readonly AiMotionMatch[], selection: AiMotionSelection, captions: readonly MotionPlanCaption[]): AiMotionMatch[] {
+  const normalizeText = (value: string) => value.toLocaleLowerCase().replace(/[\s\p{P}\p{S}]/gu, "");
+  return matches.map((match) => {
+    const segment = selection.segments.find((candidate) => match.captionIndex >= candidate.startCaptionIndex && match.captionIndex <= candidate.endCaptionIndex);
+    if (!segment || !captions[match.captionIndex]) return match;
+    const complete = (slot: "primary" | "secondary") => {
+      const id = slot === "primary" ? match.primaryEffectId : match.secondaryEffectId;
+      const timing = slot === "primary" ? match.primaryTimingCaptionIndices : match.secondaryTimingCaptionIndices;
+      if (!id || timing?.length || isShotcraftComposition(id) || !selectedEffectIds(segment).includes(id)) return timing;
+      const effect = effectsById.get(id);
+      const text = slot === "primary" ? match.primaryText : match.secondaryText;
+      const params = (slot === "primary" ? match.primaryParams : match.secondaryParams) ?? [];
+      const bindingCount = slot === "primary" ? Math.max(0, ...(match.compositionBindings ?? []).map((binding) => binding.assetIds.length)) : 0;
+      if (!effect || !entryNeedsTimingAnchors(effect, text, params, bindingCount)) return timing;
+      const phrases = [text ?? "", ...params.flatMap((param) => typeof param.value === "string" ? [param.value] : [])]
+        .flatMap((value) => value.split(/[|｜\n]/u)).map(normalizeText).filter((value) => value.length >= 2);
+      const anchors: number[] = [];
+      for (let index = match.captionIndex; index <= segment.endCaptionIndex; index += 1) {
+        const caption = captions[index];
+        if (!caption) continue;
+        const source = normalizeText(caption.text ?? "");
+        if (phrases.some((phrase) => source.includes(phrase))) anchors.push(index);
+      }
+      return anchors.length ? anchors.slice(0, 16) : [match.captionIndex];
+    };
+    return { ...match, primaryTimingCaptionIndices: complete("primary"), secondaryTimingCaptionIndices: complete("secondary") };
+  });
+}
+
 const explicitSourceParameterKeys = new Set(["source", "caption", "captionEn", "title", "src", "footEn", "footZh"]);
 const placeholderSourcePattern = /(?:待补|占位|示例|写这里|placeholder)/iu;
 const sourceKeywordPattern = /(?:SOURCE|NEWS|CASE|来源|出处|官网|官方|报告|公告|原文|合同|新闻|媒体|采访|公开数据|统计口径|自述|《[^》]+》)/iu;
+const infoBoardEvidenceRowTypes = new Set(["bar", "kv", "quote", "img", "count", "mult", "stat", "compare", "vs", "ring", "dots", "spark"]);
 
 /** Only evidence cards that expose a real attribution field can be asked for a source; comparison cards such as win-lose cannot. */
 export function requiresEvidenceSource(effect: CompositionDefinition, profile = motionMatchingProfile(effect)) {
   if (profile.purposeGroup !== "证据实证" && effect.id !== "quote-cite") return false;
   return /(?:来源|出处|署名|口径)/u.test(profile.parameterGuide)
     || allowedAiMotionParameterKeys(effect).some((key) => explicitSourceParameterKeys.has(key));
+}
+
+function entryRequiresEvidenceSource(
+  effect: CompositionDefinition,
+  params: readonly { key: string; value: string | number | boolean }[],
+  profile = motionMatchingProfile(effect)
+) {
+  if (!requiresEvidenceSource(effect, profile)) return false;
+  if (effect.id !== "info-board") return true;
+  const rows = params.find((param) => param.key === "rows" && typeof param.value === "string")?.value;
+  if (typeof rows !== "string") return false;
+  return rows.split("\n").some((row) => infoBoardEvidenceRowTypes.has(row.split(/[|｜]/u, 1)[0].trim().toLowerCase()));
 }
 
 function hasEvidenceSource(entry: { text: string | null; params: readonly { key: string; value: string | number | boolean }[] }) {
@@ -229,17 +287,8 @@ export function validateMotionMatchPlan(matches: readonly AiMotionMatch[], selec
       if (effect) {
         const profile = motionMatchingProfile(effect);
         const params = entry.slot === "primary" ? match.primaryParams ?? [] : match.secondaryParams ?? [];
-        const itemCount = Math.max(
-          structuredEntryCount({
-            text: entry.text,
-            params
-          }),
-          entry.slot === "primary" ? Math.max(0, ...(match.compositionBindings ?? []).map((binding) => binding.assetIds.length)) : 0
-        );
-        const anchorDrivenKeys = profile.rhythmKeys.filter((key) => ![
-          "scrollMs", "countMs", "drawMs", "pushMs", "moveSec", "tourSec", "orbitSec", "periodSec", "cps", "lockMs", "flipMs"
-        ].includes(key));
-        const needsAnchors = anchorDrivenKeys.length > 0 && (itemCount > 1 || anchorDrivenKeys.length > 1 || anchorDrivenKeys.some((key) => ["times", "stopsAt", "dockTimes", "acts"].includes(key)));
+        const bindingCount = entry.slot === "primary" ? Math.max(0, ...(match.compositionBindings ?? []).map((binding) => binding.assetIds.length)) : 0;
+        const needsAnchors = entryNeedsTimingAnchors(effect, entry.text, params, bindingCount);
         if (needsAnchors && entry.timing.length === 0) {
           issues.push({
             code: "timing-anchors-required",
@@ -247,11 +296,13 @@ export function validateMotionMatchPlan(matches: readonly AiMotionMatch[], selec
             message: `逐项动效 ${entry.effectId} 必须提供真实字幕节奏锚点`
           });
         }
-        if (requiresEvidenceSource(effect, profile) && !hasEvidenceSource({ text: entry.text, params })) {
+        if (entryRequiresEvidenceSource(effect, params, profile) && !hasEvidenceSource({ text: entry.text, params })) {
           issues.push({
             code: "evidence-source-missing",
             path: `${path}.${entry.slot}Params`,
-            message: `证据动效 ${entry.effectId} 必须在可见文案或来源参数中写明真实出处`
+            message: entry.effectId === "info-board"
+              ? "信息板包含数据、引用、截图或统计内容，必须增加 note|来源：… 并写明真实出处"
+              : `证据动效 ${entry.effectId} 必须在可见文案或来源参数中写明真实出处`
           });
         }
       }
@@ -284,7 +335,7 @@ export function validateMotionMatchPlan(matches: readonly AiMotionMatch[], selec
   for (const segment of selection.segments) {
     const entries = segmentEffects.get(segment.segmentId) ?? [];
     const roles = entries.map((entry) => effectRole(entry.effectId));
-    if (roles.includes("exclusive") && entries.length > 1) {
+    if (roles.includes("exclusive") && entries.length > 1 && !allowsShotcraftCard(segment)) {
       issues.push({ code: "exclusive-overlap", path: entries.find((entry) => effectRole(entry.effectId) === "exclusive")?.path ?? "matches", message: `独占动效不能在语义段“${segment.title}”中与其他动效叠加` });
     }
     if (roles.filter((role) => role === "background").length > 1) {
@@ -316,6 +367,9 @@ export function validateMotionMatchPlan(matches: readonly AiMotionMatch[], selec
       });
     }
     for (let index = 1; index < contentEntries.length; index += 1) {
+      // A full-frame Shotcraft base and its one information card can share a subtitle boundary.
+      if (segment.roll === "b-roll" && allowsShotcraftCard(segment)
+        && (contentEntries[index - 1].effectId === segment.primaryEffectId || contentEntries[index].effectId === segment.primaryEffectId)) continue;
       const previousStart = captions[contentEntries[index - 1].captionIndex]?.startSeconds ?? contentEntries[index - 1].captionIndex;
       const currentStart = captions[contentEntries[index].captionIndex]?.startSeconds ?? contentEntries[index].captionIndex;
       if (currentStart - previousStart < referenceMotionMatchingPolicy.minContentEntryStaggerSeconds) {

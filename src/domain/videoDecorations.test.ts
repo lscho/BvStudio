@@ -29,13 +29,18 @@ describe("video decorations", () => {
     expect(chapterProgressAt(chapters, 12_000_000, 12_000_000)).toMatchObject({ activeIndex: 2, localProgress: 1 });
   });
 
-  it("keeps subtitle highlights grounded in the original text and fills missing keywords locally", () => {
-    expect(subtitleKeywordsForText("这一步需要先整理素材，再开始剪辑", ["整理素材", "不存在的结论", "开始剪辑"])).toEqual(["整理素材", "开始剪辑"]);
-    expect(subtitleKeywordsForText("未来的竞争，将看技术效率、品牌能力和全生命周期服务。", [])).toEqual([
-      "技术效率",
-      "品牌能力",
-      "全生命周期服务"
-    ]);
+  it("keeps subtitle highlights grounded and visually sparse", () => {
+    expect(subtitleKeywordsForText("这一步需要先整理素材，再开始剪辑", ["整理素材", "不存在的结论", "开始剪辑"])).toEqual(["整理素材"]);
+    expect(subtitleKeywordsForText("未来的竞争，将看技术效率、品牌能力和全生命周期服务。", [])).toEqual(["技术效率"]);
+    const longSubtitle = "它不懂节奏，不知道哪里该停、哪里该强调、哪里该留白";
+    const keywords = subtitleKeywordsForText(longSubtitle, ["不懂节奏", "不知道哪里该停", "哪里该强调", "哪里该留白"]);
+    const highlightedCharacters = highlightedTextParts(longSubtitle, keywords)
+      .filter((part) => part.highlighted)
+      .reduce((total, part) => total + Array.from(part.text).length, 0);
+    expect(keywords.length).toBeLessThanOrEqual(2);
+    expect(highlightedCharacters).toBeLessThanOrEqual(8);
+    expect(highlightedCharacters / Array.from(longSubtitle.replace(/[，。！？、；：,.!?;:\s]/gu, "")).length).toBeLessThanOrEqual(0.4);
+    expect(subtitleKeywordsForText("很重要", ["很重要"])).toEqual([]);
     expect(highlightedTextParts("先整理素材再剪辑", ["整理素材"])).toEqual([
       { text: "先", highlighted: false },
       { text: "整理素材", highlighted: true },

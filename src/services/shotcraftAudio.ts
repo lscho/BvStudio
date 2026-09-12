@@ -3,7 +3,6 @@ import type { MediaAsset } from "@/domain/project";
 import { canUseSound, soundTier, soundTierMap } from "@/domain/soundAccess";
 import { saveRecordedAudio } from "@/services/audio";
 import { isDesktopRuntime } from "@/services/runtime";
-import { localMediaUrl } from "@/services/media";
 
 export const SHOTCRAFT_AUDIO = catalog;
 const SHOTCRAFT_AUDIO_TIERS = soundTierMap(SHOTCRAFT_AUDIO);
@@ -55,7 +54,7 @@ export async function loadShotcraftAudio(id: string, signal?: AbortSignal): Prom
   signal?.throwIfAborted();
   const blob = new Blob([bytes], { type: "audio/mpeg" });
   const sourcePath = isDesktopRuntime() ? await saveRecordedAudio(blob) : undefined;
-  const asset: MediaAsset = { id, name: item.name, kind: "audio", durationUs: item.durationUs, sourcePath, objectUrl: sourcePath ? localMediaUrl(sourcePath) : URL.createObjectURL(blob), missing: false, hasAudio: true };
+  const asset: MediaAsset = { id, name: item.name, kind: "audio", durationUs: item.durationUs, sourcePath, objectUrl: URL.createObjectURL(blob), missing: false, hasAudio: true };
   cached.set(id, asset);
   signal?.throwIfAborted();
   return asset;

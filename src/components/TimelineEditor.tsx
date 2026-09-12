@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, BetweenHorizontalEnd, BetweenHorizontalStart, ChevronDown, ChevronRight, Eye, EyeOff, Focus, Group, Layers3, Lock, Magnet, Minus, Plus, Scissors, Unlock, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
 import type { TimelineClip, TimelineTrack } from "@/domain/project";
-import { clipGroupId, timelineRows } from "@/domain/timelineLayout";
+import { clipGroupId, minimumPixelsPerSecondForLanes, timelineRows } from "@/domain/timelineLayout";
 import { sceneGroupRetimeRatio } from "@/domain/compositions";
 import { localMediaUrl } from "@/services/media";
 import { useEditorStore } from "@/stores/editorStore";
 
 const PIXELS_PER_SECOND = 24;
+const MINIMUM_CLIP_WIDTH_PX = 34;
 const SNAP_THRESHOLD_PX = 12;
 type DragMode = "move" | "start" | "end";
 
@@ -52,7 +53,12 @@ export function Timeline() {
   const focus = focusState?.projectId === project.id && allClips.some(c => clipGroupId(c) === focusState.groupId) ? focusState : null;
   const focusedMembers = focus ? allClips.filter(c => clipGroupId(c) === focus.groupId) : [];
   const originUs = focus ? Math.max(0, Math.min(focus.startUs, ...focusedMembers.map(c => c.startUs - 1_000_000))) : 0;
-  const pixelsPerSecond = focus ? focus.pixelsPerSecond * zoom / focus.zoom : PIXELS_PER_SECOND * zoom;
+  const minimumOverviewZoom = useMemo(() => {
+    const subtitles = project.tracks.find((track) => track.kind === "subtitle")?.clips ?? [];
+    return Math.max(1, minimumPixelsPerSecondForLanes(subtitles, MINIMUM_CLIP_WIDTH_PX) / PIXELS_PER_SECOND);
+  }, [project.tracks]);
+  const effectiveZoom = focus ? zoom : Math.max(zoom, minimumOverviewZoom);
+  const pixelsPerSecond = focus ? focus.pixelsPerSecond * effectiveZoom / focus.zoom : PIXELS_PER_SECOND * effectiveZoom;
   const rows = useMemo(() => timelineRows(project.tracks, collapsed, pixelsPerSecond, focus?.groupId), [project.tracks, collapsed, pixelsPerSecond, focus?.groupId]);
   const selectedClip = allClips.find(c => selectedClipIds.includes(c.id));
   const selectedGroupId = selectedClip ? clipGroupId(selectedClip) : undefined;
@@ -92,7 +98,8 @@ export function Timeline() {
     const startUs = Math.max(0, Math.min(...members.map(c => c.startUs)) - 1_000_000);
     const endUs = Math.max(...members.map(clipEnd)) + 1_000_000;
     const scroll = timelineScrollRef.current;
-    setFocusState({ groupId, projectId: project.id, startUs, endUs, pixelsPerSecond: Math.max(24, ((scroll?.clientWidth || 800) - 24) / ((endUs - startUs) / 1_000_000)), zoom, scrollLeft: scroll?.scrollLeft ?? 0, scrollTop: panelRef.current?.querySelector(".timeline-body")?.scrollTop ?? 0 });
+    setFocusState({ groupId, projectId: project.id, startUs, endUs, pixelsPerSecond: Math.max(24, ((scroll?.clientWidth || 800) - 24) / ((endUs - startUs) / 1_000_000)), zoom: effectiveZoom, scrollLeft: scroll?.scrollLeft ?? 0, scrollTop: panelRef.current?.querySelector(".timeline-body")?.scrollTop ?? 0 });
+    setZoom(effectiveZoom);
     selectSceneGroup(groupId);
     setPlayhead(Math.min(...members.map(c => c.startUs)));
   }
@@ -140,7 +147,7 @@ export function Timeline() {
     if (!anchor || !container) return;
     container.scrollLeft = Math.max(0, anchor.timeSeconds * pixelsPerSecond - anchor.pointerX);
     pendingZoomAnchorRef.current = null;
-  }, [zoom]);
+  }, [pixelsPerSecond]);
 
   useEffect(() => {
     const update = (event: MouseEvent) => {
@@ -168,8 +175,8 @@ export function Timeline() {
 
   function zoomAround(nextZoom: number, pointerX: number) {
     const container = timelineScrollRef.current;
-    const boundedZoom = Math.min(3, Math.max(0.6, nextZoom));
-    if (!container || Math.abs(boundedZoom - zoom) < 0.000_1) return;
+    const boundedZoom = Math.min(Math.max(3, minimumOverviewZoom), Math.max(focus ? 0.6 : minimumOverviewZoom, nextZoom));
+    if (!container || Math.abs(boundedZoom - effectiveZoom) < 0.000_1) return;
     pendingZoomAnchorRef.current = {
       pointerX,
       timeSeconds: (container.scrollLeft + pointerX) / pixelsPerSecond
@@ -184,7 +191,7 @@ export function Timeline() {
     if (Math.abs(delta) < 0.01) return;
     event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
-    zoomAround(Number((zoom * Math.exp(-delta * 0.0015)).toFixed(3)), event.clientX - rect.left);
+    zoomAround(Number((effectiveZoom * Math.exp(-delta * 0.0015)).toFixed(3)), event.clientX - rect.left);
   }
 
   function snapTime(timeUs: number, excludedIds: string[]): { timeUs: number; snapUs: number | null } {
@@ -370,7 +377,7 @@ export function Timeline() {
   return (
     <section ref={panelRef} className="timeline-panel" onKeyDown={event => { if (event.key === "Escape" && focus) { event.stopPropagation(); exitFocus(); } }} onPointerMove={updateDrag} onPointerUp={finishDrag} onPointerCancel={cancelDrag}>
       <div className="timeline-height-handle" role="separator" tabIndex={0} aria-label="调整时间线高度" aria-orientation="horizontal" aria-valuemin={160} aria-valuemax={Math.max(160, window.innerHeight - 344)} aria-valuenow={height ?? 286} onKeyDown={(event) => { if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); changeHeight((height ?? panelRef.current?.clientHeight ?? 286) + (event.key === "ArrowUp" ? 24 : -24)); } }} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); heightDrag.current = { pointerId: event.pointerId, y: event.clientY, height: panelRef.current?.clientHeight ?? 286 }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { event.stopPropagation(); if (heightDrag.current?.pointerId === event.pointerId) changeHeight(heightDrag.current.height + heightDrag.current.y - event.clientY); }} onPointerUp={(event) => { event.stopPropagation(); heightDrag.current = null; }} onPointerCancel={() => { heightDrag.current = null; }} />
-      <header className="timeline-header"><strong>时间线</strong><TimelineTimecode />{focus && <button className="timeline-tool" type="button" aria-label="返回完整时间线" title="返回完整时间线" onClick={exitFocus}><ArrowLeft size={14} /></button>}{contextGroupId && <span className="timeline-group-context"><span title={contextLabel}>{contextLabel}</span><button className="timeline-tool" type="button" aria-label="选择整组动效" title="选择整组动效" onClick={() => selectSceneGroup(contextGroupId)}><Group size={14} /></button>{!focus && <button className="timeline-tool" type="button" aria-label="聚焦场景组" title="聚焦场景组" onClick={() => focusGroup(contextGroupId)}><Focus size={14} /></button>}</span>}<button className="timeline-tool" type="button" aria-label="在播放头分割" title="分割片段" disabled={!selectedClipIds.length} onClick={splitSelected}><Scissors size={14} /></button><button className={`timeline-tool ${snapping ? "active" : ""}`} type="button" aria-label="切换吸附" aria-pressed={snapping} title={snapping ? "吸附已开启" : "吸附已关闭"} onClick={() => setSnapping(!snapping)}><Magnet size={14} /></button><span className="timeline-divider" /><button className={`timeline-tool ${rangeStartUs !== null ? "active" : ""}`} type="button" aria-label="设置选区入点" title="设置入点 (I)" onClick={() => setRangeStart(useEditorStore.getState().playheadUs)}><BetweenHorizontalStart size={14} /></button><button className={`timeline-tool ${rangeEndUs !== null ? "active" : ""}`} type="button" aria-label="设置选区出点" title="设置出点 (O)" onClick={() => setRangeEnd(useEditorStore.getState().playheadUs)}><BetweenHorizontalEnd size={14} /></button><button className="timeline-tool" type="button" aria-label="清除时间选区" title="清除选区" disabled={rangeStartUs === null && rangeEndUs === null} onClick={clearRange}><X size={13} /></button>{range && <span className="range-summary">{formatTime(range.startUs)} – {formatTime(range.endUs)} · {((range.endUs - range.startUs) / 1_000_000).toFixed(2)}s</span>}<div className="zoom-control"><ZoomIn size={14} /><button type="button" aria-label="缩小时间线" onClick={() => zoomAround(zoom - 0.2, timelineScrollRef.current?.clientWidth ? timelineScrollRef.current.clientWidth / 2 : 0)}><Minus size={13} /></button><output>{Math.round(zoom * 100)}%</output><button type="button" aria-label="放大时间线" onClick={() => zoomAround(zoom + 0.2, timelineScrollRef.current?.clientWidth ? timelineScrollRef.current.clientWidth / 2 : 0)}><Plus size={13} /></button></div></header>
+      <header className="timeline-header"><strong>时间线</strong><TimelineTimecode />{focus && <button className="timeline-tool" type="button" aria-label="返回完整时间线" title="返回完整时间线" onClick={exitFocus}><ArrowLeft size={14} /></button>}{contextGroupId && <span className="timeline-group-context"><span title={contextLabel}>{contextLabel}</span><button className="timeline-tool" type="button" aria-label="选择整组动效" title="选择整组动效" onClick={() => selectSceneGroup(contextGroupId)}><Group size={14} /></button>{!focus && <button className="timeline-tool" type="button" aria-label="聚焦场景组" title="聚焦场景组" onClick={() => focusGroup(contextGroupId)}><Focus size={14} /></button>}</span>}<button className="timeline-tool" type="button" aria-label="在播放头分割" title="分割片段" disabled={!selectedClipIds.length} onClick={splitSelected}><Scissors size={14} /></button><button className={`timeline-tool ${snapping ? "active" : ""}`} type="button" aria-label="切换吸附" aria-pressed={snapping} title={snapping ? "吸附已开启" : "吸附已关闭"} onClick={() => setSnapping(!snapping)}><Magnet size={14} /></button><span className="timeline-divider" /><button className={`timeline-tool ${rangeStartUs !== null ? "active" : ""}`} type="button" aria-label="设置选区入点" title="设置入点 (I)" onClick={() => setRangeStart(useEditorStore.getState().playheadUs)}><BetweenHorizontalStart size={14} /></button><button className={`timeline-tool ${rangeEndUs !== null ? "active" : ""}`} type="button" aria-label="设置选区出点" title="设置出点 (O)" onClick={() => setRangeEnd(useEditorStore.getState().playheadUs)}><BetweenHorizontalEnd size={14} /></button><button className="timeline-tool" type="button" aria-label="清除时间选区" title="清除选区" disabled={rangeStartUs === null && rangeEndUs === null} onClick={clearRange}><X size={13} /></button>{range && <span className="range-summary">{formatTime(range.startUs)} – {formatTime(range.endUs)} · {((range.endUs - range.startUs) / 1_000_000).toFixed(2)}s</span>}<div className="zoom-control"><ZoomIn size={14} /><button type="button" aria-label="缩小时间线" onClick={() => zoomAround(effectiveZoom - 0.2, timelineScrollRef.current?.clientWidth ? timelineScrollRef.current.clientWidth / 2 : 0)}><Minus size={13} /></button><output>{Math.round(effectiveZoom * 100)}%</output><button type="button" aria-label="放大时间线" onClick={() => zoomAround(effectiveZoom + 0.2, timelineScrollRef.current?.clientWidth ? timelineScrollRef.current.clientWidth / 2 : 0)}><Plus size={13} /></button></div></header>
       <div className="timeline-body">
         <div className="track-labels"><div className="ruler-spacer" />{rows.map(row => row.kind === "track"
           ? <TrackLabel key={row.id} track={row.track} expanded={focus ? undefined : row.expanded} onToggle={() => toggleRow(row.id)} onChange={(patch) => setTrackState(row.track.id, patch)} />

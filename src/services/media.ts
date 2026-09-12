@@ -106,6 +106,8 @@ export interface RenderTextOverlay extends RenderOverlayBase {
   animationDurationUs?: number;
   autoTiming?: boolean;
   sequenceId?: string;
+  /** Number of generated PNG frames when the final frame is extended natively. */
+  sequenceFrameCount?: number;
   text: string;
   color: string;
   fontSize: number;

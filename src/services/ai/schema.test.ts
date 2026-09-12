@@ -73,14 +73,15 @@ describe("two-stage AI schemas", () => {
   });
 
   it("only accepts active effects and imported media in motion matches", () => {
-    const schema = createAiMotionMatchesSchema(["test-title-slide"], ["local-video"]);
+    const soundId = "shotcraft-audio:sfx-camera-camera-lens-shutter";
+    const schema = createAiMotionMatchesSchema(["test-title-slide"], ["local-video"], [], [soundId]);
     const valid = {
       captionIndex: 0, subtitleKeywords: ["团队语言"], primaryEffectId: "test-title-slide", primaryText: "协作从共识开始", secondaryEffectId: null, secondaryText: null,
       accentColor: "#5fa8ff", x: 50, y: 28, scale: 1, secondaryX: 75, secondaryY: 60,
       cameraPreset: "push-in", primaryMediaAssetId: "local-video", primaryMediaSourceInSeconds: 2,
       secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full",
       videoLayers: [{ assetId: "local-video", role: "screen", sourceInSeconds: 2, layoutPreset: "full", shapePreset: "rectangle", transitionPreset: "fade", cameraPreset: "push-in", volume: 0, focus: { enabled: true, x: 50, y: 50, zoom: 1.8, startOffsetSeconds: 0.2, durationSeconds: 1.5 } }],
-      backdropPreset: "dark", soundEffectId: "clean-click", chart: null
+      backdropPreset: "dark", soundEffectId: soundId, chart: null
     };
     expect(schema.parse({ matches: [valid] }).matches[0]).toMatchObject(valid);
     expect(schema.parse({ matches: [valid] }).matches[0]).toMatchObject({ primaryParams: [], primaryTimingCaptionIndices: [], secondaryParams: [], secondaryTimingCaptionIndices: [] });
@@ -121,9 +122,12 @@ describe("two-stage AI schemas", () => {
   it("forbids video layers without emitting an invalid empty asset enum", () => {
     const schema = createMotionMatchesJsonSchema(["test-title-slide"], []);
     const videoLayers = schema.properties.matches.items.properties.videoLayers;
+    const shotcraftSounds = schema.properties.matches.items.properties.shotcraftSounds;
     expect(videoLayers.maxItems).toBe(0);
     expect(videoLayers.items.properties.assetId).toEqual({ type: "string" });
+    expect(shotcraftSounds.maxItems).toBe(0);
+    expect(shotcraftSounds.items.properties.soundId).toEqual({ type: "string" });
     expect(schema.properties.matches.items.required).toEqual(expect.arrayContaining(["subtitleKeywords", "motionGroupId", "persistUntilCaptionIndex", "soundEffectId"]));
-    expect(schema.properties.matches.items.properties.soundEffectId).toEqual(expect.objectContaining({ anyOf: expect.arrayContaining([{ type: "null" }]) }));
+    expect(schema.properties.matches.items.properties.soundEffectId).toEqual({ type: "null" });
   });
 });

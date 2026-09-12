@@ -29,6 +29,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
   "Access-Control-Max-Age": "86400"
 };
+const CARD_READ_PROPAGATION_GRACE_MS = 60 * 1000;
 
 /** 创建 EdgeKV 适配器；仅在边缘运行时被调用（测试注入假 KV）。 */
 export function createEdgeKv(namespace) {
@@ -103,15 +104,26 @@ async function handleVerify(body, { kv, secret, now }) {
   // 卡密级自愈：设备记录指向的卡密被吊销或已改绑其他设备时，立即降级为 Free。
   if (device.cardHash) {
     const card = await kv.get(cardKeyFor(device.cardHash));
-    if (!card || card.status === "revoked" || card.boundDeviceId !== deviceId) {
+    const reboundElsewhere = Boolean(card?.boundDeviceId && card.boundDeviceId !== deviceId);
+    if (card?.status === "revoked" || reboundElsewhere) {
+      await kv.remove(deviceKeyFor(deviceId));
+      return jsonResponse(200, await signLicenseStatus(secret, freeStatus(), now));
+    }
+    const activationAgeMs = typeof device.activatedAt === "number" ? now - device.activatedAt : Number.POSITIVE_INFINITY;
+    const awaitingCardPropagation = (!card || card.status !== "bound" || card.boundDeviceId !== deviceId)
+      && activationAgeMs >= 0
+      && activationAgeMs <= CARD_READ_PROPAGATION_GRACE_MS;
+    if ((!card || card.status !== "bound" || card.boundDeviceId !== deviceId) && !awaitingCardPropagation) {
       await kv.remove(deviceKeyFor(deviceId));
       return jsonResponse(200, await signLicenseStatus(secret, freeStatus(), now));
     }
     // 到期时间自愈：以卡密记录为准修复历史写入错误（如重复兑换把年卡刷成永久）。
-    const expectedExpireAt = card.expireAt ?? cardExpiryAt(card, card.boundAt ?? now);
-    if (device.expireAt !== expectedExpireAt) {
-      device.expireAt = expectedExpireAt;
-      await kv.put(deviceKeyFor(deviceId), device);
+    if (!awaitingCardPropagation) {
+      const expectedExpireAt = card.expireAt ?? cardExpiryAt(card, card.boundAt ?? now);
+      if (device.expireAt !== expectedExpireAt) {
+        device.expireAt = expectedExpireAt;
+        await kv.put(deviceKeyFor(deviceId), device);
+      }
     }
   }
 

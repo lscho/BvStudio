@@ -49,6 +49,26 @@ describe("Overlay Studio visual contracts", () => {
     expect(vertical).toContain("data-ratio=\"v\"");
   });
 
+  it("replaces unreadable project ink on light and dark reference cards", () => {
+    const definition = reactEffectDefinition("action-band").definition;
+    const renderTheme = (theme: "light" | "dark", color: string) => renderToStaticMarkup(<CompositionContent
+      compositionId={definition.id}
+      text={definition.defaultText}
+      color={color}
+      accentColor={definition.defaultAccentColor}
+      fontSize={48}
+      recipe={definition.recipe}
+      durationUs={definition.defaultDurationUs}
+      params={{ ...definition.defaultParams, theme }}
+      timeUs={1_000_000}
+      canvasWidth={1920}
+      canvasHeight={1080}
+    />);
+
+    expect(renderTheme("light", "#ffffff")).toContain("--hud-ink-doc:#1b1d21");
+    expect(renderTheme("dark", "#111316")).toContain("--hud-ink-doc:#ffffff");
+  });
+
   it("keeps imported canvas effects on their native canvas renderer", () => {
     const definition = reactEffectDefinition("dust-field").definition;
     const markup = renderToStaticMarkup(<CompositionContent

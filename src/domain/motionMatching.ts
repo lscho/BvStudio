@@ -49,6 +49,7 @@ const localTriggerRules: Readonly<Record<string, string>> = {
   "slide-gallery": "2-8 个图片或视频需要横向轮播并逐个聚焦时使用",
   "card-stack": "2-8 个图片或视频需要以叠卡方式逐张翻展时使用",
   "split-reveal": "2-4 个图片或视频需要分栏对照、错峰揭示时使用",
+  "still-image-motion": "只有一张相关图片或产品截图时，用作完整铺底的 B-roll，并通过克制推近避免静止画面",
   "background-stripes": "需要低信息量、持续运动的斜向纹理作为整段背景时使用",
   "background-grid": "技术、空间或结构主题需要透视网格作为整段背景时使用",
   "background-dots": "轻量数据或节奏段落需要点阵律动作为整段背景时使用",

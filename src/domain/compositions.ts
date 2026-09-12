@@ -64,6 +64,15 @@ export const MEDIA_COMPOSITIONS: readonly CompositionDefinition[] = [
     defaultParams: { travel: 0.65, spacing: 1, fit: "contain" },
     recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 }
   })),
+  {
+    id: "still-image-motion", name: "静态图运镜", category: "展示",
+    description: "1 张图片 · 全屏铺底并进行克制的推近和平移",
+    tags: ["图片", "截图", "全屏", "B-roll", "运镜"],
+    renderer: "canvas", slots: [{ id: "image", label: "画面", kind: "image", minItems: 1, maxItems: 1 }],
+    defaultDurationUs: 6_000_000, defaultText: "", defaultColor: "#ffffff", defaultAccentColor: "#5fa8ff",
+    defaultParams: { travel: 0.45, fit: "contain", background: "#111316", backgroundBlur: 18 },
+    recipe: { layout: "frame", entrance: "none", paddingX: 0, paddingY: 0, borderWidth: 0, borderRadius: 0, backgroundOpacity: 0 }
+  },
   ...([
     ["background-stripes", "斜向条纹", "连续斜线平移", "#173d3b", "#73b6a5"],
     ["background-grid", "透视方格", "空间网格与缓慢运镜", "#191d20", "#536169"],

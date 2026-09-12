@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canUseEffect,
+  CORE_FREE_EFFECT_IDS,
   EFFECT_CATEGORY_ORDER,
   effectTier,
   effectTierMap,
@@ -28,9 +29,12 @@ describe("effectTierMap", () => {
     for (const category of regularCategories) {
       const effects = effectsOf(category);
       expect(effects.length, `${category} 分类为空`).toBeGreaterThan(0);
+      let quotaIndex = 0;
       effects.forEach((effect, index) => {
-        const expected = index < FREE_EFFECTS_PER_CATEGORY ? "free" : "pro";
+        const coreFree = CORE_FREE_EFFECT_IDS.includes(effect.id as (typeof CORE_FREE_EFFECT_IDS)[number]);
+        const expected = coreFree || quotaIndex < FREE_EFFECTS_PER_CATEGORY ? "free" : "pro";
         expect(effectTier(effect, tiers), `${category} #${index + 1} ${effect.id}`).toBe(expected);
+        if (!coreFree) quotaIndex += 1;
       });
     }
   });
@@ -51,9 +55,16 @@ describe("effectTierMap", () => {
   it("keeps promoted categories down to the free quota", () => {
     for (const category of PROMOTED_EFFECT_CATEGORIES) {
       const effects = effectsOf(category);
-      expect(effects).toHaveLength(FREE_EFFECTS_PER_CATEGORY);
+      const coreFreeCount = effects.filter((effect) => CORE_FREE_EFFECT_IDS.includes(effect.id as (typeof CORE_FREE_EFFECT_IDS)[number])).length;
+      expect(effects).toHaveLength(FREE_EFFECTS_PER_CATEGORY + coreFreeCount);
       for (const effect of effects) expect(effectTier(effect, tiers), effect.id).toBe("free");
     }
+  });
+
+  it("keeps image-only generation available without Pro", () => {
+    const effect = BUILTIN_EFFECTS.find((candidate) => candidate.id === "still-image-motion")!;
+    expect(effect.category).toBe("展示");
+    expect(effectTier(effect, tiers)).toBe("free");
   });
 
   it("ships a mix of free and locked effects so the limit is observable", () => {

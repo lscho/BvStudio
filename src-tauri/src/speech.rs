@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use futures_util::{stream, StreamExt};
 use reqwest::{header, Client, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -8,8 +9,8 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, OnceLock,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -21,6 +22,9 @@ use crate::secrets::{has_secret, read_secret, write_secret};
 const API_KEY_FILE: &str = "speech-api-key";
 const ASR_CHUNK_SECONDS: u64 = 480;
 const MAX_RAW_AUDIO_BYTES: u64 = 7_500_000;
+const ASR_REQUEST_CONCURRENCY: usize = 2;
+static NEXT_AUDIO_ID: AtomicU64 = AtomicU64::new(0);
+static CLOUD_SPEECH_CLIENT: OnceLock<Client> = OnceLock::new();
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,6 +96,19 @@ fn api_key(app: &AppHandle) -> Result<String, String> {
     read_secret(app, API_KEY_FILE).map_err(|_| "尚未保存云端语音 API Key".to_string())
 }
 
+fn cloud_speech_client() -> Result<&'static Client, String> {
+    if let Some(client) = CLOUD_SPEECH_CLIENT.get() {
+        return Ok(client);
+    }
+    let client = Client::builder()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let _ = CLOUD_SPEECH_CLIENT.set(client);
+    CLOUD_SPEECH_CLIENT
+        .get()
+        .ok_or_else(|| "无法初始化云端语音客户端".to_string())
+}
+
 #[tauri::command]
 pub fn save_speech_api_key(app: AppHandle, api_key: String) -> Result<(), String> {
     write_secret(&app, API_KEY_FILE, &api_key)
@@ -153,6 +170,7 @@ async fn send_json(
         .header(header::CONTENT_TYPE, "application/json")
         .bearer_auth(key)
         .json(payload)
+        .timeout(Duration::from_secs(180))
         .send();
     tokio::pin!(request);
     let response = loop {
@@ -223,19 +241,28 @@ fn audio_directory(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+fn unique_audio_name(prefix: &str) -> Result<String, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    Ok(format!(
+        "{prefix}-{}-{stamp}-{}.wav",
+        std::process::id(),
+        NEXT_AUDIO_ID.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
 #[tauri::command]
 pub async fn verify_cloud_speech(
     app: AppHandle,
     config: CloudSpeechConfig,
 ) -> Result<String, String> {
     validate_config(&config)?;
-    let client = Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|error| error.to_string())?;
-    let response = client
+    let response = cloud_speech_client()?
         .get(endpoint(&config, "models")?)
         .bearer_auth(api_key(&app)?)
+        .timeout(Duration::from_secs(30))
         .send()
         .await
         .map_err(|error| format!("云端语音连接失败: {error}"))?;
@@ -289,12 +316,8 @@ pub async fn synthesize_cloud_speech(
         return Err("单次配音文字不能超过 20000 字".into());
     }
     let payload = tts_payload(&config, text)?;
-    let client = Client::builder()
-        .timeout(Duration::from_secs(180))
-        .build()
-        .map_err(|error| error.to_string())?;
     let body = send_json(
-        &client,
+        cloud_speech_client()?,
         endpoint(&config, "chat/completions")?,
         &api_key(&app)?,
         &payload,
@@ -311,11 +334,7 @@ pub async fn synthesize_cloud_speech(
     if bytes.len() <= 44 {
         return Err("TTS 没有生成有效 WAV 音频".into());
     }
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_millis();
-    let output = audio_directory(&app)?.join(format!("mimo-speech-{stamp}.wav"));
+    let output = audio_directory(&app)?.join(unique_audio_name("mimo-speech")?);
     fs::write(&output, bytes).map_err(|error| format!("保存 TTS 音频失败: {error}"))?;
     Ok(output.to_string_lossy().into_owned())
 }
@@ -340,11 +359,7 @@ pub fn merge_cloud_speech_segments(app: AppHandle, paths: Vec<String>) -> Result
         }
         sources.push(source);
     }
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_millis();
-    let output = directory.join(format!("mimo-speech-merged-{stamp}.wav"));
+    let output = directory.join(unique_audio_name("mimo-speech-merged")?);
     let mut command = Command::new(require_command(&app, "ffmpeg")?);
     command.arg("-y");
     for source in &sources {
@@ -487,35 +502,68 @@ pub async fn transcribe_cloud_media(
         }
     };
     let result = async {
-        let client = Client::builder().timeout(Duration::from_secs(180)).build().map_err(|error| error.to_string())?;
+        let client = cloud_speech_client()?;
         let key = api_key(&app)?;
         let url = endpoint(&config, "chat/completions")?;
-        let mut segments = Vec::new();
-        let mut texts = Vec::new();
-        for (index, chunk) in chunks.iter().enumerate() {
-            if cancelled.load(Ordering::Relaxed) {
-                return Err("云端字幕识别已取消".into());
+        let chunk_count = chunks.len();
+        let requests = stream::iter(chunks.into_iter().enumerate().map(|(index, chunk)| {
+            let client = &client;
+            let key = &key;
+            let url = url.clone();
+            let model = config.asr_model.clone();
+            let language = config.asr_language.clone();
+            let cancelled = &cancelled;
+            let on_event = &on_event;
+            let job_id = &job_id;
+            async move {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err("云端字幕识别已取消".into());
+                }
+                emit_progress(on_event, job_id, "uploading", format!("正在识别第 {}/{} 段音频", index + 1, chunk_count), 0.08);
+                let data = tauri::async_runtime::spawn_blocking(move || {
+                    let bytes = fs::read(chunk).map_err(|error| format!("无法读取 ASR 音频分片: {error}"))?;
+                    Ok::<_, String>(format!("data:audio/mpeg;base64,{}", BASE64.encode(bytes)))
+                })
+                .await
+                .map_err(|error| format!("ASR 音频读取任务异常: {error}"))??;
+                let payload = json!({
+                    "model": model,
+                    "messages": [{ "role": "user", "content": [{ "type": "input_audio", "input_audio": { "data": data } }] }],
+                    "asr_options": { "language": language }
+                });
+                let body = send_json(client, url, key, &payload, Some(cancelled)).await?;
+                let text = response_content(&body)
+                    .filter(|value| !value.is_empty())
+                    .ok_or("ASR 响应没有识别文本")?;
+                let start_seconds = index as u64 * ASR_CHUNK_SECONDS;
+                let end_seconds = if duration_us > 0 {
+                    ((start_seconds * 1_000_000 + ASR_CHUNK_SECONDS * 1_000_000).min(duration_us) as f64) / 1_000_000.0
+                } else {
+                    (start_seconds + ASR_CHUNK_SECONDS) as f64
+                };
+                Ok::<_, String>((
+                    index,
+                    CloudAsrSegment { start_seconds: start_seconds as f64, end_seconds, text: text.clone() },
+                    text,
+                ))
             }
-            let progress = 0.08 + index as f64 / chunks.len() as f64 * 0.84;
-            emit_progress(&on_event, &job_id, "uploading", format!("正在识别第 {}/{} 段音频", index + 1, chunks.len()), progress);
-            let bytes = fs::read(chunk).map_err(|error| format!("无法读取 ASR 音频分片: {error}"))?;
-            let data = format!("data:audio/mpeg;base64,{}", BASE64.encode(bytes));
-            let payload = json!({
-                "model": config.asr_model,
-                "messages": [{ "role": "user", "content": [{ "type": "input_audio", "input_audio": { "data": data } }] }],
-                "asr_options": { "language": config.asr_language }
-            });
-            let body = send_json(&client, url.clone(), &key, &payload, Some(&cancelled)).await?;
-            let text = response_content(&body).filter(|value| !value.is_empty()).ok_or("ASR 响应没有识别文本")?;
-            let start_seconds = index as u64 * ASR_CHUNK_SECONDS;
-            let end_seconds = if duration_us > 0 {
-                ((start_seconds * 1_000_000 + ASR_CHUNK_SECONDS * 1_000_000).min(duration_us) as f64) / 1_000_000.0
-            } else {
-                (start_seconds + ASR_CHUNK_SECONDS) as f64
-            };
-            segments.push(CloudAsrSegment { start_seconds: start_seconds as f64, end_seconds, text: text.clone() });
-            texts.push(text);
+        }))
+        .buffer_unordered(ASR_REQUEST_CONCURRENCY);
+        futures_util::pin_mut!(requests);
+        let mut ordered = (0..chunk_count).map(|_| None).collect::<Vec<_>>();
+        let mut completed = 0;
+        while let Some(result) = requests.next().await {
+            let (index, segment, text) = result?;
+            ordered[index] = Some((segment, text));
+            completed += 1;
+            emit_progress(&on_event, &job_id, "uploading", format!("已识别 {completed}/{chunk_count} 段音频"), 0.08 + completed as f64 / chunk_count as f64 * 0.84);
         }
+        let (segments, texts): (Vec<_>, Vec<_>) = ordered
+            .into_iter()
+            .map(|value| value.ok_or("云端字幕识别结果不完整"))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .unzip();
         emit_progress(&on_event, &job_id, "ready", "云端字幕识别完成".into(), 1.0);
         Ok(CloudAsrTranscript {
             language: config.asr_language.clone(),
@@ -602,5 +650,14 @@ mod tests {
             tts_payload(&voice_design, "测试配音").unwrap_err(),
             "音色设计模型必须填写音色设计描述"
         );
+    }
+
+    #[test]
+    fn creates_unique_audio_names_for_parallel_requests() {
+        let names = (0..32)
+            .map(|_| unique_audio_name("mimo-speech").unwrap())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(names.len(), 32);
+        assert!(names.iter().all(|name| name.ends_with(".wav")));
     }
 }

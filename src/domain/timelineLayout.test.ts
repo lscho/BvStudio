@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { packTimelineLanes, timelineRows } from "@/domain/timelineLayout";
+import { minimumPixelsPerSecondForLanes, packTimelineLanes, timelineRows } from "@/domain/timelineLayout";
 import { createEmptyProject, type CompositionClip } from "@/domain/project";
 
 const clip = (id: string, startUs: number, durationUs: number): CompositionClip => ({ id, trackId: "effect-main", kind: "composition", compositionId: "motion-zoom", label: id, startUs, durationUs, locked: false, text: "", color: "#ffffff", accentColor: "#ffffff", fontSize: 48, speed: 1, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 } });
@@ -16,6 +16,19 @@ describe("timeline lane layout", () => {
     const collapsed = timelineRows([track], new Set([track.id]), 24);
     expect(collapsed).toHaveLength(1);
     expect(collapsed[0]).toMatchObject({ members: track.clips, clips: [], expanded: false });
+  });
+  it("calculates enough horizontal density for adjacent short clips to keep their real lanes", () => {
+    const clips = [clip("a", 0, 1_100_000), clip("b", 1_100_000, 2_000_000)];
+    const pixelsPerSecond = minimumPixelsPerSecondForLanes(clips, 34);
+
+    expect(pixelsPerSecond).toBe(31);
+    expect(packTimelineLanes(clips, pixelsPerSecond)).toHaveLength(1);
+  });
+  it("does not try to flatten clips whose real time ranges overlap", () => {
+    const clips = [clip("a", 0, 2_000_000), clip("b", 1_000_000, 2_000_000)];
+    const pixelsPerSecond = minimumPixelsPerSecondForLanes(clips, 34);
+
+    expect(packTimelineLanes(clips, Math.max(24, pixelsPerSecond))).toHaveLength(2);
   });
   it("reuses rows across sequential groups without overview or group header rows", () => {
     const track = createEmptyProject().tracks.find(t => t.kind === "composition")!;

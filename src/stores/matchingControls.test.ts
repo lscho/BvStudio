@@ -4,12 +4,13 @@ import { useEditorStore } from "@/stores/editorStore";
 import { buildRenderPlan } from "@/domain/renderPlan";
 import type { AiMotionMatch } from "@/services/ai/schema";
 
-const soundAsset = { id: "builtin-sound:clean-click", name: "字幕弹出.wav", kind: "audio" as const, sourcePath: "/click.wav", durationUs: 220_000 };
+const soundId = "shotcraft-audio:sfx-camera-camera-lens-shutter";
+const soundAsset = { id: soundId, name: "相机 · camera-lens-shutter", kind: "audio" as const, sourcePath: "/click.mp3", durationUs: 1_462_857 };
 const motion: AiMotionMatch = {
   captionIndex: 0, primaryEffectId: "test-title-slide", primaryText: "核心内容", secondaryEffectId: null, secondaryText: null,
   accentColor: "#5fa8ff", x: 50, y: 28, scale: 1, secondaryX: 75, secondaryY: 60, cameraPreset: "none",
   primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0,
-  mediaLayoutPreset: "full", videoLayers: [], backdropPreset: "none", chart: null, soundEffectId: "clean-click"
+  mediaLayoutPreset: "full", videoLayers: [], backdropPreset: "none", chart: null, soundEffectId: soundId
 };
 
 beforeEach(() => {
@@ -21,7 +22,7 @@ beforeEach(() => {
 
 describe("independent matching and subtitle themes", () => {
   it("matches effects without adding or clearing audio or embedded sound cues", () => {
-    useEditorStore.getState().applySoundMatches(["caption-0"], [{ captionIndex: 0, soundEffectId: "clean-click" }], [soundAsset]);
+    useEditorStore.getState().applySoundMatches(["caption-0"], [{ captionIndex: 0, soundEffectId: soundId }], [soundAsset]);
     const before = structuredClone(useEditorStore.getState().project.tracks.filter((track) => track.kind === "audio"));
     useEditorStore.getState().applyMotionMatches(["caption-0"], [motion]);
     const project = useEditorStore.getState().project;
@@ -35,9 +36,9 @@ describe("independent matching and subtitle themes", () => {
 
   it("changes only sound clips in the selected range and supports undo and redo", () => {
     useEditorStore.getState().applyMotionMatches(["caption-0"], [motion]);
-    useEditorStore.getState().applySoundMatches(["caption-1"], [{ captionIndex: 0, soundEffectId: "clean-click" }], [soundAsset]);
+    useEditorStore.getState().applySoundMatches(["caption-1"], [{ captionIndex: 0, soundEffectId: soundId }], [soundAsset]);
     const before = structuredClone(useEditorStore.getState().project);
-    useEditorStore.getState().applySoundMatches(["caption-0"], [{ captionIndex: 0, soundEffectId: "clean-click" }, { captionIndex: 0, soundEffectId: "clean-click" }], [soundAsset]);
+    useEditorStore.getState().applySoundMatches(["caption-0"], [{ captionIndex: 0, soundEffectId: soundId }, { captionIndex: 0, soundEffectId: soundId }], [soundAsset]);
     const project = useEditorStore.getState().project;
     expect(project.tracks.filter((track) => track.audioRole !== "sound")).toEqual(before.tracks.filter((track) => track.audioRole !== "sound"));
     expect(project.tracks.find((track) => track.audioRole === "sound")!.clips).toHaveLength(2);
@@ -50,13 +51,13 @@ describe("independent matching and subtitle themes", () => {
   });
 
   it.each(["clip", "track"])("preserves a locked sound %s during rematching", (lock) => {
-    useEditorStore.getState().applySoundMatches(["caption-0"], [{ captionIndex: 0, soundEffectId: "clean-click" }], [soundAsset]);
+    useEditorStore.getState().applySoundMatches(["caption-0"], [{ captionIndex: 0, soundEffectId: soundId }], [soundAsset]);
     const project = structuredClone(useEditorStore.getState().project);
     const track = project.tracks.find((track) => track.audioRole === "sound")!;
     if (lock === "track") track.locked = true;
     else track.clips[0].locked = true;
     useEditorStore.setState({ project, past: [] });
-    useEditorStore.getState().applySoundMatches(["caption-0"], [{ captionIndex: 0, soundEffectId: "clean-click" }], [soundAsset]);
+    useEditorStore.getState().applySoundMatches(["caption-0"], [{ captionIndex: 0, soundEffectId: soundId }], [soundAsset]);
     expect(useEditorStore.getState().project.tracks.find((candidate) => candidate.id === track.id)).toEqual(track);
     expect(useEditorStore.getState().past).toEqual([]);
   });

@@ -117,7 +117,7 @@ describe("AiSettingsDialog License tab", () => {
       }
     });
 
-    render(
+    const { rerender } = render(
       <AiSettingsDialog
         open={true}
         settings={DEFAULT_SETTINGS}
@@ -142,6 +142,27 @@ describe("AiSettingsDialog License tab", () => {
     // The store should reflect the Pro status
     expect(screen.getByText(/已激活 Pro 专业版/)).toBeInTheDocument();
     expect(screen.getByText(/永久授权/)).toBeInTheDocument();
+
+    rerender(
+      <AiSettingsDialog
+        open={false}
+        settings={DEFAULT_SETTINGS}
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+    rerender(
+      <AiSettingsDialog
+        open={true}
+        settings={DEFAULT_SETTINGS}
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /会员与授权/ }));
+
+    expect(screen.getByText(/已激活 Pro 专业版/)).toBeInTheDocument();
+    expect(licenseService.verifyVipStatus).not.toHaveBeenCalled();
   });
 
   it("exposes the dev identity switch only after a card key is redeemed", async () => {

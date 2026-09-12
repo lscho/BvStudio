@@ -108,21 +108,30 @@ function cleanSubtitleKeyword(value: string) {
 }
 
 export function subtitleKeywordsForText(subtitle: string, candidates: readonly (string | null | undefined)[]): string[] {
+  const contentLength = Array.from(subtitle.replace(/[，。！？、；：,.!?;:\s]/gu, "")).length;
+  if (contentLength <= 4) return [];
+  const maximumKeywords = 2;
+  const maximumHighlightedCharacters = Math.min(8, Math.max(2, Math.floor(contentLength * 0.4)));
   const result: string[] = [];
+  const highlightedCharacterCount = (keywords: readonly string[]) => highlightedTextParts(subtitle, keywords)
+    .filter((part) => part.highlighted)
+    .reduce((total, part) => total + Array.from(part.text.replace(/[，。！？、；：,.!?;:\s]/gu, "")).length, 0);
   const accept = (value: string | null | undefined) => {
     const keyword = cleanSubtitleKeyword(value ?? "");
-    if (!keyword || keyword.length < 2 || keyword.length > 16 || genericSubtitleKeywords.has(keyword) || !subtitle.includes(keyword)) return;
+    const keywordLength = Array.from(keyword.replace(/[，。！？、；：,.!?;:\s]/gu, "")).length;
+    if (!keyword || keywordLength < 2 || keywordLength > 8 || genericSubtitleKeywords.has(keyword) || !subtitle.includes(keyword)) return;
     if (result.some((current) => current === keyword || current.includes(keyword) || keyword.includes(current))) return;
-    if (!result.includes(keyword)) result.push(keyword);
+    if (result.length >= maximumKeywords || highlightedCharacterCount([...result, keyword]) > maximumHighlightedCharacters) return;
+    result.push(keyword);
   };
   candidates.forEach(accept);
-  if (result.length < 3) {
+  if (result.length === 0) {
     subtitle
       .split(/[，。！？、；：,.!?;:]|(?:以及|或者|并且|而且|和|与|及)/u)
       .map(cleanSubtitleKeyword)
-      .filter((keyword) => keyword.length >= 2 && keyword.length <= 16)
+      .filter((keyword) => Array.from(keyword).length >= 2 && Array.from(keyword).length <= 8)
       .forEach((keyword) => {
-        if (result.length < 3) accept(keyword);
+        if (result.length === 0) accept(keyword);
       });
   }
   return result;

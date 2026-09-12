@@ -5,6 +5,15 @@ import { focusCardMediaRect, focusCardMoveProgress, type FocusCardRect } from "@
 import { loadCompositionVideo, releaseCompositionVideo, seekCompositionVideo } from "@/services/compositionVideo";
 import type { CompositionImageSource, MediaCompositionRenderer } from "@/compositions/threeRenderer";
 
+export function backgroundDotVisual(timeUs: number, xRatio: number, yRatio: number, travel: number) {
+  const phase = timeUs / 1_000_000 * (0.65 + travel * 1.4) * Math.PI * 2;
+  const wave = (Math.sin(xRatio * Math.PI * 5 + yRatio * Math.PI * 4 - phase) + 1) / 2;
+  return {
+    radiusScale: 0.55 + wave * 0.65,
+    opacity: 0.4 + wave * 0.6
+  };
+}
+
 export async function createCanvasCompositionRenderer(width: number, height: number, sources: readonly CompositionImageSource[], params: CompositionParams, signal: AbortSignal | undefined, id: string): Promise<MediaCompositionRenderer> {
   const canvas = document.createElement("canvas");
   canvas.width = width; canvas.height = height;
@@ -31,12 +40,14 @@ export async function createCanvasCompositionRenderer(width: number, height: num
     const travel = compositionNumber(params, "travel", 0.65, 0, 1);
     const spacing = compositionNumber(params, "spacing", 1, 0.8, 1.6);
     const color = (key: string, fallback: string) => typeof params[key] === "string" && /^#[0-9a-f]{6}$/iu.test(params[key]) ? params[key] : fallback;
-    const drawMedia = (index: number, x: number, y: number, w: number, h: number, scale = 1, rotation = 0, opacity = 1) => {
+    const drawMedia = (index: number, x: number, y: number, w: number, h: number, scale = 1, rotation = 0, opacity = 1, fitOverride?: "cover" | "contain", filter = "none") => {
       const item = media[index]; if (!item) return;
       const sourceW = item instanceof HTMLVideoElement ? item.videoWidth : item.naturalWidth;
       const sourceH = item instanceof HTMLVideoElement ? item.videoHeight : item.naturalHeight;
-      const ratio = (params.fit === "cover" ? Math.max : Math.min)(w / sourceW, h / sourceH);
+      const fit = fitOverride ?? (params.fit === "cover" ? "cover" : "contain");
+      const ratio = (fit === "cover" ? Math.max : Math.min)(w / sourceW, h / sourceH);
       context.save(); context.translate(x, y); context.rotate(rotation); context.scale(scale, scale); context.globalAlpha = opacity;
+      context.filter = filter;
       context.beginPath(); context.rect(-w / 2, -h / 2, w, h); context.clip();
       context.drawImage(item, -sourceW * ratio / 2, -sourceH * ratio / 2, sourceW * ratio, sourceH * ratio);
       context.restore();
@@ -118,9 +129,11 @@ export async function createCanvasCompositionRenderer(width: number, height: num
             context.stroke();
           } else if (id === "background-dots") {
             for (let y = unit / 2; y < height; y += unit) for (let x = unit / 2; x < width; x += unit) {
-              const pulse = 0.7 + 0.3 * Math.sin(x / width * 5 + y / height * 5 - phase * Math.PI);
-              context.beginPath(); context.arc(x, y, unit * 0.065 * pulse, 0, Math.PI * 2); context.fill();
+              const dot = backgroundDotVisual(timeUs, x / width, y / height, travel);
+              context.globalAlpha = dot.opacity;
+              context.beginPath(); context.arc(x, y, unit * 0.065 * dot.radiusScale, 0, Math.PI * 2); context.fill();
             }
+            context.globalAlpha = 1;
           } else {
             for (let row = -3; row < height / unit + 4; row += 1) {
               context.beginPath();
@@ -131,6 +144,20 @@ export async function createCanvasCompositionRenderer(width: number, height: num
               context.stroke();
             }
           }
+          return;
+        }
+        if (id === "still-image-motion") {
+          const blur = compositionNumber(params, "backgroundBlur", 18, 0, 40);
+          const drift = (progress - 0.5) * travel;
+          context.fillStyle = color("background", "#111316");
+          context.fillRect(0, 0, width, height);
+          drawMedia(0, width / 2, height / 2, width, height, 1.08 + progress * 0.035 * travel, 0, 0.48, "cover", `blur(${blur}px)`);
+          context.fillStyle = "rgb(0 0 0 / 0.22)";
+          context.fillRect(0, 0, width, height);
+          const fit = params.fit === "cover" ? "cover" : "contain";
+          const frameWidth = fit === "cover" ? width : width * 0.94;
+          const frameHeight = fit === "cover" ? height : height * 0.92;
+          drawMedia(0, width / 2 + drift * width * 0.035, height / 2 - drift * height * 0.02, frameWidth, frameHeight, 1 + progress * 0.045 * travel, 0, 1, fit);
           return;
         }
         const segment = compositionSegment(timeUs, durationUs, media.length);
