@@ -86,8 +86,10 @@ test("uploads release assets to OSS after the manifest is validated", () => {
   assert.ok(uploadStep);
   // 未配置基址时必须整步跳过，让仓库在没有 OSS 的情况下仍能正常发布
   assert.match(uploadStep, /if: steps\.asset-base\.outputs\.baseUrl != ''/u);
+  assert.match(uploadStep, /OSS_REGION: \$\{\{ vars\.OSS_REGION \}\}/u);
   assert.match(uploadStep, /OSS_ACCESS_KEY_ID: \$\{\{ secrets\.OSS_ACCESS_KEY_ID \}\}/u);
   assert.match(uploadStep, /OSS_ACCESS_KEY_SECRET: \$\{\{ secrets\.OSS_ACCESS_KEY_SECRET \}\}/u);
+  assert.match(uploadStep, /for name in OSS_REGION OSS_ENDPOINT OSS_BUCKET OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET; do/u);
   // 逐个文件上传：批量 `cp -r` 下单个文件失败只会被记进 report 再继续，job 仍成功，
   // 产物就静默漏传。单文件 cp 失败会以非零码退出，配合 set -e 让 job 失败。
   assert.match(uploadStep, /for file in "\$\{files\[@\]\}"; do/u);
@@ -103,6 +105,7 @@ test("uploads release assets to OSS after the manifest is validated", () => {
     .join("\n");
   assert.ok(ossutilCommands, "未找到 ossutil 命令行");
   assert.match(ossutilCommands, /ossutil cp "\$file" "oss:\/\/\$\{OSS_BUCKET\}\/\$\{OBJECT_PREFIX\}\/\$\{name\}"/u);
+  assert.match(ossutilCommands, /--region "\$OSS_REGION"/u);
   assert.doesNotMatch(ossutilCommands, /cp -r/u);
   // ossutil 2.x 没有 1.x 的 disable-ignore-error，写了会直接报 unknown flag；
   // no-error-report 只关报告文件，不改变退出码语义，加了也没用。
