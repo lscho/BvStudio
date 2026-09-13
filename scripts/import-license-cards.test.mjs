@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { importCards } from "./import-license-cards.mjs";
+import { importCards, resolveNamespace } from "./import-license-cards.mjs";
+
+test("uses an explicit namespace instead of the gitignored local config", async () => {
+  assert.equal(await resolveNamespace({ namespace: "  ci-release  " }), "ci-release");
+});
+
+test("rejects an explicitly empty namespace instead of silently using local config", async () => {
+  await assert.rejects(() => resolveNamespace({ namespace: "  " }), /--namespace 必须是非空名称/u);
+});
 
 function makeCards(count) {
   return Array.from({ length: count }, (_, index) => ({

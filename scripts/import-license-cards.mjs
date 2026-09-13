@@ -42,6 +42,13 @@ function parseArgs(argv) {
 }
 
 export async function resolveNamespace(args) {
+  if (Object.hasOwn(args ?? {}, "namespace")) {
+    if (typeof args.namespace !== "string" || !args.namespace.trim()) {
+      throw new Error("--namespace 必须是非空名称");
+    }
+    return args.namespace.trim();
+  }
+
   const configUrl = new URL("../edge/config.js", import.meta.url);
   if (existsSync(configUrl)) {
     const config = await import(configUrl.href);
