@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import type { CompositionRenderProps } from "@/compositions/registry";
-import { overlayStudioProgress as progressAt } from "@/domain/overlayStudioMotion";
+import { motionItemStartUs, overlayStudioProgress as progressAt } from "@/domain/overlayStudioMotion";
 import { studioEnterStyle as enterStyle, studioLength } from "@/compositions/overlayStudioStyle";
 
 function paramString(props: CompositionRenderProps, key: string, fallback = "") {
@@ -40,7 +40,7 @@ export function PinBoardCard(props: CompositionRenderProps) {
       {title && <div className="pbd-title" style={{ ...enterStyle(props.timeUs, 0, 460_000, 0, -18), opacity: progressAt(props.timeUs, 0, 420_000) }}>{title}</div>}
       {subtitle && <div className="pbd-sub" style={{ ...enterStyle(props.timeUs, 140_000, 460_000, 0, -14), opacity: progressAt(props.timeUs, 140_000, 420_000) }}>{subtitle}</div>}
       {items.map((item, index) => {
-        const startUs = 400_000 + index * stepUs;
+        const startUs = motionItemStartUs(props.params, index, 400_000 + index * stepUs);
         const progress = progressAt(props.timeUs, startUs, 430_000, "pin");
         return <div className="pbd-chip" key={`${index}-${item}`} style={{ opacity: progressAt(props.timeUs, startUs, 340_000), transform: `translateY(${studioLength(-16 * (1 - progress))}) scale(${0.68 + 0.32 * progress})` }}>{item}</div>;
       })}
@@ -60,7 +60,7 @@ export function ChecklistCard(props: CompositionRenderProps) {
     {title && <div className="hud-kicker" style={enterStyle(props.timeUs)}>{title}</div>}
     {items.map((item, index) => {
       const done = index < checked;
-      return <div className={`ck-item ${done ? "is-done" : "is-todo"}`} key={`${index}-${item}`} style={enterStyle(props.timeUs, index * stepUs, 480_000, fromX, 0)}>
+      return <div className={`ck-item ${done ? "is-done" : "is-todo"}`} key={`${index}-${item}`} style={enterStyle(props.timeUs, motionItemStartUs(props.params, index, index * stepUs), 480_000, fromX, 0)}>
         <span className="ck-box">{done ? "✓" : ""}</span>
         <span>{item}</span>
       </div>;

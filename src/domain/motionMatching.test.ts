@@ -6,6 +6,21 @@ import { referenceMotionMatchingCards } from "@/domain/motionMatchingCatalog.gen
 import { importedOverlayStudioEffects } from "@/domain/overlayStudioCatalog";
 
 describe("motion matching catalog", () => {
+  it("preserves shared subtitle anchors for multiple items", () => {
+    const effect = BUILTIN_EFFECTS.find((item) => item.id === "checklist")!;
+    const params = compileAiMotionParams({ effect, baseParams: { items: "分析|提取|生成" }, overrides: [],
+      timingCaptionIndices: [0, 0, 1], startCaptionIndex: 0, endCaptionIndex: 1,
+      captions: [{ startSeconds: 0, endSeconds: 4 }, { startSeconds: 4, endSeconds: 8 }], text: "流程｜分析｜提取｜生成" });
+    expect(params.revealTimesUs).toBe("0|0|4000000");
+  });
+  it("compiles non-uniform subtitle anchors as exact integer microseconds", () => {
+    const effect = BUILTIN_EFFECTS.find((item) => item.id === "checklist")!;
+    const params = compileAiMotionParams({ effect, baseParams: { items: "投入|位置|运营" }, overrides: [],
+      timingCaptionIndices: [0, 1, 2], startCaptionIndex: 0, endCaptionIndex: 2,
+      captions: [{ startSeconds: 10, endSeconds: 12 }, { startSeconds: 12.4, endSeconds: 19 }, { startSeconds: 19.7, endSeconds: 24 }],
+      text: "风险｜投入｜位置｜运营" });
+    expect(params.revealTimesUs).toBe("0|2400000|9700000");
+  });
   it("keeps every replicated reference effect connected to its authored matching card", () => {
     expect(referenceMotionMatchingCardCount).toBe(102);
     expect(importedOverlayStudioEffects.filter((effect) => !hasReferenceMotionMatchingCard(effect.id))).toEqual([]);

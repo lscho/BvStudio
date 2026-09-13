@@ -2,6 +2,40 @@ import { describe, expect, it } from "vitest";
 import { aiTimedScriptSchema, createAiEffectSelectionSchema, createAiMotionMatchesSchema, createAiMotionSelectionSchema, createEffectSelectionJsonSchema, createMotionMatchesJsonSchema, createMotionSelectionJsonSchema } from "@/services/ai/schema";
 
 describe("two-stage AI schemas", () => {
+  it.each(["primary", "secondary"] as const)("reports actionable per-field %s parameter errors without accepting unsafe overrides", (slot) => {
+    const match = { captionIndex: 0, primaryEffectId: "checklist", primaryText: "步骤｜分析｜完成", secondaryEffectId: "checklist", secondaryText: "步骤｜分析｜完成",
+      accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 50, secondaryY: 50, cameraPreset: "none", chart: null,
+      [`${slot}Params`]: [{ key: "items", value: "分析|完成" }, { key: "items", value: "冲突内容" }, { key: "stepMs", value: 800 }, { key: "img", value: "private-media-value" }, { key: "inventedParam", value: true }] };
+    const result = createAiMotionMatchesSchema(["checklist"]).safeParse({ matches: [match] });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const issues = result.error.issues;
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: ["matches", 0, `${slot}Params`, 1, "key"], message: expect.stringContaining("重复") }),
+      expect.objectContaining({ path: ["matches", 0, `${slot}Params`, 2, "key"], message: expect.stringContaining(`${slot}TimingCaptionIndices`) }),
+      expect.objectContaining({ path: ["matches", 0, `${slot}Params`, 3, "key"], message: expect.stringContaining("img") }),
+      expect.objectContaining({ path: ["matches", 0, `${slot}Params`, 4, "key"], message: expect.stringContaining("inventedParam") })
+    ]));
+    expect(issues.every((issue) => issue.message.includes("checklist"))).toBe(true);
+    expect(issues.at(-1)?.message).toContain("允许字段");
+    expect(JSON.stringify(issues)).not.toContain("private-media-value");
+  });
+
+  it("restricts generated parameter keys to the selected effects while retaining per-effect validation", () => {
+    const schema = createMotionMatchesJsonSchema(["checklist", "quad-map"]);
+    const params = schema.properties.matches.items.properties;
+    for (const field of [params.primaryParams, params.secondaryParams]) {
+      expect(field.items.properties.key).toMatchObject({ enum: expect.arrayContaining(["items", "cells"]) });
+      expect(JSON.stringify(field.items.properties.key)).not.toContain('"stepMs"');
+      expect(JSON.stringify(field.items.properties.key)).not.toContain('"img"');
+    }
+    expect(createMotionMatchesJsonSchema([]).properties.matches.items.properties.secondaryParams.maxItems).toBe(0);
+    const match = { captionIndex: 0, primaryEffectId: "checklist", primaryText: "步骤｜分析｜完成", secondaryEffectId: null, secondaryText: null,
+      accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 50, secondaryY: 50, cameraPreset: "none", chart: null,
+      primaryParams: [{ key: "cells", value: "||分析|完成" }] };
+    expect(() => createAiMotionMatchesSchema(["checklist", "quad-map"]).parse({ matches: [match] })).toThrow("checklist 参数 cells");
+    expect(createAiMotionMatchesSchema(["checklist", "quad-map"]).parse({ matches: [{ ...match, primaryParams: [{ key: "items", value: "分析|完成" }] }] }).matches[0].primaryParams).toEqual([{ key: "items", value: "分析|完成" }]);
+  });
   it("grounds semantic segments and their effect choices to caption indexes", () => {
     const selection = {
       segments: [{ segmentId: "pain-and-fix", startCaptionIndex: 0, endCaptionIndex: 2, title: "痛点与方案", intent: "pain", evidenceKinds: ["process"], primaryEffectId: "pain-points", secondaryEffectId: null, materialNeed: "", selectionReason: "连续三条字幕在列举问题" }]

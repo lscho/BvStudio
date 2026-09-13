@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { BUILTIN_EFFECTS, compositionById } from "@/domain/effects";
 import { aiCompositionSlots } from "@/domain/compositions";
-import { allowedAiMotionParameterKeys } from "@/domain/motionMatching";
+import { allowedAiMotionParameterKeys, isMotionTimingParameter } from "@/domain/motionMatching";
 import { CAMERA_PRESETS } from "@/domain/camera";
 import { VIDEO_LAYOUT_PRESETS } from "@/domain/transforms";
 import { VIDEO_TRANSITION_PRESETS } from "@/domain/project";
@@ -263,8 +263,18 @@ export function createAiMotionMatchesSchema(allowedEffectIds: readonly string[],
         }
         if (!effectId) return;
         const allowed = new Set(allowedAiMotionParameterKeys(compositionById(effectId)));
-        const keys = params.map((param) => param.key);
-        if (new Set(keys).size !== keys.length || keys.some((key) => !allowed.has(key))) context.addIssue({ code: "custom", message: "动效参数包含重复、媒体路径、时间参数或该动效不支持的字段", path: [path] });
+        const seen = new Set<string>();
+        params.forEach(({ key }, index) => {
+          const timingField = path === "primaryParams" ? "primaryTimingCaptionIndices" : "secondaryTimingCaptionIndices";
+          const reason = seen.has(key) ? "字段重复，每个字段只保留一个确定的值"
+            : allowed.has(key) ? null
+              : isMotionTimingParameter(key) || key === "revealTimesUs" ? `时间由客户端计算，请改用 ${timingField} 提供真实字幕索引`
+                : ["theme", "sceneLayout", "sceneTitle", "shotcraftUnderlay"].includes(key) ? "由客户端统一设置，不应在 AI 参数中填写"
+                  : "不是该动效允许的字段；媒体只能通过 compositionBindings 绑定";
+          if (reason) context.addIssue({ code: "custom", path: [path, index, "key"],
+            message: `${effectId} 参数 ${key}：${reason}。允许字段：${[...allowed].join("、") || "无，请返回空参数数组"}` });
+          seen.add(key);
+        });
       };
       validateParams(match.primaryEffectId, match.primaryParams, "primaryParams");
       validateParams(match.secondaryEffectId, match.secondaryParams, "secondaryParams");
@@ -346,6 +356,14 @@ export const CHAPTER_PLAN_JSON_SCHEMA = {
 export function createMotionMatchesJsonSchema(allowedEffectIds: readonly string[], allowedMediaAssetIds: readonly string[] = [], allowedImageIds: readonly string[] = [], allowedSoundIds: readonly string[] = []) {
   const visualIds = [...new Set([...allowedImageIds, ...allowedMediaAssetIds])];
   const nullableEnum = (values: readonly string[]) => values.length ? { anyOf: [{ type: "string", enum: [...values] }, { type: "null" }] } : { type: "null" };
+  // The union constrains generation; Zod still checks each key against its own selected effect.
+  const parameterKeys = [...new Set(allowedEffectIds.flatMap((id) => allowedAiMotionParameterKeys(compositionById(id))))];
+  const parameterOverrides = { type: "array", maxItems: parameterKeys.length ? 24 : 0, items: {
+    type: "object", additionalProperties: false, required: ["key", "value"], properties: {
+      key: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9]*$", maxLength: 64, ...(parameterKeys.length ? { enum: parameterKeys } : {}) },
+      value: { anyOf: [{ type: "string", maxLength: 4000 }, { type: "number", minimum: -1000000, maximum: 1000000 }, { type: "boolean" }] }
+    }
+  } };
   return {
     type: "object", additionalProperties: false, required: ["matches"],
     properties: {
@@ -354,7 +372,7 @@ export function createMotionMatchesJsonSchema(allowedEffectIds: readonly string[
         required: ["captionIndex", "subtitleKeywords", "motionGroupId", "persistUntilCaptionIndex", "primaryEffectId", "primaryText", "primaryParams", "primaryTimingCaptionIndices", "compositionBindings", "materialPlaceholder", "secondaryEffectId", "secondaryText", "secondaryParams", "secondaryTimingCaptionIndices", "accentColor", "x", "y", "scale", "secondaryX", "secondaryY", "cameraPreset", "soundEffectId", "shotcraftTransition", "shotcraftSounds", "videoLayers", "backdropPreset", "chart"],
         properties: {
           compositionBindings: { type: "array", maxItems: visualIds.length ? 8 : 0, items: { type: "object", additionalProperties: false, required: ["slotId", "assetIds"], properties: { slotId: { type: "string" }, assetIds: { type: "array", maxItems: 12, items: visualIds.length ? { type: "string", enum: visualIds } : { type: "string" } } } } }, materialPlaceholder: { type: "boolean" },
-          captionIndex: { type: "integer", minimum: 0, maximum: 79 }, subtitleKeywords: { type: "array", maxItems: 3, items: { type: "string", minLength: 2, maxLength: 16 } }, motionGroupId: { anyOf: [{ type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, { type: "null" }] }, persistUntilCaptionIndex: { anyOf: [{ type: "integer", minimum: 0, maximum: 79 }, { type: "null" }] }, primaryEffectId: nullableEnum(allowedEffectIds), primaryText: { type: "string" }, primaryParams: { type: "array", maxItems: 24, items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9]*$", maxLength: 64 }, value: { anyOf: [{ type: "string", maxLength: 4000 }, { type: "number", minimum: -1000000, maximum: 1000000 }, { type: "boolean" }] } } } }, primaryTimingCaptionIndices: { type: "array", maxItems: 16, items: { type: "integer", minimum: 0, maximum: 79 } }, secondaryEffectId: nullableEnum(allowedEffectIds), secondaryText: { anyOf: [{ type: "string" }, { type: "null" }] }, secondaryParams: { type: "array", maxItems: 24, items: { type: "object", additionalProperties: false, required: ["key", "value"], properties: { key: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9]*$", maxLength: 64 }, value: { anyOf: [{ type: "string", maxLength: 4000 }, { type: "number", minimum: -1000000, maximum: 1000000 }, { type: "boolean" }] } } } }, secondaryTimingCaptionIndices: { type: "array", maxItems: 16, items: { type: "integer", minimum: 0, maximum: 79 } }, accentColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }, x: { type: "number", minimum: 5, maximum: 95 }, y: { type: "number", minimum: 5, maximum: 95 }, scale: { type: "number", minimum: 0.65, maximum: 2.5 }, secondaryX: { type: "number", minimum: 5, maximum: 95 }, secondaryY: { type: "number", minimum: 5, maximum: 95 }, cameraPreset: { type: "string", enum: [...cameraPresetIds] }, soundEffectId: nullableEnum(allowedSoundIds), shotcraftTransition: { type: "string", enum: [...shotcraftTransitionIds] }, shotcraftSounds: { type: "array", maxItems: allowedSoundIds.length ? 4 : 0, items: { type: "object", additionalProperties: false, required: ["event", "soundId", "volume"], properties: { event: { type: "string", minLength: 1, maxLength: 80 }, soundId: allowedSoundIds.length ? { type: "string", enum: [...allowedSoundIds] } : { type: "string" }, volume: { type: "number", minimum: 0, maximum: 0.6 } } } },
+          captionIndex: { type: "integer", minimum: 0, maximum: 79 }, subtitleKeywords: { type: "array", maxItems: 3, items: { type: "string", minLength: 2, maxLength: 16 } }, motionGroupId: { anyOf: [{ type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, { type: "null" }] }, persistUntilCaptionIndex: { anyOf: [{ type: "integer", minimum: 0, maximum: 79 }, { type: "null" }] }, primaryEffectId: nullableEnum(allowedEffectIds), primaryText: { type: "string" }, primaryParams: parameterOverrides, primaryTimingCaptionIndices: { type: "array", maxItems: 16, items: { type: "integer", minimum: 0, maximum: 79 } }, secondaryEffectId: nullableEnum(allowedEffectIds), secondaryText: { anyOf: [{ type: "string" }, { type: "null" }] }, secondaryParams: parameterOverrides, secondaryTimingCaptionIndices: { type: "array", maxItems: 16, items: { type: "integer", minimum: 0, maximum: 79 } }, accentColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }, x: { type: "number", minimum: 5, maximum: 95 }, y: { type: "number", minimum: 5, maximum: 95 }, scale: { type: "number", minimum: 0.65, maximum: 2.5 }, secondaryX: { type: "number", minimum: 5, maximum: 95 }, secondaryY: { type: "number", minimum: 5, maximum: 95 }, cameraPreset: { type: "string", enum: [...cameraPresetIds] }, soundEffectId: nullableEnum(allowedSoundIds), shotcraftTransition: { type: "string", enum: [...shotcraftTransitionIds] }, shotcraftSounds: { type: "array", maxItems: allowedSoundIds.length ? 4 : 0, items: { type: "object", additionalProperties: false, required: ["event", "soundId", "volume"], properties: { event: { type: "string", minLength: 1, maxLength: 80 }, soundId: allowedSoundIds.length ? { type: "string", enum: [...allowedSoundIds] } : { type: "string" }, volume: { type: "number", minimum: 0, maximum: 0.6 } } } },
           videoLayers: { type: "array", maxItems: allowedMediaAssetIds.length ? 6 : 0, items: { type: "object", additionalProperties: false, required: ["assetId", "role", "sourceInSeconds", "layoutPreset", "shapePreset", "transitionPreset", "cameraPreset", "volume", "focus"], properties: {
             assetId: allowedMediaAssetIds.length ? { type: "string", enum: [...allowedMediaAssetIds] } : { type: "string" }, role: { type: "string", enum: videoRoleSchema.options }, sourceInSeconds: { type: "number", minimum: 0, maximum: 86_400 }, layoutPreset: { type: "string", enum: [...videoLayoutPresetIds] }, shapePreset: { type: "string", enum: videoShapeSchema.options }, transitionPreset: { type: "string", enum: videoTransitionSchema.options }, cameraPreset: { type: "string", enum: [...cameraPresetIds] }, volume: { type: "number", minimum: 0, maximum: 1 }, focus: { anyOf: [{ type: "object", additionalProperties: false, required: ["enabled", "x", "y", "zoom", "startOffsetSeconds", "durationSeconds"], properties: { enabled: { type: "boolean" }, x: { type: "number", minimum: 0, maximum: 100 }, y: { type: "number", minimum: 0, maximum: 100 }, zoom: { type: "number", minimum: 1, maximum: 4 }, startOffsetSeconds: { type: "number", minimum: 0, maximum: 86_400 }, durationSeconds: { type: "number", minimum: 0.1, maximum: 86_400 } } }, { type: "null" }] }
           } } }, backdropPreset: { type: "string", enum: backdropPresetSchema.options },

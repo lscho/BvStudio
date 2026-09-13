@@ -1,7 +1,8 @@
 import type { EffectDef, EffectProps } from "../types";
 import { useEnter } from "../useAnimation";
 import { useCardElapsed } from "./useTimelineTime";
-import { hasVecIcon, VecIcon } from "./vecIcons";
+import { VecIcon } from "./vecIcons";
+import { motionItemStartUs } from "@/domain/overlayStudioMotion";
 import {
   ACCENT_OPTIONS,
   ACCENT_VAR,
@@ -12,6 +13,7 @@ import {
 } from "./accent";
 
 export interface GlowBadgesParams {
+  revealTimesUs?: string;
   theme: "dark" | "light";
   position: "center" | "left" | "right" | "top";
   /** 玻璃底板:黑玻璃 / 白玻璃 */
@@ -85,12 +87,12 @@ function GlowBadges({ params, playToken }: EffectProps<GlowBadgesParams>) {
       <div className="gbd-row">
         {list.map((b, i) => (
           <div
-            className={`gbd-badge ${elapsed >= (badgesAt ?? 0.8) + i * step ? "is-on" : ""}`}
+            className={`gbd-badge ${elapsed * 1_000_000 >= motionItemStartUs({ revealTimesUs: params.revealTimesUs ?? "" }, i, ((badgesAt ?? 0.8) + i * step) * 1_000_000) ? "is-on" : ""}`}
             key={i}
           >
             {b.label && <div className="gbd-lb">{b.label}</div>}
             <div className="gbd-orb">
-              {hasVecIcon(b.icon) ? <VecIcon name={b.icon} size={62} /> : <span>{b.icon}</span>}
+              <VecIcon name={b.icon} size={62} />
             </div>
             {b.name && <div className="gbd-name">{b.name}</div>}
             {b.sub && <div className="gbd-sub">{b.sub}</div>}

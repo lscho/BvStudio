@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { compositionById } from "@/domain/effects";
-import { isBackgroundComposition } from "@/domain/compositions";
-import { defaultShotcraftSettings, isShotcraftComposition } from "@/domain/shotcraft";
+import { aiCompositionSlots, isBackgroundComposition, isSequencedMediaComposition, slotAccepts } from "@/domain/compositions";
+import { defaultShotcraftSettings, isShotcraftComposition, shotcraftHasDesignedText } from "@/domain/shotcraft";
+import { shotcraftPairingProfile, shotcraftVisualPairAllowed } from "@/domain/shotcraftPairing";
 import { subtitleShotcraftScene, validateShotcraftPlan } from "@/domain/shotcraftPlan";
 import { shotcraftAdaptationIssue, shotcraftContentIssues, shotcraftImpactCount } from "@/domain/shotcraftLibrary/aiPolicy";
 import { parseStoryboardCues, storyboardEffectAllowed, storyboardInformationCardIssue, storyboardRoleAt, storyboardShotcraftCardAllowed } from "@/domain/storyboard";
@@ -13,7 +14,7 @@ export function subtitleShotcraftEligible(id: string) {
 }
 
 export function storyboardFullFrameEffect(id: string) {
-  return isShotcraftComposition(id) || id === "still-image-motion" || isBackgroundComposition(id);
+  return isShotcraftComposition(id) || id === "still-image-motion" || isSequencedMediaComposition(id) || isBackgroundComposition(id);
 }
 
 export function shotcraftSceneForMatch(match: AiMotionMatch, durationSeconds: number) {
@@ -23,12 +24,42 @@ export function shotcraftSceneForMatch(match: AiMotionMatch, durationSeconds: nu
 
 /** Check both the resolved selection and the final timeline so normalization cannot silently remove a card. */
 export function assertStoryboardCardCoverage(selection: AiMotionSelection, input: MatchTimelineMotionInput, matches?: readonly AiMotionMatch[]) {
+  const unpaired = storyboardUnpairedSegments(selection, input);
+  if (unpaired.length) throw new z.ZodError(unpaired.map((segment) => ({
+    code: "custom", path: ["segments", selection.segments.indexOf(segment), "secondaryEffectId"],
+    message: `语义段“${segment.title}”的 ${segment.primaryEffectId} 与 ${segment.secondaryEffectId} 不属于适配组合，请重新编排以重选适配的信息卡。`
+  })));
+  assertStoryboardCardContent(selection, input, matches);
+}
+
+export function storyboardUnpairedSegments(selection: AiMotionSelection, input: MatchTimelineMotionInput) {
+  return input.storyboard?.mode !== "auto" ? [] : selection.segments.filter((segment) => segment.roll === "b-roll"
+    && segment.primaryEffectId && isShotcraftComposition(segment.primaryEffectId) && segment.secondaryEffectId
+    && !shotcraftVisualPairAllowed(segment.primaryEffectId, segment.secondaryEffectId));
+}
+
+function storyboardInformationCardRequired(segment: AiMotionSelection["segments"][number], input: MatchTimelineMotionInput) {
+  if (input.storyboard?.mode !== "auto" || segment.roll !== "b-roll" || !segment.primaryEffectId || !isShotcraftComposition(segment.primaryEffectId)) return false;
+  const hasInformation = !["ambient", "transition"].includes(segment.intent) || segment.evidenceKinds.some((kind) => kind !== "none");
+  if (!hasInformation || !input.captions.slice(segment.startCaptionIndex, segment.endCaptionIndex + 1).some((caption) => caption.text.trim())) return false;
+  const slots = aiCompositionSlots(segment.primaryEffectId);
+  const hasVisualContent = slots.length > 0 && slots.every((slot) => input.materials.filter((material) =>
+    slotAccepts(slot, material.kind ?? "video") && !["a-roll", "presenter"].includes(material.roleHint ?? "")
+  ).length >= Math.max(1, slot.minItems));
+  return Boolean(segment.secondaryEffectId || shotcraftPairingProfile(segment.primaryEffectId)
+    || (!shotcraftHasDesignedText(segment.primaryEffectId) && !hasVisualContent));
+}
+
+export function storyboardMissingCardSegments(selection: AiMotionSelection, input: MatchTimelineMotionInput) {
+  return selection.segments.filter((segment) => !segment.secondaryEffectId && storyboardInformationCardRequired(segment, input));
+}
+
+/** Selection may still need a constrained visual-pair repair; content and structural rules remain mandatory. */
+export function assertStoryboardCardContent(selection: AiMotionSelection, input: MatchTimelineMotionInput, matches?: readonly AiMotionMatch[]) {
   if (input.storyboard?.mode !== "auto") return;
   const issues: z.core.$ZodIssue[] = [];
   for (const [index, segment] of selection.segments.entries()) {
-    if (segment.roll !== "b-roll" || !segment.primaryEffectId || !isShotcraftComposition(segment.primaryEffectId)) continue;
-    const hasInformation = !["ambient", "transition"].includes(segment.intent) || segment.evidenceKinds.some((kind) => kind !== "none");
-    if (!hasInformation || !input.captions.slice(segment.startCaptionIndex, segment.endCaptionIndex + 1).some((caption) => caption.text.trim())) continue;
+    if (!segment.primaryEffectId || !storyboardInformationCardRequired(segment, input)) continue;
     const cardId = segment.secondaryEffectId;
     if (!cardId || !storyboardShotcraftCardAllowed(segment.primaryEffectId, cardId)) {
       issues.push({ code: "custom", path: ["segments", index, "secondaryEffectId"], message: `语义段“${segment.title}”的全屏 Shotcraft 必须叠加一张信息卡。请从允许目录中选择卡片/数据/布局动效，内容依据该段字幕；没有明确数值时使用清单、对比、流程或结论，禁止编造数字。` });

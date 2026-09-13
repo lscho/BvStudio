@@ -42,7 +42,7 @@ const GlowOrbAmbient: React.FC = () => {
   // 有效时间：0–90f 匀速，90–120f 用 out-sine 减速收敛（起始斜率≈0.94，近似连续），
   // f≥120 clamp 恒定 => 末 30f 所有位置/阴影完全静止。
   const t =
-    f <= 90
+    _content.underlay ? f * 0.25 : f <= 90
       ? f
       : 90 +
         interpolate(f, [90, 120], [0, 18], {
@@ -75,7 +75,7 @@ const GlowOrbAmbient: React.FC = () => {
   const shadowAlpha = 0.25 * glow;
 
   return (
-    <AbsoluteFill style={{ background: '#1d1d1b', overflow: 'hidden' }}>
+    <AbsoluteFill style={{ background: _content.underlay ? _content.appearance?.surface ?? '#111316' : '#1d1d1b', overflow: 'hidden' }}>
       {ORBS.map((o, i) => (
         <div
           key={i}
@@ -86,14 +86,14 @@ const GlowOrbAmbient: React.FC = () => {
             width: o.size,
             height: o.size,
             borderRadius: '50%',
-            background: `radial-gradient(circle, rgba(232,232,228,${o.peak}) 0%, rgba(232,232,228,${o.peak * 0.5}) 42%, rgba(232,232,228,0) 70%)`,
+            background: _content.underlay ? `radial-gradient(circle, ${_content.appearance?.accent ?? '#5fa8ff'}, transparent 70%)` : `radial-gradient(circle, rgba(232,232,228,${o.peak}) 0%, rgba(232,232,228,${o.peak * 0.5}) 42%, rgba(232,232,228,0) 70%)`,
             filter: 'blur(100px)',
-            opacity: fadeIn,
+            opacity: _content.underlay ? 0.12 : fadeIn,
           }}
         />
       ))}
       {/* 中央深色描边卡 */}
-      <div
+      {!_content.underlay && <div
         style={{
           position: 'absolute',
           left: CX - 280,
@@ -118,7 +118,7 @@ const GlowOrbAmbient: React.FC = () => {
           <div style={{ width: 28, height: 28, borderRadius: 14, background: '#4a4a48' }} />
           <div style={{ height: 11, width: 90, background: '#3a3a38', borderRadius: 6 }} />
         </div>
-      </div>
+      </div>}
     </AbsoluteFill>
   );
 };

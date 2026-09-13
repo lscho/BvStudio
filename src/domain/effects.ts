@@ -829,6 +829,21 @@ export function effectParamsForText(compositionId: string, text: string): Compos
   const params = structuredClone(compositionById(compositionId).defaultParams ?? {});
   const normalized = text.replaceAll("｜", "|").trim();
   const parts = normalized.split("|").map((part) => part.trim()).filter(Boolean);
+  if (compositionId === "glow-badges") {
+    params.kicker = "";
+    params.tPre = "";
+    params.tEn = "";
+    params.tZh = parts[0] ?? "";
+    params.badges = parts.slice(1).map((part) => `,question,${part},`).join("|");
+    return params;
+  }
+  if (compositionId === "quad-map") {
+    params.cells = normalized.includes("\n") || normalized.startsWith("||") ? normalized
+      : parts.slice(1).map((part) => `||${part}|`).join("\n");
+    params.notes = "";
+    params.dockTimes = "";
+    return params;
+  }
   if (compositionId === "section-head") {
     params.num = "";
     params.en = "";

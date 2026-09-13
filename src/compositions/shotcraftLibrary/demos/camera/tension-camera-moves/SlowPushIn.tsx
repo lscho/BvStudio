@@ -1,8 +1,7 @@
 // Adapted from video-shotcraft, Copyright 2026 Wei Yihao, Apache-2.0.
 // BVideo adaptation: editable copy/assets and deterministic native frame context.
 import React from 'react';
-import { useCurrentFrame, interpolate, Easing } from "@/compositions/shotcraftLibrary/runtime";
-import { FakeDashboard } from '@/compositions/shotcraftLibrary/demos/_fixtures/Fixtures';
+import { useCurrentFrame, interpolate, Easing, Img } from "@/compositions/shotcraftLibrary/runtime";
 import { contentText, contentAppearance, useShotcraftContent, type ShotcraftContent } from "@/compositions/shotcraftLibrary/runtime";
 
 export function createDemo(content: ShotcraftContent) {
@@ -13,9 +12,12 @@ const SlowPushIn: React.FC = () => {
   const frame = useCurrentFrame();
   const { images, incoming } = useShotcraftContent();
 
-  // ---- 景 B：帧 120 起，满屏亮面板，完全静止 ----
-  if (frame >= CUT && (images[0] || incoming)) {
-    return <FakeDashboard variant="A" />;
+  // ---- 景 B：帧 120 起，硬切到用户绑定的真实素材 ----
+  if (frame >= CUT && images[0]) {
+    return <Img src={images[0]} style={{ width: 1920, height: 1080, objectFit: "contain", background: theme.surface }} />;
+  }
+  if (frame >= CUT && incoming) {
+    return <>{incoming}</>;
   }
 
   // ---- 景 A：0–120f 慢推 ----

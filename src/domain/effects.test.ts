@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import { BUILTIN_EFFECTS, OVERLAY_STUDIO_EFFECT_IDS, clockControlledRecipe, effectAnimationState, compositionById, effectParamsForText, effectiveEffectFontSize, recommendedEffectFontSize, recommendedEffectFontSizeForId, remapEffectTextParams, retrieveEffects, type EffectRecipe } from "@/domain/effects";
 
 describe("effect font sizing", () => {
+  it("fills information cards from actual copy instead of retaining demo fields", () => {
+    expect(effectParamsForText("glow-badges", "三重支撑｜需求增长｜政策支持｜服务收入")).toMatchObject({
+      tZh: "三重支撑", kicker: "", badges: ",question,需求增长,|,question,政策支持,|,question,服务收入,"
+    });
+    expect(effectParamsForText("quad-map", "风险｜投入｜选址").cells).toBe("||投入|\n||选址|");
+  });
   it("uses a readable display size for short impact text and tapers long copy", () => {
     const impact = compositionById("data-impact").recipe;
     expect(recommendedEffectFontSize(impact, "42%")).toBe(96);

@@ -1,8 +1,8 @@
 import { isShotcraftComposition } from "@/domain/shotcraft";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captionNumericData, compactMotionText, ensureSelectedMotionMatches, ensureStoryboardBaseLayers, extractTokenUsage, generateSubtitleChapters, generateTimedScript, generateVideoPlan, groundMotionMatchesToSelection, listProviderModels, matchTimelineMotion, motionCaptionChunks, motionMatchesAccessIssue, normalizeMotionChart, normalizeMotionMatches, normalizeMotionSelection, normalizeMotionSelectionEvidenceKinds, normalizeTimedScript, providerEndpoint, selectMotionCandidates, truncateRepairOutput, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
+import { alignMotionContentEntries, captionNumericData, compactMotionText, ensureSelectedMotionMatches, ensureStoryboardBaseLayers, extractTokenUsage, generateSubtitleChapters, generateTimedScript, generateVideoPlan, groundMotionMatchesToSelection, listProviderModels, matchTimelineMotion, motionCaptionChunks, motionMatchesAccessIssue, normalizeMotionChart, normalizeMotionMatches, normalizeMotionSelection, normalizeMotionSelectionEvidenceKinds, normalizeTimedScript, providerEndpoint, selectMotionCandidates, truncateRepairOutput, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
 import { allCompositions } from "@/domain/effects";
-import { validateMotionMatchPlan } from "@/domain/motionMatchingPlan";
+import { validateMotionMatchPlan, validateMotionSelectionPlan } from "@/domain/motionMatchingPlan";
 import type { AiMotionMatch } from "@/services/ai/schema";
 
 const pricing = { inputCostPerMillion: 2.5, outputCostPerMillion: 10 };
@@ -83,6 +83,217 @@ describe("truncateRepairOutput", () => {
 });
 
 describe("provider requests", () => {
+  it("keeps unsafe or ambiguous bundled entries for model repair and does not duplicate media or sound when splitting", () => {
+    const selection = { segments: [{ ...motionSelection("still-image-motion", 2, "checklist").segments[0], roll: "b-roll" as const }] };
+    const captions = [{ startSeconds: 0, endSeconds: 0.3, text: "开场" }, { startSeconds: 0.3, endSeconds: 2, text: "导入图片" }, { startSeconds: 2, endSeconds: 5, text: "生成编排" }];
+    const match: AiMotionMatch = { captionIndex: 0, primaryEffectId: "still-image-motion", primaryText: "", primaryTimingCaptionIndices: [],
+      secondaryEffectId: "checklist", secondaryText: "生成编排", secondaryTimingCaptionIndices: [2], compositionBindings: [{ slotId: "image", assetIds: ["image"] }],
+      accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 60, secondaryY: 40, cameraPreset: "push-in", soundEffectId: "sound", chart: null,
+      videoLayers: [], backdropPreset: "none", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full" };
+    for (const anchors of [[], [0], [1], [99], [2, 1]]) {
+      const source = [{ ...match, secondaryTimingCaptionIndices: anchors }];
+      expect(alignMotionContentEntries(source, selection, captions)).toEqual(source);
+      expect(validateMotionMatchPlan(source, selection, captions).map((issue) => issue.code)).toContain("content-entry-stagger");
+    }
+    const collision = [match, { ...match, captionIndex: 2, primaryEffectId: null, secondaryEffectId: null }];
+    expect(alignMotionContentEntries(collision, selection, captions)).toEqual(collision);
+    const original = structuredClone(match);
+    const aligned = alignMotionContentEntries([match], selection, captions);
+    expect(aligned).toHaveLength(2);
+    expect(aligned[0]).toMatchObject({ captionIndex: 0, soundEffectId: "sound", compositionBindings: match.compositionBindings, cameraPreset: "push-in" });
+    expect(aligned[1]).toMatchObject({ captionIndex: 2, primaryEffectId: "checklist", soundEffectId: null, compositionBindings: [], cameraPreset: "none" });
+    expect(alignMotionContentEntries(aligned, selection, captions)).toEqual(aligned);
+    expect(match).toEqual(original);
+    const paired = { ...match, primaryEffectId: "shotcraft-glow-orb-ambient" };
+    expect(alignMotionContentEntries([paired], { segments: [{ ...selection.segments[0], primaryEffectId: paired.primaryEffectId }] }, captions)).toEqual([paired]);
+  });
+  it.each(["still-image-motion", "slide-gallery"])("splits a bundled %s foreground card onto its first subtitle anchor", async (effectId) => {
+    const selection = { segments: [{ ...motionSelection(effectId, 2, "checklist").segments[0], roll: "b-roll" }] };
+    const matched = { captionIndex: 0, primaryEffectId: effectId, primaryText: "", secondaryEffectId: "checklist", secondaryText: "操作流程｜导入图片｜生成编排",
+      primaryTimingCaptionIndices: [0, 1], secondaryTimingCaptionIndices: [1, 2], secondaryParams: [{ key: "items", value: "导入图片|生成编排" }],
+      compositionBindings: [{ slotId: effectId === "still-image-motion" ? "image" : "media", assetIds: effectId === "still-image-motion" ? ["image-0"] : ["image-0", "image-1"] }], materialPlaceholder: false,
+      accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 62, secondaryY: 40, cameraPreset: "none", chart: null };
+    const original = structuredClone(matched);
+    const response = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }] }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(selection)).mockResolvedValueOnce(response({ matches: [matched] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await matchTimelineMotion(config, { topic: "编排", style: "清晰", timelineDurationSeconds: 8, isPro: true,
+      captions: [{ startSeconds: 0, endSeconds: 2, text: "场景编排功能。" }, { startSeconds: 2, endSeconds: 5, text: "导入图片。" }, { startSeconds: 5, endSeconds: 8, text: "生成编排。" }],
+      materials: ["场景编排", "动效库"].map((name, index) => ({ id: `image-${index}`, name: `${name}.png`, kind: "image", durationSeconds: 0 })),
+      storyboard: { mode: "auto", prompt: "", shotcraftTextMode: "narration" }
+    }, "secret");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.matches).toHaveLength(2);
+    expect(result.matches[0]).toMatchObject({ captionIndex: 0, primaryEffectId: effectId, compositionBindings: matched.compositionBindings, secondaryEffectId: null, persistUntilCaptionIndex: 2 });
+    expect(result.matches[1]).toMatchObject({ captionIndex: 1, primaryEffectId: "checklist", primaryText: matched.secondaryText, primaryParams: matched.secondaryParams, primaryTimingCaptionIndices: [1, 2], x: 62, y: 40, persistUntilCaptionIndex: 2, compositionBindings: [], cameraPreset: "none", videoLayers: [] });
+    expect(matched).toEqual(original);
+  });
+  it("keeps a semantically ordered multi-image gallery through the complete storyboard pipeline", async () => {
+    const names = ["场景编排", "动效库", "字幕生成", "AI 配音"];
+    const selection = { segments: [{ ...motionSelection("slide-gallery").segments[0], roll: "b-roll", materialNeed: "展示字幕生成、AI 配音、场景编排、动效库", selectionReason: "按功能介绍顺序浏览相关截图" }] };
+    const matched = { captionIndex: 0, primaryEffectId: "slide-gallery", primaryText: "", secondaryEffectId: null, secondaryText: null,
+      compositionBindings: [{ slotId: "media", assetIds: ["image-2", "image-3", "image-0", "image-1"] }], materialPlaceholder: false,
+      accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 50, secondaryY: 50, cameraPreset: "none", chart: null };
+    const response = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }] }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(selection)).mockResolvedValueOnce(response({ matches: [matched] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await matchTimelineMotion(config, { topic: "产品功能", style: "清晰", timelineDurationSeconds: 18, isPro: true,
+      captions: [{ startSeconds: 0, endSeconds: 18, text: "依次介绍字幕生成、AI 配音、场景编排与动效库。" }],
+      materials: names.map((name, index) => ({ id: `image-${index}`, name: `${name}.png`, kind: "image", durationSeconds: 0 })),
+      storyboard: { mode: "auto", prompt: "", shotcraftTextMode: "narration" }
+    }, "secret");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.selection).toEqual(selection);
+    expect(result.matches[0]).toMatchObject({ primaryEffectId: "slide-gallery", compositionBindings: matched.compositionBindings });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).messages[0].content).toContain("素材语义与运镜");
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).messages[0].content).toContain("按语义出现顺序排列，不按导入顺序");
+  });
+  it("uses an unambiguous filename reference for missing still-image bindings, not import order", () => {
+    const selection = { segments: [{ ...motionSelection("still-image-motion").segments[0], title: "字幕生成", roll: "b-roll" as const }] };
+    const materials = [{ id: "wrong", name: "动效库.png", kind: "image" as const, durationSeconds: 0 }, { id: "right", name: "字幕生成.png", kind: "image" as const, durationSeconds: 0 }];
+    const context = { materials, captions: [{ startSeconds: 0, endSeconds: 6, text: "展示字幕生成功能。" }] };
+    const value = { matches: [{ captionIndex: 0, primaryEffectId: "still-image-motion", compositionBindings: [], materialPlaceholder: true }] };
+    expect(ensureStoryboardBaseLayers(value, selection, ["wrong", "right"], context)).toMatchObject({ matches: [{ compositionBindings: [{ slotId: "image", assetIds: ["right"] }], materialPlaceholder: false }] });
+    expect(ensureStoryboardBaseLayers(value, selection, ["right", "wrong"], context)).toMatchObject({ matches: [{ compositionBindings: [{ slotId: "image", assetIds: ["right"] }] }] });
+    const unrelated = { ...context, materials: materials.slice(0, 1) };
+    expect(ensureStoryboardBaseLayers(value, selection, ["wrong"], unrelated)).toEqual(value);
+    const ambiguous = { ...context, materials: [...materials, { ...materials[1], id: "duplicate" }] };
+    expect(ensureStoryboardBaseLayers(value, selection, ["wrong", "right", "duplicate"], ambiguous)).toEqual(value);
+    const chosen = { matches: [{ ...value.matches[0], compositionBindings: [{ slotId: "image", assetIds: ["wrong"] }], materialPlaceholder: false }] };
+    expect(ensureStoryboardBaseLayers(chosen, selection, ["wrong", "right"], context)).toEqual(chosen);
+  });
+  it.each(["motion-zoom", "slide-gallery", "card-stack", "split-reveal"])("preserves a usable %s image presentation instead of replacing it with the still-image fallback", (effectId) => {
+    const input = { topic: "产品能力", style: "清晰", timelineDurationSeconds: 8, isPro: true, storyboard: { mode: "auto" as const, prompt: "" },
+      captions: [{ startSeconds: 0, endSeconds: 8, text: "依次展示场景编排、动效库、字幕生成和 AI 配音。" }],
+      materials: ["场景编排", "动效库", "字幕生成", "AI 配音"].map((name, index) => ({ id: `image-${index}`, name: `${name}.png`, kind: "image" as const, durationSeconds: 0 })) };
+    const selection = { segments: [{ ...motionSelection(effectId).segments[0], roll: "b-roll" as const }] };
+    expect(normalizeMotionSelection(selection, selectMotionCandidates(input), input)).toEqual(selection);
+    expect(normalizeMotionSelection(selection, selectMotionCandidates(input), { ...input, materials: input.materials.slice(0, 1) }).segments[0].primaryEffectId).toBe("still-image-motion");
+  });
+  it("repairs secondary parameter fields with exact effect, key and timing guidance", async () => {
+    const selected = { segments: [{ ...motionSelection("shotcraft-glow-orb-ambient", 0, "checklist").segments[0], roll: "b-roll" }] };
+    const matched = { captionIndex: 0, primaryEffectId: "shotcraft-glow-orb-ambient", primaryText: "", secondaryEffectId: "checklist", secondaryText: "行动建议｜先核算成本｜再检查合同",
+      secondaryParams: [{ key: "items", value: "先核算成本|再检查合同" }], secondaryTimingCaptionIndices: [0, 0],
+      accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 72, secondaryY: 42, cameraPreset: "none", chart: null };
+    const broken = { ...matched, secondaryParams: [...matched.secondaryParams, { key: "stepMs", value: 1000 }, { key: "inventedParam", value: true }, ...matched.secondaryParams] };
+    const response = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(selected)).mockResolvedValueOnce(response({ matches: [broken] })).mockResolvedValueOnce(response({ matches: [matched] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await matchTimelineMotion(config, {
+      topic: "行动建议", style: "简洁", timelineDurationSeconds: 6, isPro: true, materials: [],
+      captions: [{ startSeconds: 0, endSeconds: 6, text: "先核算成本，再检查合同。" }],
+      storyboard: { mode: "auto", prompt: "", shotcraftTextMode: "narration" }
+    }, "secret");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const repair = JSON.parse(String(fetchMock.mock.calls[2][1]?.body));
+    expect(repair.messages.at(-1).content).toContain("secondaryParams.1.key");
+    expect(repair.messages.at(-1).content).toContain("checklist 参数 stepMs");
+    expect(repair.messages.at(-1).content).toContain("secondaryTimingCaptionIndices");
+    expect(repair.messages.at(-1).content).toContain("允许字段");
+    expect(repair.messages[0].content).toContain("缺少这些字段时使用默认落位");
+    expect(result.matches[0]).toMatchObject({ secondaryParams: matched.secondaryParams, secondaryTimingCaptionIndices: [0, 0], secondaryText: matched.secondaryText });
+    expect(result.usage.totalTokens).toBe(45);
+  });
+  it("repairs a missing Shotcraft card with selected images without rewriting a valid image scene", async () => {
+    const opening = { ...motionSelection("shotcraft-glow-orb-ambient").segments[0], title: "开场钩子：AI 口播的三个问题", roll: "b-roll" };
+    const imageScene = { ...motionSelection("still-image-motion").segments[0], segmentId: "image-scene", startCaptionIndex: 1, endCaptionIndex: 1, roll: "b-roll" };
+    const shared = { accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 72, secondaryY: 42, cameraPreset: "none", chart: null };
+    const matched = { ...shared, captionIndex: 0, primaryEffectId: opening.primaryEffectId, primaryText: "", secondaryEffectId: "checklist", secondaryText: "三个问题｜字幕分段｜配音节奏｜素材编排" };
+    const imageMatch = { ...shared, captionIndex: 1, primaryEffectId: "still-image-motion", primaryText: "展示字幕生成", secondaryEffectId: null, secondaryText: null, compositionBindings: [{ slotId: "image", assetIds: ["captions-image"] }], materialPlaceholder: false };
+    const response = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(response({ segments: [opening, imageScene] }))
+      .mockResolvedValueOnce(response({ repairs: [{ segmentId: opening.segmentId, pairId: "shotcraft-glow-orb-ambient::checklist" }] }))
+      .mockResolvedValueOnce(response({ matches: [matched, imageMatch] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await matchTimelineMotion(config, {
+      topic: "AI 口播", style: "简洁", timelineDurationSeconds: 12, isPro: true,
+      captions: [{ startSeconds: 0, endSeconds: 6, text: "三个问题：字幕分段、配音节奏、素材编排。" }, { startSeconds: 6, endSeconds: 12, text: "展示字幕生成。" }],
+      materials: [{ id: "captions-image", name: "字幕生成.png", kind: "image", durationSeconds: 0 }],
+      storyboard: { mode: "auto", prompt: "", shotcraftTextMode: "narration" }
+    }, "secret");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.selection.segments[0]).toMatchObject({ ...opening, secondaryEffectId: "checklist", selectionReason: expect.any(String) });
+    expect(result.selection.segments[1]).toEqual(imageScene);
+    expect(result.matches[0]).toMatchObject({ secondaryEffectId: "checklist", secondaryText: matched.secondaryText });
+    expect(result.matches[1].compositionBindings).toEqual(imageMatch.compositionBindings);
+    expect(result.usage.totalTokens).toBe(45);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).messages[0].content).toContain("pairId");
+  });
+  it("completes consecutive image scenes through both AI stages without a duplicate-card repair", async () => {
+    const captions = ["展示场景编排。", "展示字幕生成。", "展示配音功能。"].map((text, index) => ({ startSeconds: index * 6, endSeconds: (index + 1) * 6, text }));
+    const selection = { segments: captions.map((_, index) => ({
+      ...motionSelection("still-image-motion").segments[0], segmentId: `image-${index}`, startCaptionIndex: index, endCaptionIndex: index, roll: "b-roll"
+    })) };
+    const matches = captions.map((caption, index) => ({ captionIndex: index, primaryEffectId: "still-image-motion", primaryText: caption.text,
+      compositionBindings: [{ slotId: "image", assetIds: [`asset-${index}`] }], materialPlaceholder: false,
+      secondaryEffectId: null, secondaryText: null, accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 72, secondaryY: 42, cameraPreset: "none", chart: null }));
+    const response = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }] }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(selection)).mockResolvedValueOnce(response({ matches }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await matchTimelineMotion(config, {
+      topic: "产品功能", style: "清晰", timelineDurationSeconds: 18, captions, isPro: true,
+      materials: captions.map((caption, index) => ({ id: `asset-${index}`, name: `${caption.text}.png`, kind: "image", durationSeconds: 0 })),
+      storyboard: { mode: "auto", prompt: "", shotcraftTextMode: "narration" }
+    }, "secret");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.matches).toHaveLength(3);
+    result.matches.forEach((match, index) => expect(match).toMatchObject({ primaryEffectId: "still-image-motion", compositionBindings: [{ slotId: "image", assetIds: [`asset-${index}`] }], materialPlaceholder: false }));
+    for (const call of fetchMock.mock.calls) expect(JSON.parse(String(call[1]?.body)).messages[0].content).toContain("图片底层例外");
+  });
+  it.each(["out-of-menu", "omitted", "duplicate"])("rejects a %s constrained pair repair without advancing to content generation", async (failure) => {
+    const segment = { ...motionSelection("shotcraft-radial-wave", 0, "card-swap").segments[0], roll: "b-roll" };
+    const second = { ...segment, segmentId: "second", startCaptionIndex: 1, endCaptionIndex: 1, primaryEffectId: "shotcraft-glow-orb-ambient", secondaryEffectId: "converge" };
+    const firstRepair = { segmentId: segment.segmentId, pairId: "shotcraft-radial-wave::checklist" };
+    const broken = { repairs: failure === "omitted" ? [firstRepair] : [firstRepair,
+      { segmentId: failure === "duplicate" ? segment.segmentId : second.segmentId,
+        pairId: failure === "out-of-menu" ? "shotcraft-glow-orb-ambient::converge" : "shotcraft-glow-orb-ambient::term-card" }] };
+    const response = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }] }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(response({ segments: [segment, second] }))
+      .mockResolvedValueOnce(response(broken)).mockResolvedValueOnce(response(broken));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(matchTimelineMotion(config, {
+      topic: "风险约束", style: "简洁", timelineDurationSeconds: 12,
+      captions: [{ startSeconds: 0, endSeconds: 6, text: "选址、租金、增容、合同。" }, { startSeconds: 6, endSeconds: 12, text: "机会属于长期经营者。" }], materials: [], isPro: true,
+      storyboard: { mode: "auto", prompt: "", shotcraftTextMode: "narration" }
+    }, "secret")).rejects.toThrow("动效组合重选未通过本地校验");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][1].body).not.toContain("这是第二阶段");
+  });
+  it.each(["card-swap", "converge"])("repairs the incompatible %s pair from a bounded combination menu before writing card content", async (secondaryEffectId) => {
+    const base = { ...motionSelection("shotcraft-radial-wave", 0, secondaryEffectId).segments[0], roll: "b-roll" };
+    const matched = { captionIndex: 0, primaryEffectId: "shotcraft-radial-wave", primaryText: "", secondaryEffectId: "checklist", secondaryText: "四条约束｜选址｜租金｜增容｜合同", accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 50, secondaryY: 45, cameraPreset: "none", chart: null };
+    const response = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ segments: [base] }))
+      .mockResolvedValueOnce(response({ repairs: [{ segmentId: base.segmentId, pairId: "shotcraft-radial-wave::checklist" }] }))
+      .mockResolvedValueOnce(response({ matches: [matched] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await matchTimelineMotion(config, {
+      topic: "风险约束", style: "简洁", timelineDurationSeconds: 6,
+      captions: [{ startSeconds: 0, endSeconds: 6, text: "四条约束：选址、租金、增容、合同。" }], materials: [], isPro: true,
+      storyboard: { mode: "auto", prompt: "", shotcraftTextMode: "narration" }
+    }, "secret");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const firstRequest = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(firstRequest.messages[0].content).toMatch(new RegExp(`"id":"${secondaryEffectId}"[^\\n]*?"shotcraftOverlayEligible":false`));
+    const repair = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(repair.messages[0].content).toContain("完整组合");
+    expect(repair.messages.at(-1).content).toContain("选址、租金、增容、合同");
+    const repairSchema = JSON.parse(repair.messages[0].content.split("必须只输出一个 JSON 对象，并严格满足这个 JSON Schema：").at(-1));
+    expect(repairSchema.properties.repairs.items.properties.pairId.enum).toContain("shotcraft-radial-wave::checklist");
+    expect(repairSchema.properties.repairs.items.properties.pairId.enum.join(" ")).not.toContain(secondaryEffectId);
+    expect(result.selection.segments[0]).toMatchObject({ segmentId: base.segmentId, title: base.title, startCaptionIndex: 0, endCaptionIndex: 0, secondaryEffectId: "checklist" });
+    expect(result.matches[0].secondaryText).toBe(matched.secondaryText);
+    expect(result.usage.totalTokens).toBe(45);
+  });
+  it("replaces a visually busy base while preserving its information card, and keeps authored text shots standalone", () => {
+    const input = { topic: "流程", style: "简洁", timelineDurationSeconds: 6, materials: [], isPro: true,
+      captions: [{ startSeconds: 0, endSeconds: 6, text: "先分析字幕，再提取事实。" }], storyboard: { mode: "auto" as const, prompt: "", shotcraftTextMode: "promo" as const } };
+    const layered = { segments: [{ ...motionSelection("shotcraft-blur-slide", 0, "checklist").segments[0], roll: "b-roll" as const }] };
+    expect(normalizeMotionSelection(layered, selectMotionCandidates(input), input).segments[0]).toMatchObject({ primaryEffectId: "shotcraft-glow-orb-ambient", secondaryEffectId: "checklist" });
+    const standalone = { segments: [{ ...layered.segments[0], secondaryEffectId: null }] };
+    expect(normalizeMotionSelection(standalone, selectMotionCandidates(input), input).segments[0].primaryEffectId).toBe("shotcraft-blur-slide");
+  });
   it.each(["punch-pill", "still-image-motion", "shotcraft-orb-flyline-relay"])("repairs an invalid Shotcraft overlay %s using the licensed overlay whitelist", async (secondaryEffectId) => {
     const base = { ...motionSelection("shotcraft-glow-orb-ambient").segments[0], roll: "b-roll" };
     const matched = { captionIndex: 0, primaryEffectId: base.primaryEffectId, primaryText: "", secondaryEffectId: "checklist", secondaryText: "收入结构｜电费差价｜服务费｜广告", accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 72, secondaryY: 42, cameraPreset: "none", chart: null };
@@ -107,17 +318,18 @@ describe("provider requests", () => {
   });
   it.each(["shotcraft-glow-orb-ambient", "background-grid"])("asks the model to add a missing card after resolving %s and before the parameter stage", async (primaryEffectId) => {
     const bare = { segments: [{ ...motionSelection(primaryEffectId).segments[0], roll: "b-roll" }] };
-    const layered = { segments: [{ ...bare.segments[0], primaryEffectId: "shotcraft-glow-orb-ambient", secondaryEffectId: "checklist" }] };
+    const repair = { repairs: [{ segmentId: bare.segments[0].segmentId, pairId: "shotcraft-glow-orb-ambient::checklist" }] };
     const matched = { captionIndex: 0, primaryEffectId: "shotcraft-glow-orb-ambient", primaryText: "", secondaryEffectId: "checklist", secondaryText: "收入结构｜电费差价｜服务费｜广告", accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 72, secondaryY: 42, cameraPreset: "none", chart: null };
     const response = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }] }));
-    const fetchMock = vi.fn().mockResolvedValueOnce(response(bare)).mockResolvedValueOnce(response(layered)).mockResolvedValueOnce(response({ matches: [matched] }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(bare)).mockResolvedValueOnce(response(repair)).mockResolvedValueOnce(response({ matches: [matched] }));
     vi.stubGlobal("fetch", fetchMock);
     const result = await matchTimelineMotion(config, {
       topic: "收入结构", style: "简洁", timelineDurationSeconds: 6, captions: [{ startSeconds: 0, endSeconds: 6, text: "收入由电费差价、服务费和广告组成。" }], materials: [], isPro: true,
       storyboard: { mode: "auto", prompt: "", shotcraftTextMode: "narration" }
     }, "secret");
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[1][1].body).toContain("必须叠加一张信息卡");
+    expect(fetchMock.mock.calls[1][1].body).toContain("pairId");
+    expect(result.selection.segments[0]).toMatchObject({ primaryEffectId: "shotcraft-glow-orb-ambient", secondaryEffectId: "checklist" });
     expect(result.matches[0]).toMatchObject({ primaryEffectId: "shotcraft-glow-orb-ambient", secondaryEffectId: "checklist", secondaryText: matched.secondaryText });
   });
   it.each(["omitted", "deduplicated"])("asks the model to repair an information card that would be %s", async (failure) => {
@@ -143,8 +355,9 @@ describe("provider requests", () => {
     await expect(matchTimelineMotion(config, {
       topic: "收入结构", style: "简洁", timelineDurationSeconds: 6, captions: [{ startSeconds: 0, endSeconds: 6, text: "收入由电费差价、服务费和广告组成。" }], materials: [], isPro: true,
       storyboard: { mode: "auto", prompt: "", shotcraftTextMode: "narration" }
-    }, "secret")).rejects.toThrow("必须叠加一张信息卡");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    }, "secret")).rejects.toThrow("动效组合重选未通过本地校验");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][1].body).not.toContain("这是第二阶段");
   });
   it("finishes a mixed narration storyboard with simultaneous Shotcraft cards and omitted secondary anchors", async () => {
     const cards = ["checklist", "glow-badges", "strike-flip"];
@@ -390,7 +603,7 @@ describe("provider requests", () => {
   });
 
   it("keeps a Shotcraft base and a grounded card together only in automatic mixed storyboards", () => {
-    const baseSelection = motionSelection("shotcraft-blur-slide", 1, "checklist");
+    const baseSelection = motionSelection("shotcraft-glow-orb-ambient", 1, "checklist");
     const layeredSelection = { segments: [{ ...baseSelection.segments[0], roll: "b-roll" as const }] };
     const input = {
       topic: "产品说明", style: "专业", timelineDurationSeconds: 8, materials: [], isPro: true,
@@ -398,15 +611,15 @@ describe("provider requests", () => {
       storyboard: { mode: "auto" as const, prompt: "", shotcraftTextMode: "promo" as const }
     };
     const normalized = normalizeMotionSelection(layeredSelection, allCompositions(), input);
-    expect(normalized.segments[0]).toMatchObject({ primaryEffectId: "shotcraft-blur-slide", secondaryEffectId: "checklist" });
+    expect(normalized.segments[0]).toMatchObject({ primaryEffectId: "shotcraft-glow-orb-ambient", secondaryEffectId: "checklist" });
 
     const grounded = groundMotionMatchesToSelection([{
-      captionIndex: 0, primaryEffectId: "shotcraft-blur-slide", primaryText: "处理流程", secondaryEffectId: "checklist",
+      captionIndex: 0, primaryEffectId: "shotcraft-glow-orb-ambient", primaryText: "", secondaryEffectId: "checklist",
       secondaryText: "处理流程｜分析字幕｜提取事实｜生成卡片", accentColor: "#5fa8ff", x: 50, y: 50, scale: 1,
       secondaryX: 74, secondaryY: 45, cameraPreset: "none", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0,
       secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", videoLayers: [], backdropPreset: "none", chart: null
     }], normalized, input.captions);
-    expect(grounded[0]).toMatchObject({ primaryEffectId: "shotcraft-blur-slide", secondaryEffectId: "checklist" });
+    expect(grounded[0]).toMatchObject({ primaryEffectId: "shotcraft-glow-orb-ambient", secondaryEffectId: "checklist" });
 
     const fallbackSelection = motionSelection("checklist", 1);
     const fallback = normalizeMotionSelection({ segments: [{ ...fallbackSelection.segments[0], roll: "b-roll" as const }] }, allCompositions(), input).segments[0];
@@ -588,6 +801,33 @@ describe("provider requests", () => {
     });
   });
 
+  it.each(["auto", "b-roll"] as const)("keeps image-only %s fallback compatible with foreground deduplication", (mode) => {
+    const input = {
+      topic: "产品能力", style: "清晰", timelineDurationSeconds: 18,
+      storyboard: { mode, prompt: "" },
+      materials: ["编排", "字幕", "配音"].map((name, index) => ({ id: `image-${index}`, name: `${name}.png`, kind: "image" as const, durationSeconds: 0 })),
+      captions: ["展示编排功能。", "展示字幕生成。", "展示配音功能。"].map((text, index) => ({ startSeconds: index * 6, endSeconds: (index + 1) * 6, text }))
+    };
+    const selection = { segments: ["pain-points", "term-card", "checklist"].map((effectId, index) => ({
+      ...motionSelection(effectId).segments[0], segmentId: `scene-${index}`, startCaptionIndex: index, endCaptionIndex: index, roll: "b-roll" as const
+    })) };
+    expect(validateMotionSelectionPlan(selection, input.captions)).toEqual([]);
+    const normalized = normalizeMotionSelection(selection, allCompositions(), input);
+    expect(normalized.segments.map((segment) => segment.primaryEffectId)).toEqual(Array(3).fill("still-image-motion"));
+    expect(normalized.segments.map((segment) => segment.secondaryEffectId)).toEqual(["pain-points", "term-card", "checklist"]);
+    expect(validateMotionSelectionPlan(normalized, input.captions)).toEqual([]);
+  });
+
+  it.each([["pain", "quad-map"], ["list", "glow-badges"], ["process", "checklist"]] as const)("uses a semantic foreground for %s instead of always choosing a checklist", (intent, expected) => {
+    const input = { topic: "信息结构", style: "清晰", timelineDurationSeconds: 12, isPro: true,
+      storyboard: { mode: "auto" as const, prompt: "" }, materials: [],
+      captions: [{ startSeconds: 0, endSeconds: 12, text: "第一项、第二项、第三项。" }] };
+    const selection = { segments: [{ ...motionSelection("shotcraft-glow-orb-ambient", 0, "checklist").segments[0], roll: "b-roll" as const, intent }] };
+    expect(normalizeMotionSelection(selection, selectMotionCandidates(input), input).segments[0].secondaryEffectId).toBe(expected);
+    const restricted = selectMotionCandidates(input).filter((effect) => effect.id !== expected);
+    if (expected !== "checklist") expect(normalizeMotionSelection(selection, restricted, input).segments[0].secondaryEffectId).toBe("checklist");
+  });
+
   it("adds a full-frame animated background when B-roll has no visual materials", () => {
     const input = {
       topic: "字幕工作流", style: "清晰", timelineDurationSeconds: 6,
@@ -648,7 +888,7 @@ describe("provider requests", () => {
     ] });
   });
 
-  it("fills missing still-image bindings in scene order without replacing a valid AI choice", () => {
+  it("fills a named still-image binding without replacing a valid AI choice", () => {
     const selection = { segments: [
       { ...motionSelection("pain-points").segments[0], segmentId: "one", primaryEffectId: "still-image-motion", startCaptionIndex: 0, endCaptionIndex: 0 },
       { ...motionSelection("pain-points").segments[0], segmentId: "two", primaryEffectId: "still-image-motion", startCaptionIndex: 1, endCaptionIndex: 1 }
@@ -657,7 +897,10 @@ describe("provider requests", () => {
       { captionIndex: 0, primaryEffectId: "pain-points", compositionBindings: [], materialPlaceholder: true },
       { captionIndex: 1, primaryEffectId: "still-image-motion", compositionBindings: [{ slotId: "image", assetIds: ["image-b"] }], materialPlaceholder: false }
     ] };
-    expect(ensureStoryboardBaseLayers(value, selection, ["image-a", "image-b"])).toMatchObject({ matches: [
+    expect(ensureStoryboardBaseLayers(value, selection, ["image-a", "image-b"], {
+      materials: [{ id: "image-a", name: "字幕生成.png", kind: "image", durationSeconds: 0 }, { id: "image-b", name: "配音.png", kind: "image", durationSeconds: 0 }],
+      captions: [{ startSeconds: 0, endSeconds: 3, text: "展示字幕生成" }, { startSeconds: 3, endSeconds: 6, text: "展示配音" }]
+    })).toMatchObject({ matches: [
       { primaryEffectId: "still-image-motion", compositionBindings: [{ slotId: "image", assetIds: ["image-a"] }], materialPlaceholder: false },
       { primaryEffectId: "still-image-motion", compositionBindings: [{ slotId: "image", assetIds: ["image-b"] }], materialPlaceholder: false }
     ] });

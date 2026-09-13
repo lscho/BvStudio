@@ -12,7 +12,7 @@ import { timedTextSegments } from "@/domain/captions";
 import { createGeneratedEffectLayers } from "@/domain/sceneEffects";
 import { sceneBackgroundComposition } from "@/domain/sceneBackground";
 import { presenterMotionSafeArea, resolveMotionLayout, type MotionLayoutLayer, type OccupiedMotionLayoutLayer } from "@/domain/motionLayout";
-import { motionColorRoleForEffect, motionThemeAccentColor } from "@/domain/motionTheme";
+import { MOTION_THEME_COLOR_PRESETS, motionColorRoleForEffect, motionThemeAccentColor } from "@/domain/motionTheme";
 import { compileAiMotionParams, type MotionParamOverride } from "@/domain/motionMatching";
 import { isReferenceStageComposition, referenceStageOuterTransform } from "@/domain/overlayStudioReference";
 import { DEFAULT_TRANSFORM, videoLayoutForPreset, visualTransformAt } from "@/domain/transforms";
@@ -45,6 +45,7 @@ import { DEFAULT_SUBTITLE_STYLE, subtitleKeywordsForText } from "@/domain/videoD
 import { musicAnalysisSchema, musicCutPoints, type MusicAnalysis } from "@/domain/musicBeats";
 import { lintMotionProject } from "@/domain/motionLint";
 import shotcraftAudioCatalog from "@/domain/shotcraftLibrary/audioCatalog.json";
+import { shotcraftPairingProfile, shotcraftVisualPairAllowed } from "@/domain/shotcraftPairing";
 
 export type SubtitleAppearancePatch = Partial<Pick<
   SubtitleClip,
@@ -188,12 +189,19 @@ function subtitleSafeAreaTop(caption: AiMotionCaptionSpan, canvas: EditorProject
   return Math.max(10, Math.min(78, caption.positionY - textHeightPercent - 3));
 }
 
+function pairedShotcraftBase(match: AiMotionMatch, matches: readonly AiMotionMatch[]) {
+  const scene = match.motionGroupId ? matches.filter((candidate) => candidate.motionGroupId === match.motionGroupId) : [match];
+  return scene.find((candidate) => candidate.primaryEffectId && shotcraftPairingProfile(candidate.primaryEffectId)
+    && scene.some((item) => [item.primaryEffectId, item.secondaryEffectId].some((id) => id && shotcraftVisualPairAllowed(candidate.primaryEffectId!, id))))?.primaryEffectId;
+}
+
 function resolveAiMotionPlacements(
   project: EditorProject,
   matches: readonly AiMotionMatch[],
   captions: readonly AiMotionCaptionSpan[],
   useCaptionFallback: boolean,
-  existingEffects: readonly CompositionClip[]
+  existingEffects: readonly CompositionClip[],
+  storyboard = false
 ) {
   const matchByCaption = new Map(matches.map((match) => [match.captionIndex, match]));
   const layers: MotionLayoutLayer[] = [];
@@ -213,15 +221,17 @@ function resolveAiMotionPlacements(
         referencePlacements.set(aiMotionLayoutId(captionIndex, entry.slot), { x: 50, y: 50, scale: 1 });
         continue;
       }
+      const baseId = storyboard ? pairedShotcraftBase(match, matches) : undefined;
+      const pairedCard = Boolean(baseId && shotcraftVisualPairAllowed(baseId, entry.compositionId));
       layers.push({
         id: aiMotionLayoutId(captionIndex, entry.slot),
         compositionId: entry.compositionId,
         startUs: caption.startUs,
         durationUs: Math.max(100_000, endUs - caption.startUs),
-        desiredX: entry.x,
-        desiredY: entry.y,
-        scale: aiEffectScale(entry.compositionId, entry.scale, Boolean(recipe.chart)),
-        fontSize: recommendedEffectFontSizeForId(entry.compositionId, recipe, entry.text),
+        desiredX: pairedCard ? 50 : entry.x,
+        desiredY: pairedCard ? 45 : entry.y,
+        scale: pairedCard ? 1 : aiEffectScale(entry.compositionId, entry.scale, Boolean(recipe.chart)),
+        fontSize: Math.max(pairedCard ? 96 : 0, recommendedEffectFontSizeForId(entry.compositionId, recipe, entry.text)),
         text: entry.text,
         recipe,
         priority: entry.slot
@@ -1235,7 +1245,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         project.tracks
           .filter((candidate) => candidate.kind === "composition" && !candidate.hidden)
           .flatMap((candidate) => candidate.clips)
-          .filter((candidate): candidate is CompositionClip => candidate.kind === "composition")
+          .filter((candidate): candidate is CompositionClip => candidate.kind === "composition"),
+        Boolean(storyboardOptions)
       );
 
       const addMatchedVideo = (subtitle: SubtitleClip, durationUs: number, layer: AiMotionMatch["videoLayers"][number], labelPrefix: string, sourceVideo?: VideoClip) => {
@@ -1277,10 +1288,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const entries = aiMotionEntries(match, subtitle.text, false);
         const requestedEntries = entries.slice(0, 2);
         const selectedEntries = lockedMotionSubtitleIds.has(subtitle.id) ? [] : requestedEntries;
+        const pairedBaseId = storyboardOptions ? pairedShotcraftBase(match, matches) : undefined;
         summary.requestedEffectCount += requestedEntries.length;
         if (lockedMotionSubtitleIds.has(subtitle.id)) summary.skippedEffectCount += requestedEntries.length;
         for (const entry of selectedEntries) {
           const definition = compositionById(entry.compositionId);
+          const pairedCard = Boolean(pairedBaseId && shotcraftVisualPairAllowed(pairedBaseId, definition.id));
           if (effectTrack.locked || (definition.recipe.sceneBackground && sceneTrack.locked)) { summary.skippedEffectCount += 1; continue; }
           if (isShotcraftComposition(definition.id)) {
             const previous = effectTrack.clips
@@ -1323,6 +1336,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               accentColor: themeAccentColor,
               params: {
                 ...clip.params,
+                ...(pairedBaseId === definition.id ? { shotcraftUnderlay: true } : {}),
                 ...(storyboardOptions?.shotcraftTextMode ? { shotcraftTextMode: storyboardOptions.shotcraftTextMode } : {})
               }
             });
@@ -1350,7 +1364,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               startUs: subtitle.startUs, durationUs, animationDurationUs: durationUs, sourceOffsetUs: 0,
               locked: false, compositionId: definition.id, bindings, text: "", color: definition.defaultColor,
               accentColor: themeAccentColor, fontSize: 48, speed: 1, transform: { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 },
-              params: compileAiMotionParams({
+              params: { ...compileAiMotionParams({
                 effect: definition,
                 baseParams: structuredClone(definition.defaultParams ?? {}),
                 overrides: entry.params,
@@ -1359,8 +1373,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
                 startCaptionIndex: captionIndex,
                 endCaptionIndex: persistUntilCaptionIndex,
                 text: entry.text
-              }),
-              sourceSubtitleId: subtitle.id, zIndex: compositionLayer({ compositionId: definition.id, recipe: definition.recipe }),
+              }), ...(isSequencedMediaComposition(definition.id) ? { storyboardBackground: MOTION_THEME_COLOR_PRESETS[project.motionTheme.skin].surface } : {}) },
+              sourceSubtitleId: subtitle.id,
+              sceneGroupId: match.motionGroupId ? motionGroupSceneIds.get(match.motionGroupId) : undefined,
+              zIndex: compositionLayer({ compositionId: definition.id, recipe: definition.recipe }),
               lintOff: placeholder ? ["composition-input"] : undefined
             });
             summary.effectCount += 1;
@@ -1393,15 +1409,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               id: crypto.randomUUID(), trackId: effectTrack.id, kind: "composition", label: `AI 动效 · ${definition.name}${placeholder ? " · 待补素材" : ""}`,
               startUs: subtitle.startUs, durationUs: matchDurationUs, locked: false, compositionId: definition.id, text: entry.text.trim(),
               color: definition.defaultColor, accentColor: themeAccentColor,
-              fontSize: recommendedEffectFontSizeForId(definition.id, recipe, entry.text.trim()), speed: 1,
+              fontSize: Math.max(pairedCard && !isReferenceStageComposition(definition.id) ? 96 : 0, recommendedEffectFontSizeForId(definition.id, recipe, entry.text.trim())), speed: 1,
               transform: backgroundComposition ? { ...DEFAULT_TRANSFORM } : { x: placement!.x, y: placement!.y, scale: placement!.scale, rotation: 0, opacity: 1 }, recipe,
               soundCues, zIndex: backgroundComposition ? compositionLayer({ compositionId: definition.id, recipe }) : 200 + entry.zIndex, sceneGroupId, matchQuery: subtitle.text,
               colorRole: motionColorRoleForEffect(definition.id),
               sourceBlockId: subtitle.sourceBlockId, sourceSubtitleId: subtitle.id,
-              backdrop: effectBackdropForPreset(match.backdropPreset ?? "none", themeAccentColor),
+              backdrop: pairedCard ? { ...DEFAULT_EFFECT_BACKDROP, enabled: false } : effectBackdropForPreset(match.backdropPreset ?? "none", themeAccentColor),
               bindings,
               lintOff: placeholder ? ["composition-input"] : undefined,
-              params: compileAiMotionParams({
+              params: { ...compileAiMotionParams({
                 effect: definition,
                 baseParams: effectParamsForText(definition.id, entry.text.trim()),
                 overrides: entry.params,
@@ -1410,7 +1426,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
                 startCaptionIndex: captionIndex,
                 endCaptionIndex: persistUntilCaptionIndex,
                 text: entry.text
-              })
+              }), ...(pairedBaseId && shotcraftVisualPairAllowed(pairedBaseId, definition.id)
+                ? { theme: project.motionTheme.skin, position: definition.id === "strike-flip" ? "center" : shotcraftPairingProfile(pairedBaseId)!.position, scale: 1, offsetX: 0, offsetY: 0, accent: "blue",
+                  ...(definition.id === "glow-badges" ? { sceneLayout: "columns" } : {}),
+                  ...(definition.id === "quad-map" ? { sceneLayout: "matrix", sceneTitle: entry.text.split(/[|｜\n]/u)[0] } : {}) } : {}) }
             });
             summary.effectCount += 1;
           }

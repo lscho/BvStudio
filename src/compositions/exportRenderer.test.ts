@@ -67,6 +67,13 @@ describe("React effect export timing", () => {
     expect(dynamicDurationUs({ ...overlay, compositionId: "pain-points", durationUs: 3_000_000, autoTiming: true })).toBe(3_000_000);
   });
 
+  it("captures late subtitle reveals and the closing overview of full-stage information cards", () => {
+    expect(dynamicDurationUs({ ...overlay, compositionId: "glow-badges", durationUs: 26_000_000,
+      params: { sceneLayout: "columns", revealTimesUs: "0|4000000|19000000" } })).toBe(26_000_000);
+    expect(dynamicDurationUs({ ...overlay, compositionId: "quad-map", durationUs: 26_000_000,
+      params: { sceneLayout: "matrix", revealTimesUs: "0|4000000|19000000" } })).toBe(26_000_000);
+  });
+
   it("captures full persistent layers and parameter-driven animation timing", () => {
     expect(dynamicDurationUs({ ...overlay, compositionId: "chapter-bar", durationUs: 30_000_000 })).toBe(30_000_000);
     expect(dynamicDurationUs({ ...overlay, compositionId: "caption-track", durationUs: 12_000_000 })).toBe(12_000_000);

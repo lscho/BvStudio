@@ -2851,6 +2851,36 @@ pub fn read_project_file(path: String) -> Result<String, String> {
     fs::read_to_string(path).map_err(|error| format!("打开工程失败: {error}"))
 }
 
+fn image_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        Some("image/webp")
+    } else if bytes.starts_with(b"BM") {
+        Some("image/bmp")
+    } else {
+        None
+    }
+}
+
+#[tauri::command]
+pub fn read_image_data_url(path: String) -> Result<String, String> {
+    const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+    let path = PathBuf::from(path);
+    let metadata = fs::metadata(&path).map_err(|error| format!("读取动效图片失败: {error}"))?;
+    if !metadata.is_file() {
+        return Err("动效图片路径不是文件".into());
+    }
+    if metadata.len() > MAX_IMAGE_BYTES {
+        return Err("动效图片超过 64 MB，无法用于导出".into());
+    }
+    let bytes = fs::read(&path).map_err(|error| format!("读取动效图片失败: {error}"))?;
+    let mime = image_mime(&bytes).ok_or_else(|| "动效图片格式不受支持".to_string())?;
+    Ok(format!("data:{mime};base64,{}", BASE64.encode(bytes)))
+}
+
 #[tauri::command]
 pub fn media_path_exists(path: String) -> bool {
     Path::new(&path).is_file()
@@ -2859,6 +2889,30 @@ pub fn media_path_exists(path: String) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_supported_image_as_data_url_and_rejects_other_files() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let job_dir = env::temp_dir().join(format!("bvideo-image-data-url-test-{stamp}"));
+        fs::create_dir_all(&job_dir).unwrap();
+        let image_path = job_dir.join("fixture.png");
+        fs::write(&image_path, b"\x89PNG\r\n\x1a\nfixture").unwrap();
+        assert_eq!(
+            read_image_data_url(image_path.to_string_lossy().into_owned()).unwrap(),
+            "data:image/png;base64,iVBORw0KGgpmaXh0dXJl"
+        );
+
+        let text_path = job_dir.join("fixture.txt");
+        fs::write(&text_path, b"not an image").unwrap();
+        assert_eq!(
+            read_image_data_url(text_path.to_string_lossy().into_owned()).unwrap_err(),
+            "动效图片格式不受支持"
+        );
+        fs::remove_dir_all(job_dir).unwrap();
+    }
 
     #[test]
     fn export_worker_budget_reserves_cpu_for_each_ffmpeg_process() {

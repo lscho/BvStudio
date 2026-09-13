@@ -16,11 +16,11 @@ it("没有字幕时提示先导入，不能发送请求", () => {
   expect(screen.getByRole("button", { name: "应用整套编排" })).toBeDisabled();
 });
 
-it("只有图片素材时说明将生成全屏图片镜头", async () => {
+it("只有图片素材时说明按名称与字幕选择镜头而非统一静态图运镜", async () => {
   render(<SubtitleStoryboardDialog {...baseProps} assets={[{
     id: "screen", name: "产品截图.png", kind: "image", durationUs: 0, objectUrl: "blob:screen", missing: false
   }]} onGenerate={vi.fn()} />);
-  expect(await screen.findByRole("status")).toHaveTextContent("仅使用图片：将自动生成全屏图片镜头");
+  expect(await screen.findByRole("status")).toHaveTextContent("按字幕与素材名称选择运镜和嵌入方式，静态图运镜仅作兜底");
 });
 
 it("提交纯模式和分镜要求，冲突要求留在本地", async () => {

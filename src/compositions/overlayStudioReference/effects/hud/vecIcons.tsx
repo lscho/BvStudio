@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { Shield } from "lucide-react";
+import { motionIconNames, normalizeMotionIcon } from "@/domain/informationScenes";
 
 /**
  * 内置矢量图标库(线稿风,stroke = currentColor,跟强调色走)。
@@ -119,11 +121,13 @@ const ICONS: Record<string, ReactNode> = {
   spin: [P("M12 3a9 9 0 1 1-8.6 6.3", 0), P("M3 4.5v5h5", 1)],
 };
 
-export const VEC_ICON_NAMES = Object.keys(ICONS);
+export const VEC_ICON_NAMES = [...motionIconNames];
 
 /** 图标名 → 矢量线稿;不认识的名字返回 null(调用方自行 fallback 到文字/emoji) */
 export function VecIcon({ name, size }: { name: string; size: number }) {
-  const glyph = ICONS[name.trim().toLowerCase()];
+  const resolved = normalizeMotionIcon(name);
+  if (resolved === "shield") return <Shield size={size} aria-hidden />;
+  const glyph = ICONS[resolved];
   if (!glyph) return null;
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden>
@@ -133,5 +137,6 @@ export function VecIcon({ name, size }: { name: string; size: number }) {
 }
 
 export function hasVecIcon(name: string): boolean {
-  return Boolean(ICONS[name.trim().toLowerCase()]);
+  const resolved = normalizeMotionIcon(name);
+  return resolved === "shield" || Boolean(ICONS[name.trim().toLowerCase()]) || (resolved !== "question" && Boolean(ICONS[resolved]));
 }

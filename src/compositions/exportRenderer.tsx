@@ -13,7 +13,7 @@ import type { RenderPlan, RenderTextOverlay } from "@/services/media";
 import { streamCompositionFrames, type CompositionExportOptions } from "@/compositions/frameExport";
 import { resolveOverlayStudioMediaParams } from "@/domain/overlayStudioMedia";
 import { supportsOverlayStudioAutoTiming } from "@/domain/overlayStudioMotion";
-import { localMediaUrl } from "@/services/media";
+import { localMediaUrl, readImageDataUrl } from "@/services/media";
 
 const neutralRecipe = {
   layout: "frame" as const,
@@ -33,6 +33,29 @@ function dataUrlPayload(value: string) {
   const comma = value.indexOf(",");
   if (comma < 0) throw new Error("React 动效帧编码失败");
   return value.slice(comma + 1);
+}
+
+type CompositionImageSource = NonNullable<RenderTextOverlay["compositionImages"]>[number];
+type ImageDataUrlLoader = (path: string) => Promise<string>;
+
+export async function resolveCompositionImageUrls(
+  sources: readonly CompositionImageSource[],
+  signal?: AbortSignal,
+  cache = new Map<string, Promise<string>>(),
+  loadImage: ImageDataUrlLoader = readImageDataUrl,
+  mediaUrl: (path: string) => string = localMediaUrl
+) {
+  const entries = await Promise.all(sources.map(async (source) => {
+    signal?.throwIfAborted();
+    const url = mediaUrl(source.path);
+    if (source.kind !== "image") return [source.id, url] as const;
+    const request = cache.get(source.path) ?? loadImage(source.path);
+    cache.set(source.path, request);
+    const dataUrl = await request;
+    signal?.throwIfAborted();
+    return [source.id, dataUrl] as const;
+  }));
+  return new Map(entries);
 }
 
 export function normalizeCompositionExportError(error: unknown) {
@@ -80,7 +103,29 @@ export function inlineReactOverlaySvgStyles(host: HTMLElement) {
   };
 }
 
+export async function waitForRenderImages(host: HTMLElement, signal?: AbortSignal) {
+  await Promise.all(Array.from(host.querySelectorAll("img"), async (image) => {
+    signal?.throwIfAborted();
+    if (image.complete && image.naturalWidth > 0) return;
+    if (typeof image.decode === "function") await image.decode();
+    else {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          image.removeEventListener("load", resolveLoaded);
+          image.removeEventListener("error", rejectFailed);
+        };
+        const resolveLoaded = () => { cleanup(); resolve(); };
+        const rejectFailed = () => { cleanup(); reject(new Error("动效中的图片无法解码，请检查素材格式")); };
+        image.addEventListener("load", resolveLoaded, { once: true });
+        image.addEventListener("error", rejectFailed, { once: true });
+      });
+    }
+    signal?.throwIfAborted();
+  }));
+}
+
 export function dynamicDurationUs(overlay: RenderTextOverlay) {
+  if (overlay.params?.sceneLayout === "columns" || overlay.params?.sceneLayout === "matrix" || typeof overlay.params?.revealTimesUs === "string") return overlay.durationUs;
   if (isShotcraftComposition(overlay.compositionId ?? "")) return overlay.durationUs;
   if (overlay.autoTiming && overlay.compositionId && supportsOverlayStudioAutoTiming(overlay.compositionId)) return overlay.durationUs;
   if (overlay.compositionId === "chapter-bar" || overlay.compositionId === "caption-track" || overlay.compositionId === "terminal-3d" || (overlay.compositionId && isBackgroundComposition(overlay.compositionId))) return overlay.durationUs;
@@ -109,7 +154,7 @@ export function dynamicDurationUs(overlay: RenderTextOverlay) {
   return Math.min(overlay.durationUs, Math.max(0, remainingMotionUs, overlay.dimAtUs ?? 0, ...((overlay.transformKeyframes ?? []).map((frame) => frame.offsetUs))));
 }
 
-async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, options: CompositionExportOptions): Promise<RenderTextOverlay> {
+async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, options: CompositionExportOptions, imageUrlCache: Map<string, Promise<string>>): Promise<RenderTextOverlay> {
   const { signal } = options;
   for (const id of [overlay.compositionId, overlay.shotcraftData?.previous?.compositionId, overlay.shotcraftData?.clip.shotcraft?.transition.preset]) {
     if (id) await preloadLibraryShot(id);
@@ -121,11 +166,19 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
   document.body.prepend(host);
   const root = createRoot(host);
   const length = (pixels: number) => `${pixels}px`;
+  let compositionImageUrls: Map<string, string>;
+  try {
+    compositionImageUrls = await resolveCompositionImageUrls(overlay.compositionImages ?? [], signal, imageUrlCache);
+  } catch (error) {
+    root.unmount();
+    host.remove();
+    throw normalizeCompositionExportError(error);
+  }
   const resolvedParams = resolveOverlayStudioMediaParams(overlay.compositionId ?? "", overlay.params, overlay.compositionBindings, (assetId) => {
     const source = overlay.compositionImages?.find((candidate) => candidate.id === assetId);
-    return source ? { id: source.id, kind: source.kind === "video" ? "video" : "image", url: localMediaUrl(source.path) } : undefined;
+    return source ? { id: source.id, kind: source.kind === "video" ? "video" : "image", url: compositionImageUrls.get(source.id) ?? localMediaUrl(source.path) } : undefined;
   });
-  const shotcraftAssets = (overlay.compositionImages ?? []).map((source) => ({ id: source.id, objectUrl: localMediaUrl(source.path), width: source.width, height: source.height }));
+  const shotcraftAssets = (overlay.compositionImages ?? []).map((source) => ({ id: source.id, objectUrl: compositionImageUrls.get(source.id) ?? localMediaUrl(source.path), width: source.width, height: source.height }));
   const renderAt = async (localUs: number) => {
     signal?.throwIfAborted();
     const animationLocalUs = localUs + (overlay.sourceOffsetUs ?? 0) / Math.max(0.25, overlay.speed);
@@ -153,6 +206,7 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
       if (attempt >= 120) throw new Error("镜头文字布局未就绪，请缩短文案后重试");
       await nextPaint();
     }
+    await waitForRenderImages(host, signal);
     await prepareReferenceVideoFrames(host, animationLocalUs * overlay.speed / 1_000_000, signal);
     const restoreSvgStyles = inlineReactOverlaySvgStyles(host);
     try {
@@ -221,10 +275,11 @@ async function renderReactOverlay(overlay: RenderTextOverlay, plan: RenderPlan, 
 export async function rasterizeCompositions(plan: RenderPlan, options: CompositionExportOptions = { sequences: [] }): Promise<RenderPlan> {
   try {
     const overlays = [];
+    const imageUrlCache = new Map<string, Promise<string>>();
     for (const overlay of plan.overlays) {
       options.signal?.throwIfAborted();
       if ((overlay.kind === "text" || overlay.kind === "composition") && (overlay.renderer === "three" || overlay.renderer === "canvas")) overlays.push(await streamCompositionFrames(overlay, plan, options));
-      else if ((overlay.kind === "text" || overlay.kind === "composition") && overlay.renderer === "react") overlays.push(await renderReactOverlay(overlay, plan, options));
+      else if ((overlay.kind === "text" || overlay.kind === "composition") && overlay.renderer === "react") overlays.push(await renderReactOverlay(overlay, plan, options, imageUrlCache));
       else overlays.push(overlay);
     }
     return { ...plan, overlays };

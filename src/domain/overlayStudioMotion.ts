@@ -55,6 +55,20 @@ export function supportsOverlayStudioAutoTiming(compositionId: string) {
   return autoTimedEffectIds.has(compositionId);
 }
 
+/** Per-item subtitle anchors in clip-local integer microseconds; absent in older projects. */
+export function motionRevealTimesUs(params: CompositionParams | undefined): number[] {
+  if (typeof params?.revealTimesUs !== "string" || !params.revealTimesUs.trim()) return [];
+  const parts = params.revealTimesUs.split("|");
+  if (parts.some((part) => !part.trim())) return [];
+  const values = parts.map(Number);
+  return values.length <= 80 && values.every((value, index) => Number.isSafeInteger(value) && value >= 0
+    && (index === 0 || value >= values[index - 1])) ? values : [];
+}
+
+export function motionItemStartUs(params: CompositionParams | undefined, index: number, fallbackUs: number) {
+  return motionRevealTimesUs(params)[index] ?? fallbackUs;
+}
+
 function sequenceLength(value: CompositionParams[string] | undefined) {
   return typeof value === "string"
     ? value.split(/[|｜]/u).map((part) => part.trim()).filter(Boolean).length
@@ -87,8 +101,9 @@ export function fitOverlayStudioTimingParams(
   durationUs: number
 ): CompositionParams | undefined {
   if (!params || !supportsOverlayStudioAutoTiming(compositionId) || !Number.isFinite(durationUs) || durationUs <= 0) return params;
+  if (motionRevealTimesUs(params).length) return params;
   const durationMs = Math.max(100, durationUs / 1_000);
-  const transitionTailMs = Math.min(600, Math.max(120, durationMs * 0.2));
+  const transitionTailMs = Math.min(durationMs >= 8_000 ? 1_600 : 600, Math.max(120, durationMs * 0.2));
   const lastRevealStartMs = Math.max(0, durationMs - transitionTailMs);
   let next = params;
   const replace = (key: string, value: CompositionParams[string]) => {

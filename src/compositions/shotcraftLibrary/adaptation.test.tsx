@@ -9,13 +9,27 @@ import { createEffectPreviewClip } from "@/domain/effectPreview";
 import { createEmptyProject } from "@/domain/project";
 import { effectControlsFor } from "@/compositions/registry";
 
-async function shotFrame(id: string, frame: number, texts: Record<string, string> = {}, images: string[] = []) {
-  const content: ShotcraftContent = { texts, images, imageKeys: [] };
+async function shotFrame(id: string, frame: number, texts: Record<string, string> = {}, images: string[] = [], options: Partial<ShotcraftContent> = {}) {
+  const content: ShotcraftContent = { texts, images, imageKeys: [], ...options };
   const Component = (await libraryLoaders[id]()).createDemo(content);
   const host = document.createElement("div");
   host.innerHTML = renderToStaticMarkup(<ShotcraftFrameContext.Provider value={{ ...content, frame, durationInFrames: libraryShot(id)!.frames, width: 1920, height: 1080 }}><Component /></ShotcraftFrameContext.Provider>);
   return host;
 }
+
+it.each(["shotcraft-glow-orb-ambient", "shotcraft-radial-wave"])("%s 叠卡模式去除主体并保留低对比、主题一致的运动", async (id) => {
+  for (const surface of ["#111316", "#f7f8fa"]) {
+    const options = { underlay: true, appearance: { color: "#ffffff", accent: "#47d7ac", surface, fontFamily: "sans-serif" } };
+    const before = await shotFrame(id, 20, {}, [], options);
+    const after = await shotFrame(id, 80, {}, [], options);
+    expect(before.innerHTML).not.toBe(after.innerHTML);
+    expect(before.innerHTML).toContain("opacity:0.12");
+    expect(before.innerHTML).not.toContain("width:560px");
+    expect(before.innerHTML).toContain(surface);
+    expect(before.innerHTML).toContain("#47d7ac");
+  }
+  if (id === "shotcraft-glow-orb-ambient") expect((await shotFrame(id, 80)).innerHTML).toContain("width:560px");
+});
 
 it("中文首词独立入场且强调词不依赖空格", async () => {
   const host = await shotFrame("shotcraft-lead-word-zoom-assemble", 8, { copy0: "生成很快", copy1: "生成", copy2: "改片很慢" });

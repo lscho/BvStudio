@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { toPng } from "html-to-image";
-import { normalizeCompositionExportError, rasterizeCompositions } from "@/compositions/exportRenderer";
+import { normalizeCompositionExportError, rasterizeCompositions, resolveCompositionImageUrls, waitForRenderImages } from "@/compositions/exportRenderer";
 import { buildRenderPlan } from "@/domain/renderPlan";
 import { createEmptyProject } from "@/domain/project";
 import type { RenderTextOverlay } from "@/services/media";
@@ -24,6 +24,36 @@ function setup() {
 }
 
 describe("React frame streaming", () => {
+  it("waits for newly mounted images to decode before rasterizing the frame", async () => {
+    const host = document.createElement("div");
+    const image = document.createElement("img");
+    const decode = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(image, "complete", { configurable: true, value: false });
+    Object.defineProperty(image, "decode", { configurable: true, value: decode });
+    host.append(image);
+
+    await waitForRenderImages(host);
+
+    expect(decode).toHaveBeenCalledOnce();
+  });
+
+  it("inlines local image sources once while preserving video URLs", async () => {
+    const loadImage = vi.fn(async (path: string) => `data:image/png;base64,${path}`);
+    const cache = new Map<string, Promise<string>>();
+    const sources = [
+      { id: "image-a", kind: "image" as const, path: "/素材/界面.png", width: 1920, height: 1080 },
+      { id: "image-b", kind: "image" as const, path: "/素材/界面.png", width: 1920, height: 1080 },
+      { id: "video-a", kind: "video" as const, path: "/素材/演示.mp4", width: 1920, height: 1080 }
+    ];
+
+    const urls = await resolveCompositionImageUrls(sources, undefined, cache, loadImage, (path) => `asset:${path}`);
+
+    expect(loadImage).toHaveBeenCalledOnce();
+    expect(urls.get("image-a")).toBe("data:image/png;base64,/素材/界面.png");
+    expect(urls.get("image-b")).toBe("data:image/png;base64,/素材/界面.png");
+    expect(urls.get("video-a")).toBe("asset:/素材/演示.mp4");
+  });
+
   it("writes each frame before rendering the next and returns a disk sequence without PNG arrays", async () => {
     const { plan, sink } = setup();
     const order: string[] = [];

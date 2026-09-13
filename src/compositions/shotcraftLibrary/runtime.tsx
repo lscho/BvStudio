@@ -13,6 +13,7 @@ export interface ShotcraftContent {
   imageSizes?: readonly { width: number; height: number }[];
   appearance?: { color: string; accent: string; surface: string; fontFamily: string };
   brandMark?: string;
+  underlay?: boolean;
 }
 export interface FrameContext extends ShotcraftContent {
   frame: number;

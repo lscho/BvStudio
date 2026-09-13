@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { fitOverlayStudioTimingParams, overlayStudioProgress, type OverlayStudioCurve } from "@/domain/overlayStudioMotion";
+import { fitOverlayStudioTimingParams, motionRevealTimesUs, overlayStudioProgress, type OverlayStudioCurve } from "@/domain/overlayStudioMotion";
 
 describe("Overlay Studio timing", () => {
+  it.each(["0||1000000", "0|NaN", "200|100", "0|-100", "0|0.5"])("ignores malformed persisted anchors %s", (revealTimesUs) => {
+    expect(motionRevealTimesUs({ revealTimesUs })).toEqual([]);
+  });
+  it("preserves explicit subtitle reveal times instead of stretching them to the clip end", () => {
+    const params = { items: "投入|位置|运营|迭代", stepMs: 600, revealTimesUs: "0|2400000|9700000|19000000" };
+    expect(fitOverlayStudioTimingParams("checklist", params, 26_000_000)).toEqual(params);
+  });
+
+  it("leaves reading time after the last fallback reveal", () => {
+    const params = fitOverlayStudioTimingParams("checklist", { items: "投入|位置|运营|迭代", stepMs: 160 }, 26_000_000);
+    expect(Number(params?.stepMs) * 3 + 480).toBeLessThanOrEqual(25_000);
+  });
   const curves: OverlayStudioCurve[] = ["hud", "reflow", "reel", "pin", "ease", "exponential"];
 
   it.each(curves)("keeps delayed starts and exact endpoints for %s", (curve) => {

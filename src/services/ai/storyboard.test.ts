@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertStoryboardCardCoverage, assertStoryboardMatches, assertStoryboardSelection, subtitleShotcraftEligible } from "@/services/ai/storyboard";
+import { assertStoryboardCardCoverage, assertStoryboardMatches, assertStoryboardSelection, storyboardMissingCardSegments, subtitleShotcraftEligible } from "@/services/ai/storyboard";
 import { normalizeMotionMatches, type MatchTimelineMotionInput } from "@/services/ai/provider";
 import type { AiMotionMatch, AiMotionSelection } from "@/services/ai/schema";
 
@@ -8,8 +8,20 @@ const selection: AiMotionSelection = { segments: [{ segmentId: "opening", startC
 const match: AiMotionMatch = { captionIndex: 0, motionGroupId: "opening", persistUntilCaptionIndex: 1, primaryEffectId: "shotcraft-blur-slide", primaryText: "生成很快｜改片很慢", secondaryEffectId: null, secondaryText: null, accentColor: "#5fa8ff", x: 50, y: 50, scale: 1, secondaryX: 50, secondaryY: 50, cameraPreset: "none", primaryMediaAssetId: null, primaryMediaSourceInSeconds: 0, secondaryMediaAssetId: null, secondaryMediaSourceInSeconds: 0, mediaLayoutPreset: "full", videoLayers: [], backdropPreset: "none", chart: null };
 
 describe("字幕与分镜内容关联", () => {
+  it("仅将确实缺少信息主体的自动混合 Shotcraft 送入补卡重选", () => {
+    const bare = { ...selection.segments[0], primaryEffectId: "shotcraft-glow-orb-ambient" };
+    const withImages = { ...input, materials: [{ id: "image", name: "产品截图.png", kind: "image" as const, durationSeconds: 0 }] };
+    expect(storyboardMissingCardSegments({ segments: [bare] }, input)).toEqual([bare]);
+    // Having an image in the media pool does not bind it to a slotless decorative shot.
+    expect(storyboardMissingCardSegments({ segments: [bare] }, withImages)).toEqual([bare]);
+    expect(storyboardMissingCardSegments({ segments: [{ ...bare, secondaryEffectId: "checklist" }] }, input)).toEqual([]);
+    expect(storyboardMissingCardSegments(selection, input)).toEqual([]);
+    expect(storyboardMissingCardSegments({ segments: [{ ...bare, primaryEffectId: "still-image-motion" }] }, withImages)).toEqual([]);
+    expect(storyboardMissingCardSegments({ segments: [{ ...bare, intent: "ambient" }] }, input)).toEqual([]);
+    expect(storyboardMissingCardSegments({ segments: [bare] }, { ...input, storyboard: { mode: "b-roll", prompt: "" } })).toEqual([]);
+  });
   it.each(["hook", "data", "comparison", "process", "list", "summary"] as const)("自动混合的 %s 镜头必须选择信息卡", (intent) => {
-    const bare = { segments: [{ ...selection.segments[0], intent }] };
+    const bare = { segments: [{ ...selection.segments[0], primaryEffectId: "shotcraft-glow-orb-ambient", intent }] };
     expect(() => assertStoryboardCardCoverage(bare, input)).toThrow("必须叠加一张信息卡");
     const layered = { segments: [{ ...bare.segments[0], secondaryEffectId: "checklist" }] };
     expect(() => assertStoryboardCardCoverage(layered, input)).not.toThrow();
@@ -20,10 +32,15 @@ describe("字幕与分镜内容关联", () => {
     expect(() => assertStoryboardCardCoverage(selection, { ...input, storyboard: { mode: "b-roll", prompt: "" } })).not.toThrow();
     expect(() => assertStoryboardCardCoverage({ segments: [{ ...selection.segments[0], primaryEffectId: "background-grid" }] }, input)).not.toThrow();
     for (const intent of ["ambient", "transition"] as const) {
-      const ambient = { segments: [{ ...selection.segments[0], intent }] };
+      const ambient = { segments: [{ ...selection.segments[0], primaryEffectId: "shotcraft-glow-orb-ambient", intent }] };
       expect(() => assertStoryboardCardCoverage(ambient, input)).not.toThrow();
       expect(() => assertStoryboardCardCoverage({ segments: [{ ...ambient.segments[0], evidenceKinds: ["comparison"] }] }, input)).toThrow("必须叠加一张信息卡");
     }
+  });
+  it("有自身信息结构的镜头独立展示，复杂主体不可再叠外部卡片", () => {
+    expect(() => assertStoryboardCardCoverage(selection, input)).not.toThrow();
+    expect(() => assertStoryboardCardCoverage({ segments: [{ ...selection.segments[0], secondaryEffectId: "checklist" }] }, input)).toThrow("不属于适配组合");
+    expect(() => assertStoryboardCardCoverage({ segments: [{ ...selection.segments[0], intent: "ambient", secondaryEffectId: "checklist" }] }, input)).toThrow("不属于适配组合");
   });
   it("同一组字幕与全屏镜头可通过验证，保留分行文字", () => {
     expect(() => assertStoryboardSelection(selection, input)).not.toThrow();

@@ -54,6 +54,7 @@ pub fn run() {
             media::cancel_export_job,
             media::save_project_file,
             media::read_project_file,
+            media::read_image_data_url,
             media::media_path_exists,
             asr::asr_runtime_status,
             asr::asr_model_catalog,

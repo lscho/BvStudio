@@ -1,5 +1,6 @@
 import type { EffectDef, EffectProps } from "../types";
 import { useEnter } from "../useAnimation";
+import { motionItemStartUs } from "@/domain/overlayStudioMotion";
 import { useCardElapsed } from "./useTimelineTime";
 import {
   ACCENT_OPTIONS,
@@ -11,6 +12,7 @@ import {
 } from "./accent";
 
 export interface QuadMapParams {
+  revealTimesUs?: string;
   theme: "dark" | "light";
   position: "center" | "left" | "right";
   /** 四行,每行「EN标题|EN斜体小注|中文名|中文一句话」 */
@@ -141,7 +143,7 @@ function QuadMap({ params, playToken }: EffectProps<QuadMapParams>) {
       <div className="qmp-move">
       <div className="qmp-panel">
         {list.map((c, i) => {
-          const on = elapsed >= (Number.isFinite(ts[i]) ? ts[i] : i * 2.5);
+          const on = elapsed * 1_000_000 >= motionItemStartUs({ revealTimesUs: params.revealTimesUs ?? "" }, i, (Number.isFinite(ts[i]) ? ts[i] : i * 2.5) * 1_000_000);
           return (
             <div className={`qmp-cell ${i === 3 ? "qmp-cell--dark" : ""} ${on ? "is-on" : ""}`} key={i}>
               {/* 边框描画层:pathLength 归一,stroke 从 0 描到整圈 */}

@@ -783,6 +783,10 @@ export function readProjectFile(path: string): Promise<string> {
   return invoke("read_project_file", { path });
 }
 
+export function readImageDataUrl(path: string): Promise<string> {
+  return invoke("read_image_data_url", { path });
+}
+
 export function mediaPathExists(path: string): Promise<boolean> {
   return invoke("media_path_exists", { path });
 }

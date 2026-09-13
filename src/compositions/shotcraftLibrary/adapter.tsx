@@ -49,16 +49,17 @@ export function LibraryScene({ clip, assets, frame, width, height, outgoing, inc
     imageSizes: (clip.bindings?.find((binding) => binding.slotId === "images")?.assetIds ?? []).map((id) => { const asset = assets.find((item) => item.id === id); return { width: asset?.width ?? 1920, height: asset?.height ?? 1080 }; }),
     regions: clip.shotcraft?.regions,
     appearance,
+    underlay: clip.params?.shotcraftUnderlay === true,
     brandMark: assets.find((asset) => asset.id === clip.bindings?.find((binding) => binding.slotId === "logo")?.assetIds[0])?.objectUrl,
     outgoing, incoming, linked: Boolean(outgoing && incoming)
   }), [shot, clip.params, clip.text, clip.bindings, clip.shotcraft?.regions, assets, outgoing, incoming, appearance]);
-  const textKey = JSON.stringify({ texts: content.texts, regions: content.regions, imageSizes: content.imageSizes, appearance: content.appearance });
+  const textKey = JSON.stringify({ texts: content.texts, regions: content.regions, imageSizes: content.imageSizes, appearance: content.appearance, underlay: content.underlay });
   const linked = content.linked;
-  const Component = useMemo(() => factories.get(clip.compositionId)?.({ ...JSON.parse(textKey) as Pick<ShotcraftContent, "texts" | "regions" | "imageSizes" | "appearance">, images: [], imageKeys: [], linked }), [clip.compositionId, textKey, loaded, linked]);
+  const Component = useMemo(() => factories.get(clip.compositionId)?.({ ...JSON.parse(textKey) as Pick<ShotcraftContent, "texts" | "regions" | "imageSizes" | "appearance" | "underlay">, images: [], imageKeys: [], linked }), [clip.compositionId, textKey, loaded, linked]);
   const stage = useStageSize(width, height, Boolean(Component));
   if (!shot) return null;
   if (!Component) return <div className="shotcraft-missing" role={error ? "alert" : "status"}>{error || "正在加载镜头"}</div>;
-  const scale = Math.min(stage.size.width / 1920, stage.size.height / 1080);
+  const scale = (content.underlay ? Math.max : Math.min)(stage.size.width / 1920, stage.size.height / 1080);
   return <ShotcraftFrameContext.Provider value={{ ...content, frame, durationInFrames: shot.frames, width: 1920, height: 1080 }}>
     <div ref={stage.ref} data-shotcraft-stage style={{ position: "absolute", width: "100%", height: "100%", overflow: "hidden", textAlign: "left" }}><div data-shotcraft-design-stage style={{ position: "absolute", width: 1920, height: 1080, left: "50%", top: "50%", transform: `translate(-50%, -50%) scale(${linked ? `${stage.size.width / 1920}, ${stage.size.height / 1080}` : scale})`, transformOrigin: "center", overflow: "hidden" }}><Component /></div></div>
   </ShotcraftFrameContext.Provider>;

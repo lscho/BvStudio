@@ -22,7 +22,7 @@ const DOTS = Array.from({ length: ROWS * COLS }, (_, i) => {
 const RadialWave: React.FC = () => {
   const t = useT();
   return (
-    <DesignStage bg="#0a0b10">
+    <DesignStage bg={_content.underlay ? _content.appearance?.surface ?? "#111316" : "#0a0b10"}>
       {DOTS.map(({ left, top, dist }, i) => {
         // 第一道波：扩散点亮；第二道波：反向脉冲
         const w1 = seg(t, dist * 0.35, dist * 0.35 + 0.18, E.outCubic);
@@ -40,10 +40,10 @@ const RadialWave: React.FC = () => {
               left,
               top,
               margin: -5,
-              background: pulse2 > 0.3 ? '#b9f2ff' : '#6c8cff',
-              transform: `scale(${s})`,
-              opacity: 0.25 + w1 * 0.5 + pulse2 * 0.25,
-              boxShadow: pulse2 > 0.3 ? '0 0 12px #7fd8ff' : 'none',
+              background: _content.underlay ? _content.appearance?.accent ?? '#5fa8ff' : pulse2 > 0.3 ? '#b9f2ff' : '#6c8cff',
+              transform: `scale(${_content.underlay ? 0.5 + Math.sin(t * Math.PI * 2 - dist * 3) * 0.08 : s})`,
+              opacity: _content.underlay ? 0.12 : 0.25 + w1 * 0.5 + pulse2 * 0.25,
+              boxShadow: !_content.underlay && pulse2 > 0.3 ? '0 0 12px #7fd8ff' : 'none',
             }}
           />
         );

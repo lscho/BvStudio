@@ -1,9 +1,10 @@
 import { compositionSlots } from "@/domain/compositions";
-import { allCompositions } from "@/domain/effects";
+import { allCompositions, effectParamsForText } from "@/domain/effects";
 import type { CompositionDefinition } from "@/domain/effects";
 import { allowedAiMotionParameterKeys, motionMatchingProfile, referenceMotionMatchingPolicy } from "@/domain/motionMatching";
 import { storyboardShotcraftCardAllowed } from "@/domain/storyboard";
 import { isShotcraftComposition } from "@/domain/shotcraft";
+import { informationSceneContentIssue } from "@/domain/informationScenes";
 import type { AiMotionMatch, AiMotionSelection } from "@/services/ai/schema";
 
 export type MotionPlanIssueCode =
@@ -27,7 +28,9 @@ export type MotionPlanIssueCode =
   | "content-entry-stagger"
   | "too-many-content-layers"
   | "unsupported-chart-data"
-  | "evidence-source-missing";
+  | "evidence-source-missing"
+  | "information-content-invalid"
+  | "timing-anchor-order";
 
 export interface MotionPlanIssue {
   code: MotionPlanIssueCode;
@@ -111,21 +114,26 @@ export function validateMotionSelectionPlan(selection: AiMotionSelection, captio
     }
   }
 
-  let previousContentEffectId: string | null = null;
+  let previousContentEffectIds: string[] = [];
   for (const { segment, index } of ordered) {
-    for (const effectId of selectedEffectIds(segment).filter((id) => {
+    const foregroundIds = selectedEffectIds(segment).filter((id) => {
+      // The reusable image base binds its actual subject in stage two; its ID is not a foreground identity.
+      if (id === segment.primaryEffectId && id === "still-image-motion") return false;
+      // A paired Shotcraft is scenery, not an intervening foreground card.
+      if (id === segment.primaryEffectId && allowsShotcraftCard(segment)) return false;
       const role = effectRole(id);
       return role === "content" || role === "exclusive";
-    })) {
-      if (effectId === previousContentEffectId) {
+    });
+    for (const effectId of foregroundIds) {
+      if (previousContentEffectIds.includes(effectId)) {
         issues.push({
           code: "adjacent-effect-kind",
           path: `segments.${index}`,
           message: `相邻内容卡不能连续使用同一个动效 ${effectId}`
         });
       }
-      previousContentEffectId = effectId;
     }
+    if (foregroundIds.length) previousContentEffectIds = foregroundIds;
   }
 
   if (captions.length) {
@@ -276,6 +284,9 @@ export function validateMotionMatchPlan(matches: readonly AiMotionMatch[], selec
         issues.push({ code: "effect-outside-selection", path: `${path}.${entry.slot}EffectId`, message: `动效 ${entry.effectId} 不在语义段“${segment.title}”的第一阶段选型中` });
       }
       const invalidTiming = entry.timing.find((index) => index < segment.startCaptionIndex || index > segment.endCaptionIndex);
+      if (entry.timing.some((index, order) => order > 0 && index < entry.timing[order - 1])) {
+        issues.push({ code: "timing-anchor-order", path: `${path}.${entry.slot}TimingCaptionIndices`, message: "项目顺序必须跟随字幕顺序；同一句的多个项目可重复使用相同字幕索引" });
+      }
       if (invalidTiming !== undefined) {
         issues.push({ code: "timing-outside-segment", path: `${path}.${entry.slot}TimingCaptionIndices`, message: `节奏锚点 ${invalidTiming} 超出语义段“${segment.title}”的字幕范围` });
       }
@@ -287,6 +298,8 @@ export function validateMotionMatchPlan(matches: readonly AiMotionMatch[], selec
       if (effect) {
         const profile = motionMatchingProfile(effect);
         const params = entry.slot === "primary" ? match.primaryParams ?? [] : match.secondaryParams ?? [];
+        const contentIssue = informationSceneContentIssue(entry.effectId, { ...effectParamsForText(entry.effectId, entry.text ?? ""), ...Object.fromEntries(params.map((param) => [param.key, param.value])) });
+        if (contentIssue) issues.push({ code: "information-content-invalid", path: `${path}.${entry.slot}Params`, message: contentIssue });
         const bindingCount = entry.slot === "primary" ? Math.max(0, ...(match.compositionBindings ?? []).map((binding) => binding.assetIds.length)) : 0;
         const needsAnchors = entryNeedsTimingAnchors(effect, entry.text, params, bindingCount);
         if (needsAnchors && entry.timing.length === 0) {
@@ -373,10 +386,14 @@ export function validateMotionMatchPlan(matches: readonly AiMotionMatch[], selec
       const previousStart = captions[contentEntries[index - 1].captionIndex]?.startSeconds ?? contentEntries[index - 1].captionIndex;
       const currentStart = captions[contentEntries[index].captionIndex]?.startSeconds ?? contentEntries[index].captionIndex;
       if (currentStart - previousStart < referenceMotionMatchingPolicy.minContentEntryStaggerSeconds) {
+        const availableIndices = captions.flatMap((caption, captionIndex) => captionIndex >= segment.startCaptionIndex && captionIndex <= segment.endCaptionIndex
+          && caption.startSeconds - previousStart >= referenceMotionMatchingPolicy.minContentEntryStaggerSeconds ? [captionIndex] : []);
         issues.push({
           code: "content-entry-stagger",
           path: contentEntries[index].path,
-          message: `语义段“${segment.title}”的内容动效进场至少错开 ${referenceMotionMatchingPolicy.minContentEntryStaggerSeconds} 秒`
+          message: `语义段“${segment.title}”的内容动效进场至少错开 ${referenceMotionMatchingPolicy.minContentEntryStaggerSeconds} 秒。同一 match 的主辅动效共用 captionIndex，卡内 timing 锚点不等于片段进场时间。${availableIndices.length
+            ? `请按文案首次出现的字幕拆成独立 match，可用的后续 captionIndex 为 ${availableIndices.join("、")}，并保持到段末；不能只改 timing 字段。`
+            : "该段没有满足间隔的后续字幕边界，请重新编排并在选型阶段改为单个内容动效，不要伪造时间或直接删掉已选动效。"}`
         });
         break;
       }

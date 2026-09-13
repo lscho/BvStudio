@@ -1,5 +1,7 @@
 import type { EffectDef, EffectProps } from "../types";
 import { useEnter } from "../useAnimation";
+import { useCardElapsed } from "./useTimelineTime";
+import { motionItemStartUs, overlayStudioProgress } from "@/domain/overlayStudioMotion";
 import {
   ACCENT_VAR,
   OFFSET_CONTROLS,
@@ -9,6 +11,7 @@ import {
 } from "./accent";
 
 export interface PainPointsParams {
+  revealTimesUs?: string;
   stepMs?: number;
   theme: "dark" | "light";
   position: "left" | "right";
@@ -27,6 +30,11 @@ function PainPoints({ params, playToken }: EffectProps<PainPointsParams>) {
   const { theme, position, kicker, pains, result, mark, resAccent } = params;
   void theme;
   const entered = useEnter(playToken);
+  const timeUs = useCardElapsed(params, playToken) * 1_000_000;
+  const revealStyle = (index: number, offsetUs = 0) => params.revealTimesUs ? {
+    opacity: overlayStudioProgress(timeUs, motionItemStartUs({ revealTimesUs: params.revealTimesUs }, index, index * (params.stepMs ?? STAGGER) * 1_000) + offsetUs, 360_000),
+    transform: "none", transition: "none"
+  } : { transitionDelay: `${index * (params.stepMs ?? STAGGER) + offsetUs / 1_000}ms` };
   const list = pains.split("|").map((p) => p.trim()).filter(Boolean);
   const dx = position === "right" ? "22px" : "-22px";
 
@@ -43,7 +51,7 @@ function PainPoints({ params, playToken }: EffectProps<PainPointsParams>) {
       {kicker && <div className="pn-kicker hud-fade">{kicker}</div>}
 
       {list.map((pain, i) => (
-        <div className="pn-item" key={i} style={{ transitionDelay: `${i * (params.stepMs ?? STAGGER)}ms` }}>
+        <div className="pn-item" key={i} style={revealStyle(i)}>
           <span className="pn-x">✕</span>
           <span>{pain}</span>
         </div>
@@ -51,10 +59,10 @@ function PainPoints({ params, playToken }: EffectProps<PainPointsParams>) {
 
       {result && (
         <>
-          <div className="pn-rule" style={{ transitionDelay: `${list.length * (params.stepMs ?? STAGGER)}ms` }} />
+          <div className="pn-rule" style={revealStyle(list.length)} />
           <div
             className="pn-result"
-            style={{ transitionDelay: `${list.length * (params.stepMs ?? STAGGER) + 120}ms` }}
+            style={revealStyle(list.length, 120_000)}
           >
             <span className="pn-arrow">→</span>
             {result}

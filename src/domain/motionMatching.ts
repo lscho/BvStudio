@@ -1,4 +1,5 @@
 import type { CompositionDefinition, CompositionParams } from "@/domain/effects";
+import { normalizeBadgeIcons } from "@/domain/informationScenes";
 import { mediaComposition } from "@/domain/compositions";
 import { referenceMotionMatchingCards, referenceMotionMatchingPolicy } from "@/domain/motionMatchingCatalog.generated";
 import { isReferenceStageComposition } from "@/domain/overlayStudioReference";
@@ -283,10 +284,11 @@ export function compileAiMotionParams(input: {
   text: string;
 }) {
   const allowedOverrides = new Set(allowedAiMotionParameterKeys(input.effect));
-  const params: CompositionParams = { ...input.baseParams };
+  let params: CompositionParams = { ...input.baseParams };
   for (const override of input.overrides) {
     if (allowedOverrides.has(override.key)) params[override.key] = override.value;
   }
+  if (input.effect.id === "glow-badges") params = normalizeBadgeIcons(params);
   if (isReferenceStageComposition(input.effect.id) && Object.hasOwn(params, "scale")) {
     const scale = params.scale;
     params.scale = typeof scale === "number" && Number.isFinite(scale)
@@ -312,6 +314,20 @@ export function compileAiMotionParams(input: {
       : durationSeconds * 900 / inferredCount
   );
   const totalMs = boundedMilliseconds(durationSeconds * 1_000);
+  const revealFields: Readonly<Record<string, string>> = { checklist: "items", "pin-board": "items", "pain-points": "pains", "glow-badges": "badges", "quad-map": "cells" };
+  const revealField = revealFields[input.effect.id];
+  if (revealField && cueIndices.length) {
+    const itemCueSeconds = input.timingCaptionIndices
+      .filter((index) => index >= input.startCaptionIndex && index <= input.endCaptionIndex && input.captions[index])
+      .map((index) => Math.max(0, input.captions[index].startSeconds - start));
+    const itemCount = input.effect.id === "quad-map" && typeof params.cells === "string"
+      ? params.cells.split(/\r?\n/u).filter((row) => row.trim()).length : delimitedItemCount(params[revealField])
+        + (input.effect.id === "pain-points" && typeof params.result === "string" && params.result.trim() ? 1 : 0);
+    // Several items may belong to the same subtitle. Never invent later evidence by spreading them to the scene end.
+    params.revealTimesUs = Array.from({ length: itemCount }, (_, index) => Math.round(
+      (itemCueSeconds[index] ?? itemCueSeconds.at(-1) ?? 0) * 1_000_000
+    )).join("|");
+  }
   const intervalTimingKeys = new Set([
     "stepMs", "holdMs", "wordMs", "swapMs", "spinMs", "strikeStepMs", "buildStepMs",
     "paradeStepMs", "staggerMs", "itemStepMs", "noteStepMs", "spotMs", "focusMs", "flipMs"

@@ -94,11 +94,12 @@ function CursorTour({ page, settings, t, accent, width, height }: { page?: Shotc
 
 function CardFan({ cards, t, fit }: { cards: readonly (ShotcraftAsset | undefined)[]; t: number; fit: "contain" | "cover" }) {
   const fan = seg(t, 0.55, 0.8, cubicInOut);
-  return <div style={{ ...fill, perspective: px(900), overflow: "hidden" }}>{cards.map((card, i) => {
+  return <div style={{ ...fill, overflow: "hidden" }}>{cards.map((card, i) => {
     const inT = seg(t, 0.02 + i * 0.033, 0.32 + i * 0.033);
     const spring = 1 - Math.exp(-6 * inT) * Math.cos((8 + 8 * 0.7) * inT * 0.3 * 2.2);
     const k = i - (cards.length - 1) / 2;
-    return <div key={i} style={{ position: "absolute", left: "50%", top: "50%", width: px(110), height: px(150), margin: `${px(-85)} 0 0 ${px(-55)}`, borderRadius: px(6), background: "#ffffff", border: `${px(0.5)} solid #ffffff33`, boxShadow: `0 ${px(12)} ${px(34)} #00000066`, transformOrigin: "50% 130%", transform: `translate3d(${px(k * 34 * fan)}, ${px(300 * (1 - spring))}, ${px(-10 * Math.abs(k) * fan)}) rotate(${k * 8 * fan}deg)`, opacity: Math.min(1, inT * 4), zIndex: 20 - Math.abs(k * 2), overflow: "hidden" }}><Picture asset={card} fit={fit} /></div>;
+    const scale = 1 - Math.abs(k) * 0.035 * fan;
+    return <div key={i} style={{ position: "absolute", left: "50%", top: "50%", width: px(150), height: px(104), margin: `${px(-60)} 0 0 ${px(-75)}`, borderRadius: px(6), background: "#111316", border: `${px(0.5)} solid #ffffff33`, boxShadow: `0 ${px(12)} ${px(34)} #00000066`, transformOrigin: "50% 115%", transform: `translate(${px(k * 34 * fan)}, ${px(260 * (1 - spring))}) rotate(${k * 7 * fan}deg) scale(${scale})`, opacity: Math.min(1, inT * 4), zIndex: 20 - Math.round(Math.abs(k) * 2), overflow: "hidden" }}><Picture asset={card} fit={fit} /></div>;
   })}</div>;
 }
 

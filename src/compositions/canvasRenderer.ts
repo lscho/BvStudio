@@ -1,5 +1,5 @@
 import type { CompositionParams } from "@/domain/effects";
-import { compositionNumber, isBackgroundComposition } from "@/domain/compositions";
+import { compositionNumber, isBackgroundComposition, isSequencedMediaComposition } from "@/domain/compositions";
 import { compositionMediaTimeUs, compositionMomentum, compositionSegment } from "@/domain/compositionPlayback";
 import { focusCardMediaRect, focusCardMoveProgress, type FocusCardRect } from "@/domain/focusCard";
 import { loadCompositionVideo, releaseCompositionVideo, seekCompositionVideo } from "@/services/compositionVideo";
@@ -161,6 +161,10 @@ export async function createCanvasCompositionRenderer(width: number, height: num
           return;
         }
         const segment = compositionSegment(timeUs, durationUs, media.length);
+        if (isSequencedMediaComposition(id) && typeof params.storyboardBackground === "string") {
+          context.fillStyle = color("storyboardBackground", "#111316");
+          context.fillRect(0, 0, width, height);
+        }
         if (id === "motion-zoom") {
           const motion = compositionMomentum(segment.localUs, segment.durationUs, segment.index, media.length);
           drawMedia(segment.index, width / 2, height / 2, width, height, 1 + (motion.scale - 1) * travel);

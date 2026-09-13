@@ -4,10 +4,12 @@ import { compositionById } from "@/domain/effects";
 import { cameraMotionForPreset } from "@/domain/camera";
 import { estimateMotionLayoutRect, motionLayoutRectsOverlap, type MotionLayoutLayer } from "@/domain/motionLayout";
 import type { AiVideoPlan } from "@/services/ai/schema";
-import { normalizeMotionMatches } from "@/services/ai/provider";
+import { alignMotionContentEntries, groundMotionMatchesToSelection, normalizeMotionMatches } from "@/services/ai/provider";
 import { useEditorStore } from "@/stores/editorStore";
 import { buildRenderPlan } from "@/domain/renderPlan";
 import { lintMotionProject } from "@/domain/motionLint";
+import { motionThemeWithColorPreset } from "@/domain/motionTheme";
+import { parseProject, serializeProject } from "@/domain/projectFile";
 
 const plan: AiVideoPlan = {
   title: "插入介绍",
@@ -70,6 +72,58 @@ describe("editorStore", () => {
     useEditorStore.getState().applyMotionMatches([subtitle.id], [match]);
     expect(useEditorStore.getState().project.tracks.flatMap((t) => t.clips).filter((c) => c.kind === "video" && c.sourceSubtitleId === subtitle.id)).toEqual([broll]);
   });
+  it("图片主层与拆分的辅助卡保持语义分组、字幕时刻和导出时长", () => {
+    const captions = [{ startSeconds: 0, endSeconds: 2, text: "功能展示" }, { startSeconds: 2, endSeconds: 5, text: "导入图片" }, { startSeconds: 5, endSeconds: 8, text: "生成编排" }];
+    useEditorStore.getState().addVideo({ id: "source", name: "口播", kind: "video", durationUs: 8_000_000, sourcePath: "/media/voice.mp4" });
+    useEditorStore.getState().addSubtitles("source", captions);
+    const project = structuredClone(useEditorStore.getState().project);
+    project.assets.push({ id: "image", name: "场景编排.png", kind: "image", durationUs: 0, sourcePath: "/media/image.png" });
+    useEditorStore.setState({ project });
+    const before = structuredClone(project);
+    const subtitles = project.tracks.find((track) => track.kind === "subtitle")!.clips;
+    const selection = { segments: [{ segmentId: "scene", startCaptionIndex: 0, endCaptionIndex: 2, title: "编排", intent: "hook" as const, evidenceKinds: ["image" as const], primaryEffectId: "still-image-motion", secondaryEffectId: "checklist", materialNeed: "场景编排", selectionReason: "展示操作", roll: "b-roll" as const }] };
+    const matches = groundMotionMatchesToSelection(alignMotionContentEntries([{ ...motionMatch, primaryEffectId: "still-image-motion", primaryText: "", compositionBindings: [{ slotId: "image", assetIds: ["image"] }], cameraPreset: "none", secondaryEffectId: "checklist", secondaryText: "操作流程｜导入图片｜生成编排", secondaryTimingCaptionIndices: [1, 2] }], selection, captions), selection, captions);
+    useEditorStore.getState().applyMotionMatches(subtitles.map((subtitle) => subtitle.id), matches);
+    const after = structuredClone(useEditorStore.getState().project);
+    const clips = after.tracks.flatMap((track) => track.clips).filter((clip): clip is CompositionClip => clip.kind === "composition");
+    const base = clips.find((clip) => clip.compositionId === "still-image-motion")!;
+    const card = clips.find((clip) => clip.compositionId === "checklist")!;
+    expect(base).toMatchObject({ startUs: 0, durationUs: 8_000_000, bindings: [{ slotId: "image", assetIds: ["image"] }] });
+    expect(card).toMatchObject({ startUs: 2_000_000, durationUs: 6_000_000 });
+    expect(base.sceneGroupId).toBe(card.sceneGroupId);
+    expect(base.sceneGroupId).toMatch(/^ai-motion:/);
+    expect(lintMotionProject(after).filter((issue) => issue.severity === "error")).toEqual([]);
+    expect(buildRenderPlan(after, "/out.mp4").overlays).toEqual(expect.arrayContaining([
+      expect.objectContaining({ compositionId: "still-image-motion", startUs: 0, durationUs: 8_000_000 }),
+      expect.objectContaining({ compositionId: "checklist", startUs: 2_000_000, durationUs: 6_000_000 })
+    ]));
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project).toEqual(before);
+    useEditorStore.getState().redo();
+    expect(useEditorStore.getState().project).toEqual(after);
+  });
+
+  it.each(["motion-zoom", "slide-gallery", "card-stack", "split-reveal"])("AI 多图镜头 %s 保留绑定、全屏底色和预览导出时长", (effectId) => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 18_000_000, sourcePath: "/media/voice.mp4" });
+    useEditorStore.getState().addSubtitles("voice", [{ startSeconds: 0, endSeconds: 18, text: "展示字幕生成与配音" }]);
+    const project = structuredClone(useEditorStore.getState().project);
+    project.assets.push(...["字幕生成", "配音"].map((name, index) => ({ id: `image-${index}`, name, kind: "image" as const, durationUs: 0, sourcePath: `/media/image-${index}.png` })));
+    useEditorStore.setState({ project });
+    const before = structuredClone(project);
+    const subtitle = project.tracks.find((track) => track.kind === "subtitle")!.clips[0];
+    const bindings = [{ slotId: "media", assetIds: ["image-1", "image-0"] }];
+    useEditorStore.getState().applyMotionMatches([subtitle.id], [{ ...motionMatch, primaryEffectId: effectId, primaryText: "", cameraPreset: "none", compositionBindings: bindings }]);
+    const after = useEditorStore.getState().project;
+    const clip = after.tracks.flatMap((track) => track.clips).find((clip): clip is CompositionClip => clip.kind === "composition" && clip.compositionId === effectId)!;
+    expect(clip).toMatchObject({ durationUs: 18_000_000, animationDurationUs: 18_000_000, bindings, transform: { x: 50, y: 50, scale: 1 }, params: { storyboardBackground: expect.stringMatching(/^#[0-9a-f]{6}$/i) } });
+    expect(buildRenderPlan(after, "/out.mp4").overlays.find((overlay) => overlay.kind === "composition" && overlay.compositionId === effectId)).toMatchObject({ durationUs: 18_000_000, params: clip.params });
+    expect(parseProject(serializeProject(after)).tracks.flatMap((track) => track.clips).find((item) => item.id === clip.id)).toMatchObject({ params: clip.params, bindings });
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project).toEqual(before);
+    useEditorStore.getState().redo();
+    expect(useEditorStore.getState().project).toEqual(after);
+  });
+
   it("字幕关联 Shotcraft 保留整段时钟、素材与撤销重做", () => {
     useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", sourcePath: "/voice.mp4", durationUs: 8_000_000, hasAudio: true });
     useEditorStore.getState().addSubtitles("voice", [{ startSeconds: 0, endSeconds: 4, text: "生成很快" }, { startSeconds: 4, endSeconds: 8, text: "改片很慢" }]);
@@ -97,12 +151,20 @@ describe("editorStore", () => {
       params: { shotcraftTextMode: "narration" }
     });
   });
-  it("自动混合编排把信息卡叠在 Shotcraft 镜头之上", () => {
+  it.each([
+    ["dark", 1920, 1080], ["light", 1920, 1080],
+    ["dark", 1080, 1920], ["light", 1080, 1920],
+    ["dark", 1080, 1080], ["light", 1080, 1080]
+  ] as const)("自动混合信息卡与 Shotcraft 统一 %s 主题并适配 %s×%s", (skin, width, height) => {
+    const initial = useEditorStore.getState().project;
+    useEditorStore.setState({ project: { ...initial, motionTheme: motionThemeWithColorPreset(initial.motionTheme, skin) } });
     useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 6_000_000, sourcePath: "/voice.mp4" });
     useEditorStore.getState().addSubtitles("voice", [
       { startSeconds: 0, endSeconds: 3, text: "先分析字幕，再提取事实。" },
       { startSeconds: 3, endSeconds: 6, text: "最后生成卡片。" }
     ]);
+    const project = useEditorStore.getState().project;
+    useEditorStore.setState({ project: { ...project, canvas: { ...project.canvas, width, height } } });
     const subtitles = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips;
     const before = useEditorStore.getState().project;
 
@@ -110,8 +172,8 @@ describe("editorStore", () => {
       ...motionMatch,
       motionGroupId: "information-scene",
       persistUntilCaptionIndex: 1,
-      primaryEffectId: "shotcraft-blur-slide",
-      primaryText: "字幕驱动画面",
+      primaryEffectId: "shotcraft-glow-orb-ambient",
+      primaryText: "",
       secondaryEffectId: "checklist",
       secondaryText: "处理流程｜分析字幕｜提取事实｜生成卡片",
       secondaryTimingCaptionIndices: [0],
@@ -119,7 +181,7 @@ describe("editorStore", () => {
     }], { assets: [], soundEnabled: false, musicSourceInUs: 0, musicVolume: 0, beatSync: false, shotcraftTextMode: "promo" });
 
     const clips = useEditorStore.getState().project.tracks.find((track) => track.kind === "composition")!.clips as CompositionClip[];
-    const shotcraft = clips.find((clip) => clip.compositionId === "shotcraft-blur-slide")!;
+    const shotcraft = clips.find((clip) => clip.compositionId === "shotcraft-glow-orb-ambient")!;
     const card = clips.find((clip) => clip.compositionId === "checklist")!;
     expect(clips).toHaveLength(2);
     expect(card.startUs).toBe(shotcraft.startUs);
@@ -130,6 +192,10 @@ describe("editorStore", () => {
     expect(card.sceneGroupId).toBe(shotcraft.sceneGroupId);
     expect(lintMotionProject(useEditorStore.getState().project).filter((issue) => issue.severity === "error")).toEqual([]);
     expect(card.params?.stepMs).toBe(1_800);
+    expect(shotcraft.params?.shotcraftUnderlay).toBe(true);
+    expect(card.params).toMatchObject({ theme: skin, position: "left", scale: 1, offsetX: 0, offsetY: 0 });
+    expect(card.fontSize).toBeGreaterThanOrEqual(72);
+    expect(card.backdrop?.enabled).toBe(false);
     const overlays = buildRenderPlan(useEditorStore.getState().project, "/out.mp4").overlays;
     for (const clip of [shotcraft, card]) {
       expect(overlays.find((overlay) => (overlay.kind === "composition" || overlay.kind === "text") && overlay.compositionId === clip.compositionId)).toMatchObject({
@@ -142,6 +208,30 @@ describe("editorStore", () => {
     useEditorStore.getState().redo();
     expect(useEditorStore.getState().project).toEqual(after);
   });
+  it.each(["glow-badges", "quad-map"])("编排 %s 的全幅布局和字幕锚点在导出、保存、撤销后保持一致", (effectId) => {
+    useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 26_000_000, sourcePath: "/media/voice.mp4" });
+    useEditorStore.getState().addSubtitles("voice", [
+      { startSeconds: 0, endSeconds: 2.4, text: "投入成本" }, { startSeconds: 2.4, endSeconds: 9.7, text: "位置选择" },
+      { startSeconds: 9.7, endSeconds: 19, text: "平台依赖" }, { startSeconds: 19, endSeconds: 26, text: "技术迭代" }
+    ]);
+    const before = useEditorStore.getState().project;
+    const subtitles = before.tracks.find((track) => track.kind === "subtitle")!.clips;
+    useEditorStore.getState().applyMotionMatches(subtitles.map((clip) => clip.id), [{ ...motionMatch,
+      motionGroupId: "information", persistUntilCaptionIndex: 3, primaryEffectId: "shotcraft-glow-orb-ambient", primaryText: "",
+      secondaryEffectId: effectId, secondaryText: "四项要点｜投入成本｜位置选择｜平台依赖｜技术迭代", secondaryTimingCaptionIndices: [0, 1, 2, 3], cameraPreset: "none"
+    }], { assets: [], soundEnabled: false, musicSourceInUs: 0, musicVolume: 0, beatSync: false, shotcraftTextMode: "narration" });
+    const after = useEditorStore.getState().project;
+    const card = after.tracks.flatMap((track) => track.clips).find((clip): clip is CompositionClip => clip.kind === "composition" && clip.compositionId === effectId)!;
+    expect(card.params).toMatchObject({ sceneLayout: effectId === "quad-map" ? "matrix" : "columns", revealTimesUs: "0|2400000|9700000|19000000" });
+    expect(buildRenderPlan(after, "/out.mp4").overlays.find((overlay) => (overlay.kind === "text" || overlay.kind === "composition") && overlay.compositionId === effectId)).toMatchObject({ params: card.params, durationUs: 26_000_000 });
+    const restored = parseProject(serializeProject(after));
+    expect(restored.tracks.flatMap((track) => track.clips).find((clip) => clip.id === card.id)).toMatchObject({ params: card.params });
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project).toEqual(before);
+    useEditorStore.getState().redo();
+    expect(useEditorStore.getState().project).toEqual(after);
+  });
+
   it("AI 多素材动效完整覆盖字幕语义段而不截断到十秒", () => {
     useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 12_000_000 });
     useEditorStore.getState().addImage({ id: "image-a", name: "图 A", kind: "image", durationUs: 0 });

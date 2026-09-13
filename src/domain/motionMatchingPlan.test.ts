@@ -104,6 +104,12 @@ describe("motion matching plan validation", () => {
     expect(issues.map((issue) => issue.code)).toContain("timing-outside-segment");
   });
 
+  it("rejects reversed item anchors but accepts several items on one subtitle", () => {
+    const selection = { segments: [selectionSegment()] };
+    expect(validateMotionMatchPlan([motionMatch({ primaryTimingCaptionIndices: [2, 0, 1] })], selection).map((issue) => issue.code)).toContain("timing-anchor-order");
+    expect(validateMotionMatchPlan([motionMatch({ primaryTimingCaptionIndices: [0, 0, 1] })], selection).map((issue) => issue.code)).not.toContain("timing-anchor-order");
+  });
+
   it("rejects material placeholders with bound assets", () => {
     const selection: AiMotionSelection = {
       segments: [selectionSegment({ primaryEffectId: "screen-demo" })]
@@ -147,6 +153,46 @@ describe("motion matching plan validation", () => {
     expect(issues.map((issue) => issue.code)).toContain("adjacent-effect-kind");
   });
 
+  it("detects repeated foreground cards even when the Shotcraft base changes", () => {
+    const issues = validateMotionSelectionPlan({ segments: [
+      selectionSegment({ endCaptionIndex: 0, primaryEffectId: "shotcraft-glow-orb-ambient", secondaryEffectId: "checklist" }),
+      selectionSegment({ segmentId: "next", startCaptionIndex: 1, primaryEffectId: "shotcraft-radial-wave", secondaryEffectId: "checklist" })
+    ] });
+    expect(issues.map((issue) => issue.code)).toContain("adjacent-effect-kind");
+  });
+
+  it("allows consecutive still-image base scenes before their images are assigned", () => {
+    const selection = { segments: captions.map((_, index) => selectionSegment({
+      segmentId: `image-${index}`, startCaptionIndex: index, endCaptionIndex: index,
+      intent: index === 0 ? "hook" : "demo", roll: "b-roll", primaryEffectId: "still-image-motion"
+    })) };
+    expect(validateMotionSelectionPlan(selection, captions)).toEqual([]);
+  });
+
+  it("still detects repeated foreground cards over consecutive still-image bases", () => {
+    const issues = validateMotionSelectionPlan({ segments: [
+      selectionSegment({ endCaptionIndex: 0, primaryEffectId: "still-image-motion", secondaryEffectId: "checklist" }),
+      selectionSegment({ segmentId: "next", startCaptionIndex: 1, primaryEffectId: "still-image-motion", secondaryEffectId: "checklist" })
+    ] });
+    expect(issues.filter((issue) => issue.code === "adjacent-effect-kind").map((issue) => issue.message)).toEqual(["相邻内容卡不能连续使用同一个动效 checklist"]);
+  });
+
+  it("does not exempt repeated independent full-screen effects", () => {
+    const issues = validateMotionSelectionPlan({ segments: [
+      selectionSegment({ endCaptionIndex: 0, primaryEffectId: "screen-demo" }),
+      selectionSegment({ segmentId: "next", startCaptionIndex: 1, primaryEffectId: "screen-demo" })
+    ] });
+    expect(issues.map((issue) => issue.code)).toContain("adjacent-effect-kind");
+  });
+
+  it("allows a stable Shotcraft base with different foreground structures", () => {
+    const issues = validateMotionSelectionPlan({ segments: [
+      selectionSegment({ endCaptionIndex: 0, primaryEffectId: "shotcraft-glow-orb-ambient", secondaryEffectId: "glow-badges" }),
+      selectionSegment({ segmentId: "next", startCaptionIndex: 1, primaryEffectId: "shotcraft-glow-orb-ambient", secondaryEffectId: "checklist" })
+    ] });
+    expect(issues.map((issue) => issue.code)).not.toContain("adjacent-effect-kind");
+  });
+
   it("requires every selected effect to land exactly once", () => {
     const selection: AiMotionSelection = {
       segments: [selectionSegment({ primaryEffectId: "pain-points", secondaryEffectId: "punch-pill" })]
@@ -185,6 +231,8 @@ describe("motion matching plan validation", () => {
       "segment-accent-mismatch",
       "content-entry-stagger"
     ]));
+    expect(issues.find((issue) => issue.code === "content-entry-stagger")?.message).toContain("后续 captionIndex 为 2");
+    expect(issues.find((issue) => issue.code === "content-entry-stagger")?.message).toContain("不能只改 timing 字段");
   });
 
   it("requires subtitle anchors for staged effects", () => {
@@ -193,6 +241,12 @@ describe("motion matching plan validation", () => {
       motionMatch({ primaryTimingCaptionIndices: [] })
     ], selection, captions);
     expect(issues.map((issue) => issue.code)).toContain("timing-anchors-required");
+  });
+
+  it("rejects an information card with only a headline and no actual items", () => {
+    const selection = { segments: [selectionSegment({ primaryEffectId: "glow-badges" })] };
+    const issues = validateMotionMatchPlan([motionMatch({ primaryEffectId: "glow-badges", primaryText: "三重支撑", primaryParams: [] })], selection, captions);
+    expect(issues.map((issue) => issue.code)).toContain("information-content-invalid");
   });
 
   it.each(["checklist", "glow-badges", "strike-flip"])("allows a Shotcraft base and %s on one subtitle with recovered timing", (effectId) => {

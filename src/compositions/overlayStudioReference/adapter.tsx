@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type RefObject } from "react";
 import type { CompositionRenderProps } from "@/compositions/registry";
+import { InformationScene } from "@/compositions/InformationScene";
+import { informationSceneLayout } from "@/domain/informationScenes";
 import { isBackgroundComposition } from "@/domain/compositions";
 import { EFFECTS } from "@/compositions/overlayStudioReference/effects/registry";
 import type { EffectProps } from "@/compositions/overlayStudioReference/effects/types";
@@ -147,7 +149,9 @@ export function ReplicatedOverlayStudioCard(props: CompositionRenderProps) {
         <FxTimelineMsContext.Provider value={displayTimeUs / 1_000}>
           <div className="stage" data-ratio={ratio} data-theme={theme} style={stageStyle}>
             <div data-card-theme={theme} data-card-vtier={definition.vTier} data-overlay-content-root style={{ display: "contents", "--hud-scale": cardScale } as CSSProperties}>
-              <Component params={params} playToken={0} />
+              {informationSceneLayout(props.compositionId, props.params)
+                ? <InformationScene {...props} timeUs={displayTimeUs} />
+                : <Component params={params} playToken={0} />}
             </div>
           </div>
         </FxTimelineMsContext.Provider>
