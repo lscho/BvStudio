@@ -408,3 +408,45 @@ jobs:
               --title "BFrame Studio $GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY"
           fi
+
+  publish-esa-release:
+    name: Publish desktop release to ESA
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [prepare-release, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download desktop release manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: bframe-studio-desktop-release-manifest
+          path: release-manifest
+
+      - name: Publish desktop release to ESA EdgeKV
+        env:
+          ESA_KV_NAMESPACE: ${{ vars.ESA_KV_NAMESPACE }}
+          ESA_ACCESS_KEY_ID: ${{ secrets.ESA_ACCESS_KEY_ID }}
+          ESA_ACCESS_KEY_SECRET: ${{ secrets.ESA_ACCESS_KEY_SECRET }}
+        run: |
+          set -euo pipefail
+          for name in ESA_KV_NAMESPACE ESA_ACCESS_KEY_ID ESA_ACCESS_KEY_SECRET; do
+            if [ -z "${!name}" ]; then
+              echo "自动发布 ESA 缺少 $name" >&2
+              exit 1
+            fi
+          done
+
+          node scripts/import-desktop-release.mjs \
+            --manifest release-manifest/desktop-release-manifest.json \
+            --namespace "$ESA_KV_NAMESPACE"

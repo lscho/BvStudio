@@ -118,6 +118,22 @@ test("uploads release assets to OSS after the manifest is validated", () => {
   assert.ok(workflow.indexOf("- name: Validate bundles and create desktop release manifest") < workflow.indexOf("- name: Upload release assets to Aliyun OSS"));
 });
 
+test("publishes tag releases to ESA EdgeKV after the GitHub Release succeeds", () => {
+  const publishJob = workflow.match(/\n  publish-esa-release:\n[\s\S]*$/u)?.[0];
+  assert.ok(publishJob);
+  assert.match(publishJob, /if: startsWith\(github\.ref, 'refs\/tags\/v'\)/u);
+  assert.match(publishJob, /needs: \[prepare-release, release\]/u);
+  assert.match(publishJob, /uses: actions\/download-artifact@v4/u);
+  assert.match(publishJob, /name: bframe-studio-desktop-release-manifest/u);
+  assert.match(publishJob, /ESA_KV_NAMESPACE: \$\{\{ vars\.ESA_KV_NAMESPACE \}\}/u);
+  assert.match(publishJob, /ESA_ACCESS_KEY_ID: \$\{\{ secrets\.ESA_ACCESS_KEY_ID \}\}/u);
+  assert.match(publishJob, /ESA_ACCESS_KEY_SECRET: \$\{\{ secrets\.ESA_ACCESS_KEY_SECRET \}\}/u);
+  assert.match(
+    publishJob,
+    /node scripts\/import-desktop-release\.mjs[\s\S]*--manifest release-manifest\/desktop-release-manifest\.json[\s\S]*--namespace "\$ESA_KV_NAMESPACE"/u
+  );
+});
+
 test("verifies the downloaded ossutil binary against its checksum", () => {
   const installStep = workflow.match(/- name: Install ossutil[\s\S]*?(?=\n\s+- name:)/u)?.[0];
   assert.ok(installStep);
