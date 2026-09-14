@@ -39,7 +39,7 @@ export function useAppUpdater() {
       const handle = await checkDesktopUpdate();
       setUpdate(handle);
       setStatus(handle ? "available" : "idle");
-      setVisible(handle?.info.isForceUpdate === true);
+      setVisible(Boolean(handle));
     } catch {
       setStatus("idle");
     }
