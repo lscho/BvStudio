@@ -59,6 +59,14 @@
     ],
     "macOS": {
       "infoPlist": "Info.plist"
+    },
+    "windows": {
+      "nsis": {
+        "template": "windows/installer.nsi",
+        "installerIcon": "icons-macos26/icon.ico",
+        "languages": ["SimpChinese"],
+        "displayLanguageSelector": false
+      }
     }
   },
   "plugins": {
