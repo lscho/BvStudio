@@ -11,7 +11,11 @@
  * pub_date 若不是带时区的 RFC3339 同样会失败，故三者之外也做严格校验。
  */
 
-export const CLIENT_UPDATE_PLATFORMS = ["windows-x86", "windows-arm", "macos-x86", "macos-arm", "linux-x86"];
+/**
+ * 服务端只受理这两个平台的更新查询，与构建矩阵及下载页 `DOWNLOAD_PLATFORMS` 保持一致；
+ * 其余平台（windows-arm / macos-x86 / linux-x86）不在发布范围，查询一律 400。
+ */
+export const CLIENT_UPDATE_PLATFORMS = ["windows-x86", "macos-arm"];
 
 /** 与 scripts/build-desktop-release-manifest.mjs 保持一致的 SemVer 校验。 */
 const SEMVER_RE =

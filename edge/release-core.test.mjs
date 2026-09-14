@@ -26,13 +26,26 @@ const VALID_RECORD = {
 };
 
 describe("平台白名单", () => {
-  it("只接受与客户端 ClientUpdatePlatform 一致的五个值", () => {
-    expect(CLIENT_UPDATE_PLATFORMS).toHaveLength(5);
+  it("只接受构建矩阵当前产出的两个平台值", () => {
+    expect(CLIENT_UPDATE_PLATFORMS).toEqual(["windows-x86", "macos-arm"]);
     for (const platform of CLIENT_UPDATE_PLATFORMS) expect(isValidUpdatePlatform(platform)).toBe(true);
   });
 
-  it("拒绝空值、大小写变体与未知平台", () => {
-    for (const value of [undefined, null, "", " ", "macos", "macos-arm64", "MACOS-ARM", "darwin-aarch64", 7]) {
+  it("拒绝空值、大小写变体、历史平台值与未知平台", () => {
+    for (const value of [
+      undefined,
+      null,
+      "",
+      " ",
+      "macos",
+      "macos-arm64",
+      "MACOS-ARM",
+      "darwin-aarch64",
+      "windows-arm",
+      "macos-x86",
+      "linux-x86",
+      7
+    ]) {
       expect(isValidUpdatePlatform(value)).toBe(false);
     }
   });

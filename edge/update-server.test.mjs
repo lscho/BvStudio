@@ -66,7 +66,7 @@ describe("handleUpdateRequest", () => {
   });
 
   it("无记录时返回 204 空响应体，且仍带 no-store", async () => {
-    const response = await handleUpdateRequest(request("?platform=linux-x86"), { kv: createFakeKv() });
+    const response = await handleUpdateRequest(request("?platform=windows-x86"), { kv: createFakeKv() });
     expect(response.status).toBe(204);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(await response.text()).toBe("");
@@ -116,6 +116,7 @@ describe("handleUpdateRequest", () => {
     const linux = await handleUpdateRequest(request("?platform=linux-x86"), { kv });
     expect((await arm.json()).url).toBe(VALID_RECORD.url);
     expect((await win.json()).url).toBe("https://example.com/setup.exe");
-    expect(linux.status).toBe(204);
+    // linux-x86 已随构建矩阵裁剪移出白名单，必须与其他平台一样拿到 400 而不是 204
+    expect(linux.status).toBe(400);
   });
 });

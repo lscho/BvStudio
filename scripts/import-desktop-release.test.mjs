@@ -12,19 +12,13 @@ import {
 
 const UPDATER_FILE_NAMES = {
   "windows-x86": "bframe-studio_0.4.0_x64-setup.exe",
-  "windows-arm": "bframe-studio_0.4.0_arm64-setup.exe",
-  "macos-x86": "bframe-studio_0.4.0_aarch64_x64.app.tar.gz",
-  "macos-arm": "bframe-studio_0.4.0_aarch64_arm64.app.tar.gz",
-  "linux-x86": "bframe-studio_0.4.0_amd64.AppImage.tar.gz"
+  "macos-arm": "bframe-studio_0.4.0_aarch64_arm64.app.tar.gz"
 };
 
-/** Windows 的安装包与更新包是同一个 NSIS `.exe`；macOS/Linux 上是两个不同文件。 */
+/** Windows 的安装包与更新包是同一个 NSIS `.exe`；macOS 上是两个不同文件。 */
 const INSTALLER_FILE_NAMES = {
   "windows-x86": "bframe-studio_0.4.0_x64-setup.exe",
-  "windows-arm": "bframe-studio_0.4.0_arm64-setup.exe",
-  "macos-x86": "bframe-studio_0.4.0_x64.dmg",
-  "macos-arm": "bframe-studio_0.4.0_arm64.dmg",
-  "linux-x86": "bframe-studio_0.4.0_amd64.AppImage"
+  "macos-arm": "bframe-studio_0.4.0_arm64.dmg"
 };
 
 const UPDATER_FILE_SIZE = 42354176;
@@ -121,13 +115,13 @@ describe("deriveUpdaterUrl", () => {
 });
 
 describe("buildReleaseRecords", () => {
-  it("完整清单产出五平台记录，字段与客户端契约一致", () => {
+  it("完整清单产出白名单内两平台记录，字段与客户端契约一致", () => {
     const { records, problems } = buildReleaseRecords(validManifest(), { notes: "修复若干问题" });
     assert.deepEqual(problems, []);
-    assert.equal(records.length, 5);
+    assert.equal(records.length, 2);
     assert.deepEqual(
       records.map((record) => record.platform),
-      ["windows-x86", "windows-arm", "macos-x86", "macos-arm", "linux-x86"]
+      ["windows-x86", "macos-arm"]
     );
 
     const macosArm = records.find((record) => record.platform === "macos-arm");
@@ -159,12 +153,8 @@ describe("buildReleaseRecords", () => {
     assert.match(byPlatform["macos-arm"].installerUrl, /\.dmg$/);
     assert.match(byPlatform["macos-arm"].url, /\.app\.tar\.gz$/);
 
-    assert.notEqual(byPlatform["linux-x86"].installerUrl, byPlatform["linux-x86"].url);
-    assert.match(byPlatform["linux-x86"].installerUrl, /\.AppImage$/);
-
     // Windows 的 NSIS 安装包同时充当更新包
     assert.equal(byPlatform["windows-x86"].installerUrl, byPlatform["windows-x86"].url);
-    assert.equal(byPlatform["windows-arm"].installerUrl, byPlatform["windows-arm"].url);
   });
 
   it("pub_date 默认取清单 generatedAt，可用参数覆盖", () => {
@@ -192,11 +182,11 @@ describe("buildReleaseRecords", () => {
 
   it("清单缺少平台时不再整批中止，改为只发布已有平台并提示缺失项", () => {
     const manifest = validManifest();
-    manifest.platforms = manifest.platforms.filter((entry) => entry.platform !== "linux-x86");
+    manifest.platforms = manifest.platforms.filter((entry) => entry.platform !== "macos-arm");
     const { records, problems, missingPlatforms } = buildReleaseRecords(manifest);
     assert.deepEqual(problems, []);
-    assert.equal(records.length, 4);
-    assert.deepEqual(missingPlatforms, ["linux-x86"]);
+    assert.equal(records.length, 1);
+    assert.deepEqual(missingPlatforms, ["macos-arm"]);
   });
 
   it("平台齐全时不报告缺失平台", () => {
@@ -208,13 +198,13 @@ describe("buildReleaseRecords", () => {
     const manifest = validManifest();
     manifest.platforms[0].updater.signature = "   ";
     manifest.platforms[1].updater.fileSize = 0;
-    manifest.platforms[2].updater.sourceUrl = "http://insecure.example.com/a.tar.gz";
+    manifest.platforms[1].installer.sourceUrl = "http://insecure.example.com/a.dmg";
     const { problems } = buildReleaseRecords(manifest);
     const joined = problems.join("\n");
     assert.equal(problems.length, 3);
     assert.match(joined, /windows-x86 更新包签名缺失或为空/);
-    assert.match(joined, /windows-arm 更新包 fileSize 不是正整数/);
-    assert.match(joined, /macos-x86 清单中的 sourceUrl 不是合法的 https 地址/);
+    assert.match(joined, /macos-arm 更新包 fileSize 不是正整数/);
+    assert.match(joined, /macos-arm 清单中的安装包 sourceUrl 不是合法的 https 地址/);
   });
 
   it("sourceUrl 非法时不做静默替换，且缺失时按 tag 推导仍可发布", () => {
@@ -234,6 +224,8 @@ describe("buildReleaseRecords", () => {
   it("version 非法、含未知平台时报告问题", () => {
     const manifest = validManifest({ version: "0.4" });
     manifest.platforms.push({ platform: "darwin-aarch64" });
+    // linux-x86 是历史平台值，白名单裁剪后同样按未知平台拒绝
+    manifest.platforms.push({ platform: "linux-x86" });
     const { problems } = buildReleaseRecords(manifest);
     assert.match(problems.join("\n"), /version 不是合法 SemVer/);
     assert.match(problems.join("\n"), /清单含未知平台/);
@@ -295,15 +287,15 @@ describe("importReleaseRecords", () => {
         return kv.get(namespace, key);
       },
       async put(namespace, key, value) {
-        if (key === "release:latest:linux-x86") throw new Error("boom");
+        if (key === "release:latest:macos-arm") throw new Error("boom");
         return kv.put(namespace, key, value);
       }
     };
     const { failures, skipped } = await importReleaseRecords({ records, namespace: "bframe_studio", kv: failing });
     assert.equal(failures.length, 1);
     assert.deepEqual(skipped, []);
-    assert.equal(failures[0].platform, "linux-x86");
-    assert.equal(kv.store.size, 4);
+    assert.equal(failures[0].platform, "macos-arm");
+    assert.equal(kv.store.size, 1);
   });
 
   it("既有记录不是合法 JSON 时告警并覆盖", async () => {
