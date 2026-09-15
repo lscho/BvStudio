@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSrtDocument, formatSrtTimestamp } from "@/domain/srt";
+import { buildSrtDocument, formatSrtTimestamp, parseSrtDocument } from "@/domain/srt";
 import type { SubtitleClip } from "@/domain/project";
 import { cameraMotionForPreset } from "@/domain/camera";
 const trackId = "subtitle-main";
@@ -39,5 +39,20 @@ describe("buildSrtDocument", () => {
     const video = { id: "video", trackId: "video-main", kind: "video" as const, label: "视频", locked: false, startUs: 0, durationUs: 5_000_000, assetId: "asset", sourceInUs: 0, playbackRate: 1, volume: 1, fit: "contain" as const, camera: cameraMotionForPreset("none") };
     expect(buildSrtDocument([video])).toBe("");
     expect(buildSrtDocument([])).toBe("");
+  });
+});
+
+describe("parseSrtDocument", () => {
+  it("parses BOM, CRLF, multi-line text and sorts cues by time", () => {
+    expect(parseSrtDocument("\uFEFF2\r\n00:00:02,500 --> 00:00:04,000\r\n第二条\r\n第二行\r\n\r\n1\r\n00:00:00.000 --> 00:00:02.500\r\n第一条")).toEqual([
+      { startSeconds: 0, endSeconds: 2.5, text: "第一条" },
+      { startSeconds: 2.5, endSeconds: 4, text: "第二条\n第二行" }
+    ]);
+  });
+
+  it("rejects empty, malformed and reversed cues with actionable errors", () => {
+    expect(() => parseSrtDocument(" ")).toThrow("没有字幕内容");
+    expect(() => parseSrtDocument("1\n不是时间码\n字幕")).toThrow("时间码无效");
+    expect(() => parseSrtDocument("1\n00:00:02,000 --> 00:00:01,000\n字幕")).toThrow("结束时间必须晚于开始时间");
   });
 });

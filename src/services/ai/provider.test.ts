@@ -1,6 +1,6 @@
 import { isShotcraftComposition } from "@/domain/shotcraft";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { alignMotionContentEntries, captionNumericData, compactMotionText, ensureSelectedMotionMatches, ensureStoryboardBaseLayers, extractTokenUsage, generateSubtitleChapters, generateTimedScript, generateVideoPlan, groundMotionMatchesToSelection, listProviderModels, matchTimelineMotion, motionCaptionChunks, motionMatchesAccessIssue, normalizeMotionChart, normalizeMotionMatches, normalizeMotionSelection, normalizeMotionSelectionEvidenceKinds, normalizeTimedScript, providerEndpoint, selectMotionCandidates, truncateRepairOutput, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
+import { alignMotionContentEntries, captionNumericData, compactMotionText, ensureSelectedMotionMatches, ensureStoryboardBaseLayers, extractTokenUsage, generateScriptCopy, generateSubtitleChapters, generateTimedScript, generateVideoPlan, groundMotionMatchesToSelection, listProviderModels, matchTimelineMotion, motionCaptionChunks, motionMatchesAccessIssue, normalizeMotionChart, normalizeMotionMatches, normalizeMotionSelection, normalizeMotionSelectionEvidenceKinds, normalizeTimedScript, providerEndpoint, selectMotionCandidates, truncateRepairOutput, verifyProviderConfiguration, type AiProviderConfig } from "@/services/ai/provider";
 import { allCompositions } from "@/domain/effects";
 import { validateMotionMatchPlan, validateMotionSelectionPlan } from "@/domain/motionMatchingPlan";
 import type { AiMotionMatch } from "@/services/ai/schema";
@@ -441,6 +441,24 @@ describe("provider requests", () => {
       topic: "兼容接口", durationSeconds: 2, style: "简洁"
     }, "secret")).resolves.toMatchObject({ script: { title: "兼容接口" }, usage: { totalTokens: 24 } });
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ stream: true, stream_options: { include_usage: true } });
+  });
+
+  it("generates editable copy without asking the model for timed captions", async () => {
+    const script = { title: "独立文案", article: "完整文章", narration: "自然口播。" };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(script) } }],
+      usage: { prompt_tokens: 9, completion_tokens: 11, total_tokens: 20 }
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(generateScriptCopy(config, {
+      topic: "字幕两步生成", durationSeconds: 30, style: "专业清晰"
+    }, "secret")).resolves.toMatchObject({ script, usage: { totalTokens: 20 } });
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(payload.messages[0].content).toContain("不生成字幕、时间码");
+    expect(payload.messages[0].content).toContain('"required":["title","article","narration"]');
+    expect(payload.messages[0].content).not.toContain('"captions"');
   });
 
   it("grounds AI chapter boundaries to subtitle indexes", async () => {

@@ -283,7 +283,7 @@ describe("AssetPanel video audio actions", () => {
     expect(entries[1]).not.toHaveClass("active");
     const subtitleLibrary = document.querySelector(".subtitle-library");
     const subtitleActions = document.querySelector(".subtitle-actions");
-    expect(subtitleActions).toHaveTextContent("生成配音");
+    expect(subtitleActions).toHaveTextContent("生成字幕配音");
     expect(subtitleActions?.previousElementSibling).toBe(subtitleLibrary);
     expect(screen.queryByRole("button", { name: "匹配" })).not.toBeInTheDocument();
     fireEvent.mouseDown(screen.getByRole("tab", { name: "动效" }), { button: 0, ctrlKey: false });

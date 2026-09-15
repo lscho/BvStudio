@@ -26,6 +26,14 @@ const timedCaptionSchema = z.object({
   text: z.string().trim().min(1).max(500)
 });
 
+export const aiScriptCopySchema = z.object({
+  title: z.string().trim().min(1).max(80),
+  article: z.string().trim().min(1).max(8_000),
+  narration: z.string().trim().min(1).max(8_000)
+});
+
+export type AiScriptCopy = z.infer<typeof aiScriptCopySchema>;
+
 export const aiTimedScriptSchema = z.object({
   title: z.string().trim().min(1).max(80),
   article: z.string().trim().min(1).max(8_000),
@@ -328,6 +336,17 @@ export const TIMED_SCRIPT_JSON_SCHEMA = {
   properties: {
     title: { type: "string" }, article: { type: "string" }, narration: { type: "string" },
     captions: { type: "array", minItems: 1, maxItems: 80, items: { type: "object", additionalProperties: false, required: ["startSeconds", "endSeconds", "text"], properties: { startSeconds: { type: "number", minimum: 0, maximum: 86_400 }, endSeconds: { type: "number", minimum: 0.05, maximum: 86_400 }, text: { type: "string" } } } }
+  }
+} as const;
+
+export const SCRIPT_COPY_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title", "article", "narration"],
+  properties: {
+    title: { type: "string", minLength: 1, maxLength: 80 },
+    article: { type: "string", minLength: 1, maxLength: 8_000 },
+    narration: { type: "string", minLength: 1, maxLength: 8_000 }
   }
 } as const;
 

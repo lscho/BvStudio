@@ -16,6 +16,7 @@ import { canUseSound, soundTier, soundTierMap } from "@/domain/soundAccess";
 import { aiCompositionSlots, compositionSlots, isBackgroundComposition } from "@/domain/compositions";
 import {
   aiChapterPlanSchema,
+  aiScriptCopySchema,
   aiTimedScriptSchema,
   CHAPTER_PLAN_JSON_SCHEMA,
   createAiMotionSelectionSchema,
@@ -24,11 +25,13 @@ import {
   createMotionSelectionJsonSchema,
   createMotionMatchesJsonSchema,
   createSoundMatchesJsonSchema,
+  SCRIPT_COPY_JSON_SCHEMA,
   TIMED_SCRIPT_JSON_SCHEMA,
   type AiSoundMatch,
   type AiMotionMatch,
   type AiMotionSelection,
   type AiChapterPlan,
+  type AiScriptCopy,
   type AiTimedScript,
   type AiVideoPlan
 } from "@/services/ai/schema";
@@ -94,6 +97,11 @@ export interface GeneratedVideoPlan {
 
 export interface GeneratedTimedScript {
   script: AiTimedScript;
+  usage: AiTokenUsage;
+}
+
+export interface GeneratedScriptCopy {
+  script: AiScriptCopy;
   usage: AiTokenUsage;
 }
 
@@ -899,6 +907,10 @@ ${soundRule}
 
 function scriptSystemPrompt() {
   return "你是中文视频文案与口播编辑。先生成完整文章与自然口播，再把口播切成连续、无重叠、覆盖目标时长的逐条时间字幕。字幕应适合屏幕阅读，每条只表达一个清晰语义。此阶段不要选择动效、镜头或视频素材。";
+}
+
+function scriptCopySystemPrompt() {
+  return "你是中文视频文案与口播编辑。只生成标题、完整文章与适合直接朗读的自然口播文案。口播需匹配目标时长和表达风格，不生成字幕、时间码、镜头、动效或素材建议。";
 }
 
 function chapterSystemPrompt() {
@@ -1942,6 +1954,24 @@ export async function generateTimedScript(
   recordUsage(usage);
   const script = normalizeTimedScript(aiTimedScriptSchema.parse(extractPlan(config.protocol, response.body)), input.durationSeconds);
   return { script, usage };
+}
+
+export async function generateScriptCopy(
+  config: AiProviderConfig,
+  input: Omit<GeneratePlanInput, "materials">,
+  browserApiKey?: string,
+  signal?: AbortSignal,
+  onProgress?: AiProgressHandler
+): Promise<GeneratedScriptCopy> {
+  validateProviderConfig(config);
+  const user = `主题：${input.topic}\n目标时长：约 ${input.durationSeconds} 秒\n表达风格：${input.style}\n请生成标题、文章和口播文案。`;
+  const payload = structuredRequestPayload(config, scriptCopySystemPrompt(), user, SCRIPT_COPY_JSON_SCHEMA, "create_script_copy");
+  const response = await withRetry(() => callProvider(config, payload, browserApiKey, signal, onProgress), signal);
+  if (response.status < 200 || response.status >= 300) throw new Error(providerError(response.body, response.status));
+  onProgress?.({ phase: "validating", message: "正在校验文案", receivedCharacters: 0 });
+  const usage = extractTokenUsage(config.protocol, response.body, config);
+  recordUsage(usage);
+  return { script: aiScriptCopySchema.parse(extractPlan(config.protocol, response.body)), usage };
 }
 
 export async function generateSubtitleChapters(

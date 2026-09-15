@@ -47,6 +47,29 @@ beforeEach(() => {
 });
 
 describe("editorStore", () => {
+  it("imports independent subtitle segments at an integer offset with one undo step", () => {
+    const ids = useEditorStore.getState().addSubtitleSegments([
+      { startSeconds: 1, endSeconds: 2.5, text: " 第一条 " },
+      { startSeconds: 3, endSeconds: 5, text: "第二条" }
+    ], 4_000_000.4);
+
+    const subtitles = useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips;
+    expect(ids).toHaveLength(2);
+    expect(subtitles).toMatchObject([
+      { id: ids[0], startUs: 5_000_000, durationUs: 1_500_000, text: "第一条" },
+      { id: ids[1], startUs: 7_000_000, durationUs: 2_000_000, text: "第二条" }
+    ]);
+    expect(useEditorStore.getState().selectedClipIds).toEqual(ids);
+    useEditorStore.getState().undo();
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === "subtitle")!.clips).toHaveLength(0);
+
+    const lockedProject = structuredClone(useEditorStore.getState().project);
+    lockedProject.tracks.find((track) => track.kind === "subtitle")!.locked = true;
+    useEditorStore.setState({ ...useEditorStore.getState(), project: lockedProject, past: [], future: [] });
+    expect(useEditorStore.getState().addSubtitleSegments([{ startSeconds: 0, endSeconds: 1, text: "锁定" }])).toEqual([]);
+    expect(useEditorStore.getState().past).toHaveLength(0);
+  });
+
   it("使用 copy 字段的 Shotcraft 不因外部说明留空而丢失", () => {
     useEditorStore.getState().addVideo({ id: "voice", name: "口播", kind: "video", durationUs: 5_000_000 });
     useEditorStore.getState().addSubtitles("voice", [{ startSeconds: 0, endSeconds: 5, text: "反复修改也能掌控" }]);

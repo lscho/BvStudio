@@ -317,6 +317,7 @@ interface EditorState {
   updateGenerated: (clipId: string, patch: Partial<GeneratedBlock>) => void;
   updateGeneratedScene: (clipId: string, sceneId: string, patch: Partial<GeneratedBlock["scenes"][number]>) => void;
   addSubtitles: (assetId: string, segments: Array<{ startSeconds: number; endSeconds: number; text: string }>) => void;
+  addSubtitleSegments: (segments: Array<{ startSeconds: number; endSeconds: number; text: string }>, startUs?: number) => string[];
   updateSubtitle: (clipId: string, patch: Partial<SubtitleClip>) => void;
   updateSubtitleAppearance: (clipId: string | null, patch: SubtitleAppearancePatch) => void;
   moveClips: (clipIds: string[], deltaUs: number) => void;
@@ -1846,6 +1847,39 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
     }
   })),
+  addSubtitleSegments: (segments, requestedStartUs = 0) => {
+    const ids: string[] = [];
+    const startUs = Number.isFinite(requestedStartUs) ? Math.max(0, Math.round(requestedStartUs)) : 0;
+    set((state) => {
+      const next = commit(state, (project) => {
+        const subtitleTrack = project.tracks.find((track) => track.kind === "subtitle")!;
+        if (subtitleTrack.locked) return;
+        for (const segment of segments) {
+          const text = segment.text.trim();
+          if (!text || !Number.isFinite(segment.startSeconds) || !Number.isFinite(segment.endSeconds) || segment.endSeconds <= segment.startSeconds) continue;
+          const id = crypto.randomUUID();
+          ids.push(id);
+          subtitleTrack.clips.push({
+            id,
+            trackId: subtitleTrack.id,
+            kind: "subtitle",
+            label: text,
+            startUs: startUs + Math.max(0, Math.round(segment.startSeconds * 1_000_000)),
+            durationUs: Math.max(100_000, Math.round((segment.endSeconds - segment.startSeconds) * 1_000_000)),
+            locked: false,
+            text,
+            backgroundColor: "#000000",
+            fontSize: 44,
+            positionY: 88,
+            ...DEFAULT_SUBTITLE_STYLE,
+            ...project.subtitleTheme
+          });
+        }
+      });
+      return ids.length ? { ...next, selectedClipId: ids[0], selectedClipIds: [...ids] } : state;
+    });
+    return ids;
+  },
   updateSubtitle: (clipId, patch) => set((state) => commit(state, (project) => {
     const clip = findClip(project, clipId);
     if (!clip || clip.kind !== "subtitle") return;

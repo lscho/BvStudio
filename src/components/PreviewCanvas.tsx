@@ -681,7 +681,7 @@ export function PreviewCanvas({ aiProvider, onNeedSettings, onImport, onGenerate
             {renderFocusCardMedia(previewClip, previewModel?.assets ?? project.assets, effectPreviewTimeUs)}
           </div>}
           {presenterEditing && <PresenterSafeAreaOverlay key={project.id} settings={project.presenterSafeArea} onCommit={updatePresenterSafeArea} onHide={() => setShowPresenterSafeArea(false)} onClear={clearPresenterArea} />}
-          {!hasContent && !effectPreview && !presenterEditing && <div className="empty-canvas"><strong>从任意内容开始</strong><p>导入视频或音频，也可以直接生成 AI 内容。</p><div><button className="button secondary" onClick={onImport}><FileVideo2 size={16} />导入媒体</button><button className="button primary" onClick={onGenerate}><Sparkles size={16} />AI 生成</button></div></div>}
+          {!hasContent && !effectPreview && !presenterEditing && <div className="empty-canvas"><strong>从任意内容开始</strong><p>导入视频或音频，也可以先准备文案生成字幕。</p><div><button className="button secondary" onClick={onImport}><FileVideo2 size={16} />导入媒体</button><button className="button primary" onClick={onGenerate}><Sparkles size={16} />生成字幕</button></div></div>}
         </div>
       </div>
       <CanvasSettingsDialog open={canvasSettingsOpen} onOpenChange={setCanvasSettingsOpen} canvas={project.canvas} assets={project.assets} />

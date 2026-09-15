@@ -132,7 +132,7 @@ export function AssetPanel({ onImport, onGenerate, onMatchEffects, onReviewMotio
             {subtitles.length ? subtitles.map((subtitle, index) => <SubtitleEntry key={subtitle.id} subtitle={subtitle} subtitles={subtitles} index={index} selected={selectedClipIds.includes(subtitle.id)} />) : <p className="empty-copy align-left">还没有时间字幕</p>}
           </section>
           <div className="asset-panel-actions subtitle-actions" aria-label="字幕操作">
-            <button type="button" onClick={onGenerate}><Sparkles size={15} />生成</button>
+            <button type="button" onClick={onGenerate}><Sparkles size={15} />生成字幕</button>
             <button type="button" onClick={onCreateAudio}><AudioLines size={15} />配音</button>
           </div>
         </Tabs.Content>
